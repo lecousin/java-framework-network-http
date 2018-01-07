@@ -1,0 +1,13 @@
+language: java
+
+script: mvn test verify -B
+
+after_script:
+ - echo _____________CHECKSTYLE______________
+ - cat */target/checkstyle-result.xml
+ - echo _____________SOPTBUGS______________
+ - cat */target/findbugsXml.xml
+
+after_success:
+ - bash <(curl -s https://codecov.io/bash)
+ 
