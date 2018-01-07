@@ -5,10 +5,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 
-import net.lecousin.framework.application.Application;
-import net.lecousin.framework.application.Artifact;
-import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.application.Version;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
@@ -20,10 +16,8 @@ import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
-import net.lecousin.framework.network.http.server.processor.DummyProcessor;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
-import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
@@ -31,24 +25,6 @@ import org.junit.Test;
 
 public class TestServer extends AbstractHTTPTest {
 
-	@SuppressWarnings("resource")
-	public static void main(String[] args) {
-		try {
-			Application.start(new Artifact("net.lecousin.framework.network.http", "server.test", new Version("0")), args, true).blockThrow(0);
-			initHTTPTests();
-			TCPServer http_server = new TCPServer();
-			http_server.setProtocol(new HTTPServerProtocol(new DummyProcessor()));
-			http_server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 12345), 10);
-			TCPServer https_server = new TCPServer();
-			https_server.setProtocol(new SSLServerProtocol(sslTest, new HTTPServerProtocol(new DummyProcessor("with SSL"))));
-			https_server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 12346), 10);
-			Thread.sleep(5*60*1000);
-			LCCore.stop(true);
-		} catch (Throwable t) {
-			t.printStackTrace(System.err);
-		}
-	}
-	
 	private static class TestProcessor implements HTTPRequestProcessor {
 		@Override
 		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {

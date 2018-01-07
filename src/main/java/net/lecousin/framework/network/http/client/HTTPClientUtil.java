@@ -103,20 +103,12 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> { result.unblockSuccess(new Pair<>(client, response)); },
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> { result.unblockSuccess(new Pair<>(client, response)); },
+				result
+			);
+		}, result);
 		return result;
 	}
 
@@ -127,20 +119,12 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> { result.unblockSuccess(new Pair<>(client, response)); },
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> { result.unblockSuccess(new Pair<>(client, response)); },
+				result
+			);
+		}, result);
 		return result;
 	}
 	
@@ -152,37 +136,29 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> {
-						if ((response.getStatusCode() / 100) != 2) {
-							result.unblockError(new HTTPResponseError(
-								response.getStatusCode(), response.getStatusMessage()
-							));
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> {
+					if ((response.getStatusCode() / 100) != 2) {
+						result.unblockError(new HTTPResponseError(
+							response.getStatusCode(), response.getStatusMessage()
+						));
+						client.close();
+						return;
+					}
+					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+					OutputToInput output = new OutputToInput(io, url.toString());
+					client.receiveBody(response, output, 64 * 1024).listenInline(
+						() -> {
+							output.endOfData();
 							client.close();
-							return;
 						}
-						IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-						OutputToInput output = new OutputToInput(io, url.toString());
-						client.receiveBody(response, output, 64 * 1024).listenInline(
-							() -> {
-								output.endOfData();
-								client.close();
-							}
-						);
-						result.unblockSuccess(new Pair<>(response, output));
-					},
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+					);
+					result.unblockSuccess(new Pair<>(response, output));
+				},
+				result
+			);
+		}, result);
 		return result;
 	}
 
@@ -194,37 +170,29 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> {
-						if ((response.getStatusCode() / 100) != 2) {
-							result.unblockError(new HTTPResponseError(
-								response.getStatusCode(), response.getStatusMessage()
-							));
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> {
+					if ((response.getStatusCode() / 100) != 2) {
+						result.unblockError(new HTTPResponseError(
+							response.getStatusCode(), response.getStatusMessage()
+						));
+						client.close();
+						return;
+					}
+					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+					OutputToInput output = new OutputToInput(io, url.toString());
+					client.receiveBody(response, output, 64 * 1024).listenInline(
+						() -> {
+							output.endOfData();
 							client.close();
-							return;
 						}
-						IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-						OutputToInput output = new OutputToInput(io, url.toString());
-						client.receiveBody(response, output, 64 * 1024).listenInline(
-							() -> {
-								output.endOfData();
-								client.close();
-							}
-						);
-						result.unblockSuccess(new Pair<>(response, output));
-					},
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+					);
+					result.unblockSuccess(new Pair<>(response, output));
+				},
+				result
+			);
+		}, result);
 		return result;
 	}
 	
@@ -236,45 +204,37 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> {
-						if ((response.getStatusCode() / 100) != 2) {
-							result.unblockError(new HTTPResponseError(
-								response.getStatusCode(), response.getStatusMessage()
-							));
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> {
+					if ((response.getStatusCode() / 100) != 2) {
+						result.unblockError(new HTTPResponseError(
+							response.getStatusCode(), response.getStatusMessage()
+						));
+						client.close();
+						return;
+					}
+					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+					OutputToInput output = new OutputToInput(io, url.toString());
+					client.receiveBody(response, output, 64 * 1024).listenInline(
+						() -> {
+							output.endOfData();
+							result.unblockSuccess(new Pair<>(response, output));
 							client.close();
-							return;
+						},
+						(error) -> {
+							result.error(error);
+							client.close();
+						},
+						(cancel) -> {
+							result.cancel(cancel);
+							client.close();
 						}
-						IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-						OutputToInput output = new OutputToInput(io, url.toString());
-						client.receiveBody(response, output, 64 * 1024).listenInline(
-							() -> {
-								output.endOfData();
-								result.unblockSuccess(new Pair<>(response, output));
-								client.close();
-							},
-							(error) -> {
-								result.error(error);
-								client.close();
-							},
-							(cancel) -> {
-								result.cancel(cancel);
-								client.close();
-							}
-						);
-					},
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+					);
+				},
+				result
+			);
+		}, result);
 		return result;
 	}
 
@@ -286,45 +246,37 @@ public final class HTTPClientUtil {
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(
-					(response) -> {
-						if ((response.getStatusCode() / 100) != 2) {
-							result.unblockError(new HTTPResponseError(
-								response.getStatusCode(), response.getStatusMessage()
-							));
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(
+				(response) -> {
+					if ((response.getStatusCode() / 100) != 2) {
+						result.unblockError(new HTTPResponseError(
+							response.getStatusCode(), response.getStatusMessage()
+						));
+						client.close();
+						return;
+					}
+					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+					OutputToInput output = new OutputToInput(io, url.toString());
+					client.receiveBody(response, output, 64 * 1024).listenInline(
+						() -> {
+							output.endOfData();
+							result.unblockSuccess(new Pair<>(response, output));
 							client.close();
-							return;
+						},
+						(error) -> {
+							result.error(error);
+							client.close();
+						},
+						(cancel) -> {
+							result.cancel(cancel);
+							client.close();
 						}
-						IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-						OutputToInput output = new OutputToInput(io, url.toString());
-						client.receiveBody(response, output, 64 * 1024).listenInline(
-							() -> {
-								output.endOfData();
-								result.unblockSuccess(new Pair<>(response, output));
-								client.close();
-							},
-							(error) -> {
-								result.error(error);
-								client.close();
-							},
-							(cancel) -> {
-								result.cancel(cancel);
-								client.close();
-							}
-						);
-					},
-					result
-				);
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+					);
+				},
+				result
+			);
+		}, result);
 		return result;
 	}
 	
@@ -340,71 +292,62 @@ public final class HTTPClientUtil {
 		AsyncWork<HTTPClient, IOException> send = send(HTTPRequest.Method.GET, url, (IO.Readable)null, headers);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
 		MutableInteger redirectCount = new MutableInteger(0);
-		send.listenInline(
-			(client) -> {
-				client.receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
-					@Override
-					public void ready(HTTPResponse response) {
-						boolean isRedirect;
-						if (maxRedirects - redirectCount.get() <= 0) isRedirect = false;
-						else if (!response.getMIME().hasHeader("Location")) isRedirect = false;
-						else {
-							int code = response.getStatusCode();
-							if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308)
-								isRedirect = true;
-							else
-								isRedirect = false;
-						}
-						if (!isRedirect) {
-							result.unblockSuccess(new Pair<>(client, response));
+		send.listenInline((client) -> {
+			client.receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
+				@Override
+				public void ready(HTTPResponse response) {
+					boolean isRedirect;
+					if (maxRedirects - redirectCount.get() <= 0) isRedirect = false;
+					else if (!response.getMIME().hasHeader("Location")) isRedirect = false;
+					else {
+						int code = response.getStatusCode();
+						if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308)
+							isRedirect = true;
+						else
+							isRedirect = false;
+					}
+					if (!isRedirect) {
+						result.unblockSuccess(new Pair<>(client, response));
+						return;
+					}
+					String location = response.getMIME().getHeaderSingleValue("Location");
+					try {
+						URI u = new URI(location);
+						if (u.getHost() == null) {
+							// relative
+							HTTPRequest newRequest = new HTTPRequest(HTTPRequest.Method.GET, location);
+							for (int i = 0; i < headers.length - 1; i += 2)
+								newRequest.getMIME().setHeader(headers[i], headers[i + 1]);
+							redirectCount.inc();
+							AsyncWorkListener<HTTPResponse, IOException> that = this;
+							client.sendRequest(newRequest, null).listenInline(
+								() -> { client.receiveResponseHeader().listenInline(that); },
+								result
+							);
 							return;
 						}
-						String location = response.getMIME().getHeaderSingleValue("Location");
+						// absolute
 						try {
-							URI u = new URI(location);
-							if (u.getHost() == null) {
-								// relative
-								HTTPRequest newRequest = new HTTPRequest(HTTPRequest.Method.GET, location);
-								for (int i = 0; i < headers.length - 1; i += 2)
-									newRequest.getMIME().setHeader(headers[i], headers[i + 1]);
-								redirectCount.inc();
-								AsyncWorkListener<HTTPResponse, IOException> that = this;
-								client.sendRequest(newRequest, null).listenInline(
-									() -> { client.receiveResponseHeader().listenInline(that); },
-									result
-								);
-								return;
-							}
-							// absolute
-							try {
-								sendGET(location, maxRedirects - 1, headers).listenInline(result);
-							} catch (Exception e) {
-								result.error(IO.error(e));
-							}
-						} catch (URISyntaxException e) {
-							result.error(new IOException("Invalid redirect location: " + location, e));
+							sendGET(location, maxRedirects - 1, headers).listenInline(result);
+						} catch (Exception e) {
+							result.error(IO.error(e));
 						}
+					} catch (URISyntaxException e) {
+						result.error(new IOException("Invalid redirect location: " + location, e));
 					}
+				}
 
-					@Override
-					public void error(IOException error) {
-						result.error(error);
-					}
+				@Override
+				public void error(IOException error) {
+					result.error(error);
+				}
 
-					@Override
-					public void cancelled(CancelException event) {
-						result.cancel(event);
-					}
-					
-				});
-			},
-			(error) -> {
-				result.error(error);
-			},
-			(cancel) -> {
-				result.cancel(cancel);
-			}
-		);
+				@Override
+				public void cancelled(CancelException event) {
+					result.cancel(event);
+				}
+			});
+		}, result);
 		return result;
 	}
 	
@@ -416,53 +359,47 @@ public final class HTTPClientUtil {
 		String url, File file, int maxRedirects, String... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> result = new AsyncWork<>();
-		sendGET(url, maxRedirects, headers).listenInline(new AsyncWorkListener<Pair<HTTPClient, HTTPResponse>, IOException>() {
+		sendGET(url, maxRedirects, headers).listenInline((p) -> {
 			@SuppressWarnings("resource")
-			@Override
-			public void ready(Pair<HTTPClient, HTTPResponse> p) {
-				HTTPClient client = p.getValue1();
-				HTTPResponse response = p.getValue2();
-				if ((response.getStatusCode() / 100) != 2) {
-					result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+			HTTPClient client = p.getValue1();
+			HTTPResponse response = p.getValue2();
+			if ((response.getStatusCode() / 100) != 2) {
+				result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+				client.close();
+				return;
+			}
+			@SuppressWarnings("resource")
+			FileIO.ReadWrite io = new FileIO.ReadWrite(file, Task.PRIORITY_NORMAL);
+			client.receiveBody(response, io, 64 * 1024).listenInline(
+				() -> {
+					AsyncWork<Long, IOException> seek = io.seekAsync(SeekType.FROM_BEGINNING, 0);
+					seek.listenInline(new Runnable() {
+						@Override
+						public void run() {
+							if (seek.hasError()) {
+								result.unblockError(seek.getError());
+								try { io.close(); } catch (Throwable t) { /* ignore */ }
+								file.delete();
+							} else
+								result.unblockSuccess(new Pair<>(response, io));
+						}
+					});
 					client.close();
-					return;
+				},
+				(error) -> {
+					result.error(error);
+					client.close();
+					try { io.close(); } catch (Throwable t) { /* ignore */ }
+					file.delete();
+				},
+				(cancel) -> {
+					result.cancel(cancel);
+					client.close();
+					try { io.close(); } catch (Throwable t) { /* ignore */ }
+					file.delete();
 				}
-				FileIO.ReadWrite io = new FileIO.ReadWrite(file, Task.PRIORITY_NORMAL);
-				client.receiveBody(response, io, 64 * 1024).listenInline(
-					() -> {
-						AsyncWork<Long, IOException> seek = io.seekAsync(SeekType.FROM_BEGINNING, 0);
-						seek.listenInline(new Runnable() {
-							@Override
-							public void run() {
-								if (seek.hasError())
-									result.unblockError(seek.getError());
-								else
-									result.unblockSuccess(new Pair<>(response, io));
-							}
-						});
-						client.close();
-					},
-					(error) -> {
-						result.error(error);
-						client.close();
-					},
-					(cancel) -> {
-						result.cancel(cancel);
-						client.close();
-					}
-				);
-			}
-			
-			@Override
-			public void error(IOException error) {
-				result.unblockError(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				result.unblockCancel(event);
-			}
-		});
+			);
+		}, result);
 		return result;
 	}
 
@@ -474,38 +411,35 @@ public final class HTTPClientUtil {
 		String url, int maxRedirects, String... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		sendGET(url, maxRedirects, headers).listenInline(new AsyncWorkListener<Pair<HTTPClient, HTTPResponse>, IOException>() {
+		sendGET(url, maxRedirects, headers).listenInline((p) -> {
 			@SuppressWarnings("resource")
-			@Override
-			public void ready(Pair<HTTPClient, HTTPResponse> p) {
-				HTTPClient client = p.getValue1();
-				HTTPResponse response = p.getValue2();
-				if ((response.getStatusCode() / 100) != 2) {
-					result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+			HTTPClient client = p.getValue1();
+			HTTPResponse response = p.getValue2();
+			if ((response.getStatusCode() / 100) != 2) {
+				result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+				client.close();
+				return;
+			}
+			@SuppressWarnings("resource")
+			IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+			@SuppressWarnings("resource")
+			OutputToInput output = new OutputToInput(io, url.toString());
+			client.receiveBody(response, output, 64 * 1024).listenInline(
+				() -> {
+					output.endOfData();
 					client.close();
-					return;
+				},
+				(error) -> {
+					output.signalErrorBeforeEndOfData(error);
+					client.close();
+				},
+				(cancel) -> {
+					output.signalErrorBeforeEndOfData(IO.error(cancel));
+					client.close();
 				}
-				IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-				OutputToInput output = new OutputToInput(io, url.toString());
-				client.receiveBody(response, output, 64 * 1024).listenInline(
-					() -> {
-						output.endOfData();
-						client.close();
-					}
-				);
-				result.unblockSuccess(new Pair<>(response, output));
-			}
-			
-			@Override
-			public void error(IOException error) {
-				result.unblockError(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				result.unblockCancel(event);
-			}
-		});
+			);
+			result.unblockSuccess(new Pair<>(response, output));
+		}, result);
 		return result;
 	}
 
@@ -517,46 +451,37 @@ public final class HTTPClientUtil {
 		String url, int maxRedirects, String... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
-		sendGET(url, maxRedirects, headers).listenInline(new AsyncWorkListener<Pair<HTTPClient, HTTPResponse>, IOException>() {
+		sendGET(url, maxRedirects, headers).listenInline((p) -> {
 			@SuppressWarnings("resource")
-			@Override
-			public void ready(Pair<HTTPClient, HTTPResponse> p) {
-				HTTPClient client = p.getValue1();
-				HTTPResponse response = p.getValue2();
-				if ((response.getStatusCode() / 100) != 2) {
-					result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+			HTTPClient client = p.getValue1();
+			HTTPResponse response = p.getValue2();
+			if ((response.getStatusCode() / 100) != 2) {
+				result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+				client.close();
+				return;
+			}
+			@SuppressWarnings("resource")
+			IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
+			@SuppressWarnings("resource")
+			OutputToInput output = new OutputToInput(io, url.toString());
+			client.receiveBody(response, output, 64 * 1024).listenInline(
+				() -> {
+					output.endOfData();
+					result.unblockSuccess(new Pair<>(response, output));
 					client.close();
-					return;
+				},
+				(error) -> {
+					result.error(error);
+					client.close();
+					try { output.close(); } catch (Throwable t) { /* ignore */ }
+				},
+				(cancel) -> {
+					result.cancel(cancel);
+					client.close();
+					try { output.close(); } catch (Throwable t) { /* ignore */ }
 				}
-				IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, url.toString());
-				OutputToInput output = new OutputToInput(io, url.toString());
-				client.receiveBody(response, output, 64 * 1024).listenInline(
-					() -> {
-						output.endOfData();
-						result.unblockSuccess(new Pair<>(response, output));
-						client.close();
-					},
-					(error) -> {
-						result.error(error);
-						client.close();
-					},
-					(cancel) -> {
-						result.cancel(cancel);
-						client.close();
-					}
-				);
-			}
-			
-			@Override
-			public void error(IOException error) {
-				result.unblockError(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				result.unblockCancel(event);
-			}
-		});
+			);
+		}, result);
 		return result;
 	}
 

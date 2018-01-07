@@ -28,6 +28,7 @@ import net.lecousin.framework.network.http.HTTPRequest.Protocol;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.mime.MIME;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.server.TCPServerClient;

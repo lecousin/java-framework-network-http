@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http.server;
+package net.lecousin.framework.network.http.websocket;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -23,6 +23,7 @@ import net.lecousin.framework.io.util.DataUtil;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 
@@ -34,7 +35,6 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	
 	public static final Log logger = LogFactory.getLog(WebSocketServerProtocol.class);
 	
-	private static final String FIRST_DATA_FRAME_ATTRIBUTE = "protocol.http.websocket.first_dataframe";
 	private static final String DATA_FRAME_ATTRIBUTE = "protocol.http.websocket.dataframe";
 	
 	/** Listener for web socket messages. */
@@ -121,14 +121,16 @@ public class WebSocketServerProtocol implements ServerProtocol {
 			@Override
 			public Void run() {
 				do {
-					DataFrame frame = (DataFrame)client.getAttribute(DATA_FRAME_ATTRIBUTE);
+					WebSocketDataFrame frame = (WebSocketDataFrame)client.getAttribute(DATA_FRAME_ATTRIBUTE);
 					if (frame == null) {
-						frame = new DataFrame();
+						frame = new WebSocketDataFrame();
 						client.setAttribute(DATA_FRAME_ATTRIBUTE, frame);
-						client.setAttribute(FIRST_DATA_FRAME_ATTRIBUTE, frame);
 					}
 					try {
-						frame.read(client, data);
+						if (frame.read(data)) {
+							processMessage(client, frame.getMessage(), frame.getMessageType());
+							client.removeAttribute(DATA_FRAME_ATTRIBUTE);
+						}
 					} catch (IOException e) {
 						logger.error("Error storing WebSocket data frame", e);
 						client.close();
@@ -156,108 +158,9 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		return list;
 	}
 	
-	private class DataFrame {
-		DataFrame() {
-			message = new IOInMemoryOrFile(32768, Task.PRIORITY_NORMAL, "WebSocket Data Frame");
-		}
-		
-		DataFrame(DataFrame previous) {
-			message = previous.message;
-			messageType = previous.messageType;
-		}
-		
-		int messageType = 0;
-		int headerRead = 0;
-		byte byte1;
-		boolean maskPresent;
-		int payloadLengthBits;
-		long payloadLength;
-		int maskRead = 0;
-		byte[] maskValue = null;
-		long messageRead = 0;
-		IOInMemoryOrFile message;
-		
-		void read(TCPServerClient client, ByteBuffer data) throws IOException {
-			if (headerRead == 0) {
-				byte1 = data.get();
-				headerRead++;
-				if (messageType == 0)
-					messageType = (byte1 & 0xF);
-				if (!data.hasRemaining()) return;
-			}
-			if (headerRead == 1) {
-				if (!data.hasRemaining()) return;
-				byte b = data.get();
-				headerRead++;
-				maskPresent = (b & 0x80) != 0;
-				payloadLength = (b & 0x7F);
-				if (payloadLength == 126) {
-					payloadLengthBits = 16;
-					payloadLength = 0;
-				} else if (payloadLength == 127) {
-					payloadLengthBits = 64;
-					payloadLength = 0;
-				} else
-					payloadLengthBits = 7;
-			}
-			while (payloadLengthBits == 16 && headerRead < 4) {
-				if (!data.hasRemaining()) return;
-				byte b = data.get();
-				if (headerRead == 2)
-					payloadLength = (b & 0xFF) << 8;
-				else
-					payloadLength |= (b & 0xFF);
-				headerRead++;
-			}
-			while (payloadLengthBits == 64 && headerRead < 10) {
-				if (!data.hasRemaining()) return;
-				byte b = data.get();
-				payloadLength |= (b & 0xFF) << (8 * (7 + 2 - headerRead));
-				headerRead++;
-			}
-			if (maskPresent && maskValue == null)
-				maskValue = new byte[4];
-			while (maskPresent && maskRead < 4) {
-				if (!data.hasRemaining()) return;
-				maskValue[maskRead++] = data.get();
-			}
-			if (messageRead == payloadLength) {
-				endOfFrame(client);
-				return;
-			}
-			if (!data.hasRemaining()) return;
-			int nb = data.remaining();
-			if (messageRead + nb > payloadLength) nb = (int)(payloadLength - messageRead);
-			byte[] buf = new byte[nb];
-			data.get(buf);
-			if (maskPresent) {
-				for (int i = 0; i < nb; i++,messageRead++)
-					buf[i] = (byte)((buf[i] & 0xFF) ^ (maskValue[(int)(messageRead % 4)] & 0xFF));
-			} else
-				messageRead += nb;
-			message.writeSync(ByteBuffer.wrap(buf));
-			if (messageRead == payloadLength)
-				endOfFrame(client);
-		}
-		
-		private void endOfFrame(TCPServerClient client) {
-			if ((byte1 & 0x80) != 0) {
-				// end of message => process it
-				processMessage(client, message, messageType);
-				client.removeAttribute(FIRST_DATA_FRAME_ATTRIBUTE);
-				client.removeAttribute(DATA_FRAME_ATTRIBUTE);
-				return;
-			}
-			// end of this frame, next frame coming
-			// prepare next frame
-			DataFrame frame = new DataFrame(this);
-			client.setAttribute(DATA_FRAME_ATTRIBUTE, frame);
-		}
-	}
-	
 	@SuppressWarnings("resource")
 	private void processMessage(TCPServerClient client, IOInMemoryOrFile message, int type) {
-		if (type == 1) {
+		if (type == WebSocketDataFrame.TYPE_TEXT) {
 			// text message encoded with UTF-8
 			byte[] buf = new byte[(int)message.getSizeSync()];
 			message.readFullyAsync(0, ByteBuffer.wrap(buf)).listenInline(new AsyncWorkListener<Integer, IOException>() {
@@ -290,7 +193,7 @@ public class WebSocketServerProtocol implements ServerProtocol {
 			});
 			return;
 		}
-		if (type == 2) {
+		if (type == WebSocketDataFrame.TYPE_BINARY) {
 			// binary message
 			message.seekSync(SeekType.FROM_BEGINNING, 0);
 			try {
@@ -300,12 +203,12 @@ public class WebSocketServerProtocol implements ServerProtocol {
 			}
 			return;
 		}
-		if (type == 8) {
+		if (type == WebSocketDataFrame.TYPE_CLOSE) {
 			// close
 			sendMessage(client, 8, new ByteArrayIO(new byte[0], "Empty"), true);
 			return;
 		}
-		if (type == 9) {
+		if (type == WebSocketDataFrame.TYPE_PING) {
 			// ping
 			sendMessage(client, 10, message, false);
 			return;

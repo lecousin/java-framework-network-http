@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http.server;
+package net.lecousin.framework.network.http.websocket;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
@@ -9,6 +9,7 @@ import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.server.TCPServerClient;
 
 /** Dispatch messages received by the server. */

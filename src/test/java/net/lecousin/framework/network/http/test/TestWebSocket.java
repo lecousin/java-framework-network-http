@@ -1,21 +1,36 @@
 package net.lecousin.framework.network.http.test;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.application.Version;
+import net.lecousin.framework.concurrent.synch.AsyncWork;
+import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO.Readable.Seekable;
+import net.lecousin.framework.io.IO.Seekable.SeekType;
+import net.lecousin.framework.io.IOUtil;
+import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.mutable.Mutable;
+import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
-import net.lecousin.framework.network.http.server.WebSocketServerProtocol;
-import net.lecousin.framework.network.http.server.WebSocketServerProtocol.WebSocketMessageListener;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
+import net.lecousin.framework.network.http.websocket.WebSocketClient;
+import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
+import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol.WebSocketMessageListener;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 
-public class TestWebSocket {
+import org.junit.Assert;
+import org.junit.Test;
+
+public class TestWebSocket extends AbstractHTTPTest {
 
 	@SuppressWarnings("resource")
 	public static void main(String[] args) {
@@ -47,6 +62,84 @@ public class TestWebSocket {
 		} catch (Throwable t) {
 			t.printStackTrace(System.err);
 		}
+	}
+	
+	@Test
+	public void test() throws Exception {
+		TCPServer server = new TCPServer();
+		HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
+		MutableInteger connected = new MutableInteger(0);
+		WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketMessageListener() {
+			@Override
+			public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) {
+				System.out.println("WebSocket client connected");
+				connected.inc();
+				for (String p : requestedProtocols)
+					if ("test2".equals(p))
+						return "test2";
+				return null;
+			}
+			@Override
+			public void onTextMessage(WebSocketServerProtocol websocket, TCPServerClient client, String message) {
+				System.out.println("WebSocket text message received from client: "+message);
+				WebSocketServerProtocol.sendTextMessage(client, "Hello " + message + "!");
+			}
+			@Override
+			public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, Seekable message) {
+				System.out.println("WebSocket binary message received from client");
+			}
+		});
+		protocol.enableWebSocket(wsProtocol);
+		server.setProtocol(protocol);
+		server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10);
+
+		WebSocketClient client;
+
+		// try a wrong protocol
+		Assert.assertEquals(0, connected.get());
+		client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "hello", "world");
+		conn.block(0);
+		client.close();
+		Assert.assertEquals(1, connected.get());
+		Assert.assertFalse(conn.isSuccessful());
+
+		// try a correct protocol
+		client = new WebSocketClient();
+		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(2, connected.get());
+		Assert.assertEquals("test2", selected);
+		client.close();
+		
+		// try text messages
+		client = new WebSocketClient();
+		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(3, connected.get());
+		Assert.assertEquals("test2", selected);
+		Mutable<String> received = new Mutable<>(null);
+		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
+		client.onMessage((frame) -> {
+			try {
+				IOInMemoryOrFile msg = frame.getMessage();
+				msg.seekSync(SeekType.FROM_BEGINNING, 0);
+				received.set(IOUtil.readFullyAsStringSync(msg, StandardCharsets.UTF_8));
+				sp.get().unblock();
+			} catch (Exception e) {
+				sp.get().error(e);
+			}
+		});
+		client.sendTextMessage("Test").blockThrow(0);
+		sp.get().blockThrow(5000);
+		Assert.assertEquals("Hello Test!", received.get());
+		sp.set(new SynchronizationPoint<>());
+		client.sendTextMessage("World").blockThrow(0);
+		sp.get().blockThrow(5000);
+		Assert.assertEquals("Hello World!", received.get());
+		client.close();
+		
+		server.close();
 	}
 	
 }

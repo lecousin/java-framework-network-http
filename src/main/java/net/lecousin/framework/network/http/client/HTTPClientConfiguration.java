@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
+import javax.net.ssl.SSLContext;
+
 import net.lecousin.framework.network.SocketOptionValue;
 import net.lecousin.framework.network.http.client.interceptors.ConnectionInterceptor;
 import net.lecousin.framework.network.http.client.interceptors.EnsureHostInterceptor;
@@ -35,6 +37,7 @@ public class HTTPClientConfiguration {
 	private LinkedList<SocketOptionValue<?>> socketOptions = new LinkedList<>();
 	private LinkedList<HTTPRequestInterceptor> interceptors = new LinkedList<>();
 	private ProxySelector proxySelector;
+	private SSLContext sslContext = null;
 	
 	public int getConnectionTimeout() {
 		return connectionTimeout;
@@ -54,6 +57,10 @@ public class HTTPClientConfiguration {
 
 	public List<SocketOptionValue<?>> getSocketOptions() {
 		return socketOptions;
+	}
+	
+	public SocketOptionValue<?>[] getSocketOptionsArray() {
+		return socketOptions.toArray(new SocketOptionValue<?>[socketOptions.size()]);
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -82,6 +89,14 @@ public class HTTPClientConfiguration {
 			if (o.getOption().equals(option))
 				return (T)o.getValue();
 		return null;
+	}
+	
+	public SSLContext getSSLContext() {
+		return sslContext;
+	}
+	
+	public void setSSLContext(SSLContext context) {
+		sslContext = context;
 	}
 	
 	/** Return the list of interceptors. */

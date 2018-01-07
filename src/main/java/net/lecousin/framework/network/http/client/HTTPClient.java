@@ -100,6 +100,10 @@ public class HTTPClient implements Closeable {
 	protected int port;
 	protected HTTPClientConfiguration config;
 	
+	public TCPClient getTCPClient() {
+		return client;
+	}
+	
 	/**
 	 * Send an HTTP request, with an optional body.<br/>
 	 * If the client is not yet connected, first a connection is established to the server or the
@@ -153,7 +157,8 @@ public class HTTPClient implements Closeable {
 						// we have to create a HTTP tunnel with the proxy
 						@SuppressWarnings("resource")
 						TCPClient tunnelClient = new TCPClient();
-						SynchronizationPoint<IOException> tunnelConnect = tunnelClient.connect(inet, config.getConnectionTimeout());
+						SynchronizationPoint<IOException> tunnelConnect =
+							tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
 						connect = new SynchronizationPoint<>();
 						SynchronizationPoint<IOException> result = connect;
 						// prepare the CONNECT request
@@ -167,7 +172,8 @@ public class HTTPClient implements Closeable {
 						tunnelConnect.listenInline(() -> {
 							ISynchronizationPoint<IOException> send = tunnelClient.send(data);
 							send.listenInline(() -> {
-								AsyncWork<HTTPResponse, IOException> response = HTTPResponse.receive(tunnelClient, config.getReceiveTimeout());
+								AsyncWork<HTTPResponse, IOException> response =
+									HTTPResponse.receive(tunnelClient, config.getReceiveTimeout());
 								response.listenInline(() -> {
 									HTTPResponse resp = response.getResult();
 									if (resp.getStatusCode() != 200) {
@@ -183,14 +189,14 @@ public class HTTPClient implements Closeable {
 							}, result);
 						}, result);
 					} else {
-						connect = client.connect(inet, config.getConnectionTimeout());
+						connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
 						request.setPath(url.toString());
 					}
 				}
 			}
 			// direct connection
 			if (connect == null)
-				connect = client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout());
+				connect = client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
 		}
 		
 		if (connect.isUnblocked() && !connect.isSuccessful()) return connect;
@@ -225,49 +231,44 @@ public class HTTPClient implements Closeable {
 		s.append("\r\n");
 		request.getMIME().generateHeaders(s, true);
 		ByteBuffer data = ByteBuffer.wrap(s.toString().getBytes(StandardCharsets.US_ASCII));
-		SynchronizationPoint<IOException> conn = connect;
 		connect.listenInline(() -> {
-			if (conn.hasError()) result.error(conn.getError());
-			else if (conn.isCancelled()) result.cancel(conn.getCancelEvent());
-			else {
-				ISynchronizationPoint<IOException> send = client.send(data);
-				if (body == null || (size != null && size.longValue() == 0)) {
-					send.listenInline(result);
-					return;
-				}
-				ISynchronizationPoint<IOException> sendBody;
-				if (body instanceof IO.KnownSize) {
-					if (body instanceof IO.Readable.Buffered)
-						sendBody = IdentityTransfer.send(client, (IO.Readable.Buffered)body);
-					else {
-						int bufferSize;
-						int maxBuffers;
-						long si = size.longValue();
-						if (si >= 4 * 1024 * 1024) {
-							bufferSize = 1024 * 1024;
-							maxBuffers = 4;
-						} else if (si >= 1024 * 1024) {
-							bufferSize = 512 * 1024;
-							maxBuffers = 6;
-						} else if (si >= 128 * 1024) {
-							bufferSize = 64 * 1024;
-							maxBuffers = 10;
-						} else if (si >= 32 * 1024) {
-							bufferSize = 16 * 1024;
-							maxBuffers = 4;
-						} else {
-							bufferSize = (int)si;
-							maxBuffers = 1;
-						}
-						sendBody = IdentityTransfer.send(client, body, bufferSize, maxBuffers);
-					}
-				} else if (body instanceof IO.Readable.Buffered)
-					sendBody = ChunkedTransfer.send(client, (IO.Readable.Buffered)body);
-				else
-					sendBody = ChunkedTransfer.send(client, body, 128 * 1024, 8);
-				sendBody.listenInline(result);
+			ISynchronizationPoint<IOException> send = client.send(data);
+			if (body == null || (size != null && size.longValue() == 0)) {
+				send.listenInline(result);
+				return;
 			}
-		});
+			ISynchronizationPoint<IOException> sendBody;
+			if (body instanceof IO.KnownSize) {
+				if (body instanceof IO.Readable.Buffered)
+					sendBody = IdentityTransfer.send(client, (IO.Readable.Buffered)body);
+				else {
+					int bufferSize;
+					int maxBuffers;
+					long si = size.longValue();
+					if (si >= 4 * 1024 * 1024) {
+						bufferSize = 1024 * 1024;
+						maxBuffers = 4;
+					} else if (si >= 1024 * 1024) {
+						bufferSize = 512 * 1024;
+						maxBuffers = 6;
+					} else if (si >= 128 * 1024) {
+						bufferSize = 64 * 1024;
+						maxBuffers = 10;
+					} else if (si >= 32 * 1024) {
+						bufferSize = 16 * 1024;
+						maxBuffers = 4;
+					} else {
+						bufferSize = (int)si;
+						maxBuffers = 1;
+					}
+					sendBody = IdentityTransfer.send(client, body, bufferSize, maxBuffers);
+				}
+			} else if (body instanceof IO.Readable.Buffered)
+				sendBody = ChunkedTransfer.send(client, (IO.Readable.Buffered)body);
+			else
+				sendBody = ChunkedTransfer.send(client, body, 128 * 1024, 8);
+			sendBody.listenInline(result);
+		}, result);
 		return result;
 	}
 	
@@ -382,9 +383,8 @@ public class HTTPClient implements Closeable {
 		Provider.FromValue<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
 		AsyncWork<HTTPResponse, IOException> onReceived
 	) {
-		receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
-			@Override
-			public void ready(HTTPResponse response) {
+		receiveResponseHeader().listenInline(
+			(response) -> {
 				if (!response.isBodyExpected()) {
 					onReceived.unblockSuccess(response);
 					return;
@@ -403,18 +403,9 @@ public class HTTPClient implements Closeable {
 						onReceived.error(error);
 					}
 				}
-			}
-			
-			@Override
-			public void error(IOException error) {
-				onReceived.error(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				onReceived.cancel(event);
-			}
-		});
+			},
+			onReceived
+		);
 	}
 	
 	/** Receive the body for the given response for which the headers have been already received. */
@@ -441,46 +432,21 @@ public class HTTPClient implements Closeable {
 	}
 	
 	private void receiveBody(HTTPResponse response, AsyncWork<HTTPResponse,IOException> result, int bufferSize) {
-		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(new AsyncWorkListener<ByteBuffer, IOException>() {
-			@Override
-			public void ready(ByteBuffer data) {
-				AsyncWork<Boolean,IOException> transfer = response.getMIME().bodyDataReady(data);
-				transfer.listenInline(new AsyncWorkListener<Boolean, IOException>() {
-					@Override
-					public void ready(Boolean end) {
-						if (end.booleanValue()) {
-							if (data.hasRemaining()) {
-								// TODO it must not happen, but we have to request to the transfer,
-								// how many bytes are expected!
-							}
-							result.unblockSuccess(response);
-							return;
-						}
-						receiveBody(response, result, bufferSize);
+		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(
+		(data) -> {
+			AsyncWork<Boolean,IOException> transfer = response.getMIME().bodyDataReady(data);
+			transfer.listenInline((end) -> {
+				if (end.booleanValue()) {
+					if (data.hasRemaining()) {
+						// TODO it must not happen, but we have to request to the transfer,
+						// how many bytes are expected!
 					}
-					
-					@Override
-					public void error(IOException error) {
-						result.unblockError(error);
-					}
-					
-					@Override
-					public void cancelled(CancelException event) {
-						result.unblockCancel(event);
-					}
-				});
-			}
-			
-			@Override
-			public void error(IOException error) {
-				result.unblockError(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				result.unblockCancel(event);
-			}
-		});
+					result.unblockSuccess(response);
+					return;
+				}
+				receiveBody(response, result, bufferSize);
+			}, result);
+		}, result);
 	}
 	
 	@Override
