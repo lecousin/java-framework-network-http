@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
@@ -16,6 +17,7 @@ import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.util.Pair;
@@ -49,7 +51,11 @@ public class TestServer extends AbstractHTTPTest {
 					response.setStatus(code, "Test OK");
 					if (request.getParameter("test") != null)
 						response.setHeader("X-Test", request.getParameter("test"));
-					// TODO
+					
+					IO.Readable body = request.getMIME().getBodyOutputAsInput();
+					if (body != null)
+						response.getMIME().setBodyToSend(body);
+					
 					return null;
 				}
 			};
@@ -71,6 +77,28 @@ public class TestServer extends AbstractHTTPTest {
 		check(get, Method.GET, 200, "hello");
 		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/test/get?status=678", 0);
 		check(get, Method.GET, 678, null);
+		FormUrlEncodedEntity entity = new FormUrlEncodedEntity();
+		entity.add("myparam", "myvalue");
+		entity.add("Hello", "World!");
+		entity.add("test", "this is a test");
+		entity.add("test2", "this\nis\tanother+test");
+		AsyncWork<Pair<HTTPResponse,IO.Readable.Seekable>, IOException> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", entity);
+		res.blockThrow(0);
+		FormUrlEncodedEntity entity2 = new FormUrlEncodedEntity();
+		entity2.parse(res.getResult().getValue2(), StandardCharsets.UTF_8).blockThrow(0);
+		Assert.assertEquals(4, entity2.getParameters().size());
+		for (Pair<String, String> p : entity2.getParameters()) {
+			if ("myparam".equals(p.getValue1()))
+				Assert.assertEquals("myvalue", p.getValue2());
+			else if ("Hello".equals(p.getValue1()))
+				Assert.assertEquals("World!", p.getValue2());
+			else if ("test".equals(p.getValue1()))
+				Assert.assertEquals("this is a test", p.getValue2());
+			else if ("test2".equals(p.getValue1()))
+				Assert.assertEquals("this\nis\tanother+test", p.getValue2());
+			else
+				throw new AssertionError("Unexpected parameter " + p.getValue1());
+		}
 		server.close();
 	}
 	
