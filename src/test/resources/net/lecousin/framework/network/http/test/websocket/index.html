@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+Test Web Socket
+<script type="text/javascript">
+var ws = new WebSocket("ws://localhost:1111/");
+ws.onopen = function() {
+	alert("Connection open, send message");
+	ws.send("Coucou");
+};
+ws.onmessage = function(event) {
+	alert("Message received: "+event.data);
+};
+ws.onerror = function() {
+	alert("Error");
+};
+ws.onclose = function() {
+	alert("Closed");
+};
+</script>
+</body>
+</html>
