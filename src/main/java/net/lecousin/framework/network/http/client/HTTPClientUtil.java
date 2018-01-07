@@ -85,11 +85,12 @@ public final class HTTPClientUtil {
 		URI uri = new URI(url);
 		HTTPClient client = HTTPClient.create(uri);
 		HTTPRequest request = new HTTPRequest(method, getRequestPath(uri));
-		request.getMIME().setHeader(MIME.CONTENT_TYPE, entity.getContentType());
+		if (entity != null)
+			request.getMIME().setHeader(MIME.CONTENT_TYPE, entity.getContentType());
 		for (int i = 0; i < headers.length - 1; i += 2)
 			request.getMIME().setHeader(headers[i], headers[i + 1]);
 		AsyncWork<HTTPClient, IOException> result = new AsyncWork<>();
-		client.sendRequest(request, entity.getReadableStream()).listenInline(
+		client.sendRequest(request, entity != null ? entity.getReadableStream() : null).listenInline(
 			() -> { result.unblockSuccess(client); },
 			result
 		);
