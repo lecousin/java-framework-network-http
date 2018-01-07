@@ -88,7 +88,9 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 	private WebSocketRouter router;
 	
 	@Override
-	public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) throws HTTPResponseError {
+	public String onClientConnected(
+		WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols
+	) throws HTTPResponseError {
 		HTTPRequest request = (HTTPRequest)client.getAttribute(HTTPServerProtocol.REQUEST_ATTRIBUTE);
 		String path = request.getPath();
 		try { path = URLDecoder.decode(path, "UTF-8"); }

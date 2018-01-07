@@ -23,6 +23,7 @@ import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
+import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
@@ -170,6 +171,30 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Assert.assertTrue(files.containsKey("myfile"));
 	}
 	
+	@Test(timeout=120000)
+	public void testSendAndReceiveHeaders() throws Exception {
+		Pair<HTTPClient, HTTPResponse> p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", (IO.Readable)null).blockResult(0);
+		p.getValue1().close();
+		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", (MimeEntity)null).blockResult(0);
+		p.getValue1().close();
+	}
+	
+	@Test(timeout=120000)
+	public void testSendAndReceive() throws Exception {
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (IO.Readable)null, "X-Test", "a test").blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (MimeEntity)null, "X-Test", "a test").blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+	}
+	
+	@Test(timeout=120000)
+	public void testSendAndReceiveFully() throws Exception {
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (IO.Readable)null, "X-Test", "a test").blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (MimeEntity)null, "X-Test", "a test").blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+	}
+	
 	@SuppressWarnings("unused")
 	private static void checkHttpBin(HTTPRequest request, HTTPResponse response, IO.Readable.Seekable content, String url) throws Exception {
 		JSONParser parser = new JSONParser();
@@ -180,7 +205,8 @@ public class TestHttpClient extends AbstractHTTPTest {
 			Assert.assertEquals(url, json.get("url"));
 		o = json.get("headers");
 		Assert.assertTrue(o instanceof JSONObject);
-		checkHttpBinRequestHeaders(request, (JSONObject)o);
+		if (request != null)
+			checkHttpBinRequestHeaders(request, (JSONObject)o);
 	}
 	
 	private static void checkHttpBinRequestHeaders(HTTPRequest request, JSONObject json) {

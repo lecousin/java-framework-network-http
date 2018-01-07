@@ -6,6 +6,7 @@ import java.nio.ByteBuffer;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 
+/** Frame used for the web socket protocol. */
 public class WebSocketDataFrame {
 	
 	public static final int TYPE_TEXT = 1;
@@ -14,7 +15,7 @@ public class WebSocketDataFrame {
 	public static final int TYPE_PING = 9;
 	public static final int TYPE_PONG = 10;
 	
-
+	/** Constructor. */
 	public WebSocketDataFrame() {
 		message = new IOInMemoryOrFile(32768, Task.PRIORITY_NORMAL, "WebSocket Data Frame");
 	}
@@ -38,6 +39,7 @@ public class WebSocketDataFrame {
 		return messageType;
 	}
 	
+	/** Parse the given received data, return true if the frame is complete, false if more data is needed. */
 	public boolean read(ByteBuffer data) throws IOException {
 		if (headerRead == 0) {
 			byte1 = data.get();

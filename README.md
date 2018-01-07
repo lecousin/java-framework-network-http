@@ -4,7 +4,10 @@ The http module provides base implementations for a HTTP client and a HTTP serve
 
 The HTTP client allows to connect to a HTTP server, send requests, and receive the response asynchronously.
 
-The HTTPServerProtocol class implements the HTTP protocol, and gives the requests to process to a HTTPRequestProcessor that must be provided. It implements also the HTTP protocol upgrade mechanism. This mechanism is used for example by the WebSocketServerProtocol to implement Web-Sockets, but others protocols may be provided.
+The HTTPServerProtocol class implements the HTTP protocol, and gives the requests to process to a HTTPRequestProcessor that must be provided. It implements also the HTTP protocol upgrade mechanism.
+
+The WebSocketServerProtocol implement the Web-Socket protocol on server side and can be used with the HTTP protocol upgrade mechanism.
+The WebSocketClient allows to connect, receive messages and send messages using the Web-Socket protocol.
 
 ## Build status
 

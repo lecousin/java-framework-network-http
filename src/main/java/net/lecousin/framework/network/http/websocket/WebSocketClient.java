@@ -35,8 +35,10 @@ import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 
+/** Client for web socket protocol. */
 public class WebSocketClient implements Closeable {
 
+	/** Constructor. */
 	public WebSocketClient() {
 	}
 	

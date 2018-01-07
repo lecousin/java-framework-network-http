@@ -63,6 +63,7 @@ public class HTTPClientConfiguration {
 		return socketOptions.toArray(new SocketOptionValue<?>[socketOptions.size()]);
 	}
 	
+	/** Set an option. */
 	@SuppressWarnings("unchecked")
 	public <T> void setSocketOption(SocketOptionValue<T> option) {
 		for (@SuppressWarnings("rawtypes") SocketOptionValue o : socketOptions)
@@ -73,6 +74,7 @@ public class HTTPClientConfiguration {
 		socketOptions.add(option);
 	}
 	
+	/** Set an option. */
 	@SuppressWarnings("unchecked")
 	public <T> void setSocketOption(SocketOption<T> option, T value) {
 		for (@SuppressWarnings("rawtypes") SocketOptionValue o : socketOptions)
@@ -83,6 +85,7 @@ public class HTTPClientConfiguration {
 		socketOptions.add(new SocketOptionValue<T>(option, value));
 	}
 	
+	/** Get the value for an option or null if not set. */
 	@SuppressWarnings("unchecked")
 	public <T> T getSocketOption(SocketOption<T> option) {
 		for (@SuppressWarnings("rawtypes") SocketOptionValue o : socketOptions)

@@ -133,6 +133,7 @@ public class HTTPResponse {
 		this.forceClose = forceClose;
 	}
 	
+	/** Return true if it is requested to close the connection once the response is sent. */
 	public boolean forceClose() {
 		return forceClose;
 	}

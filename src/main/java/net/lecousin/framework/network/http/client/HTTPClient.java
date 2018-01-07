@@ -196,7 +196,8 @@ public class HTTPClient implements Closeable {
 			}
 			// direct connection
 			if (connect == null)
-				connect = client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
+				connect = client.connect(
+					new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
 		}
 		
 		if (connect.isUnblocked() && !connect.isSuccessful()) return connect;

@@ -264,12 +264,12 @@ public class HTTPServerProtocol implements ServerProtocol {
 			@Override
 			public void error(IOException error) {
 				onbufferavailable.run();
-				// TODO
+				logger.error("Error receiving body from client", error);
+				client.close();
 			}
 			
 			@Override
 			public void cancelled(CancelException event) {
-				// TODO
 			}
 		});
 	}
@@ -317,6 +317,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		}, true);
 	}
 	
+	/** Send an error response to the client. */
 	public static void sendError(
 		TCPServerClient client, int status, String message, HTTPRequest request, boolean forceClose
 	) {
@@ -325,6 +326,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		sendError(client, status, message, request, response);
 	}
 	
+	/** Send an error response to the client. */
 	public static void sendError(
 		TCPServerClient client, int status, String message, HTTPRequest request, HTTPResponse response
 	) {
@@ -337,6 +339,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		sendResponse(client, request, response, previousResponseSent, responseSent);
 	}
 	
+	/** Send a response to the client. */
 	public static void sendResponse(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
 		SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
 		@SuppressWarnings("unchecked")
@@ -404,7 +407,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 		SynchronizationPoint<Exception> responseSent
 	) {
 		if (!response.getMIME().hasHeader(HTTPResponse.SERVER_HEADER))
-			response.getMIME().setHeader(HTTPResponse.SERVER_HEADER, "net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
+			response.getMIME().setHeader(HTTPResponse.SERVER_HEADER,
+				"net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
 		if (bodySize >= 0)
 			response.getMIME().setHeader(MIME.CONTENT_LENGTH, Long.toString(bodySize));
 		else
@@ -444,7 +448,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			return;
 		}
 		if (bodySize < 0) {
-			sendResponseChunked(client, request, response, body, responseSent);
+			sendResponseChunked(client, request, body, responseSent);
 			return;
 		}
 		if (body instanceof IO.Readable.Buffered) {
@@ -473,7 +477,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 				size.set(size.get() - read.get().getResult().intValue());
 				SynchronizationPoint<IOException> send;
 				try {
-					send = client.send(buf.get(), size.get() > 0 ? false : !request.isConnectionPersistent() || response.forceClose());
+					send = client.send(buf.get(),
+						size.get() > 0 ? false : !request.isConnectionPersistent() || response.forceClose());
 				} catch (IOException e) {
 					body.closeAsync();
 					client.close();
@@ -530,7 +535,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 						@Override
 						public Void run() {
 							try {
-								sendResponseBuffered(client, request, response, body, client.send(buffer, false), responseSent);
+								sendResponseBuffered(
+									client, request, response, body, client.send(buffer, false), responseSent);
 							} catch (ClosedChannelException e) {
 								body.closeAsync();
 								client.close();
@@ -558,7 +564,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 	
 	@SuppressWarnings("resource")
 	private static void sendResponseChunked(
-		TCPServerClient client, HTTPRequest request, HTTPResponse response, IO.Readable body, SynchronizationPoint<Exception> responseSent
+		TCPServerClient client, HTTPRequest request, IO.Readable body, SynchronizationPoint<Exception> responseSent
 	) {
 		IO.Readable.Buffered input;
 		if (body instanceof IO.Readable.Buffered)
