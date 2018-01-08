@@ -176,7 +176,7 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-		<version>0.9.8</version>
+		<version>0.9.10</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>
