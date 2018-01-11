@@ -153,19 +153,19 @@
   	<dependency>
   		<groupId>${project.groupId}</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.2.2</version>
+  		<version>0.2.3</version>
   	</dependency>
   	<dependency>
   		<groupId>${project.groupId}</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.2.2</version>
+  		<version>0.2.3</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>
   	<dependency>
   		<groupId>${project.groupId}</groupId>
   		<artifactId>mime</artifactId>
-  		<version>0.2.0</version>
+  		<version>0.2.1</version>
   	</dependency>
   	<dependency>
 		<groupId>junit</groupId>
@@ -176,7 +176,7 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-		<version>0.9.10</version>
+		<version>0.9.11</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>

@@ -14,6 +14,7 @@ import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.mime.MIME;
+import net.lecousin.framework.network.mime.MIMEUtil;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -82,7 +83,7 @@ public class HTTPResponse {
 	public void addCookie(String name, String value, long expiration, String path, String domain, boolean secure, boolean httpOnly) {
 		StringBuilder s = new StringBuilder();
 		s.append(name).append('=');
-		s.append(MIME.encodeUTF8HeaderParameterValue(value));
+		s.append(MIMEUtil.encodeUTF8HeaderParameterValue(value));
 		if (expiration != 0)
 			s.append("; Expires=").append(DateTimeFormatter.RFC_1123_DATE_TIME.format(
 					Instant.ofEpochMilli(System.currentTimeMillis() + expiration).atZone(ZoneId.of("GMT"))));

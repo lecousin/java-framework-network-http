@@ -10,6 +10,7 @@ import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineExcep
 import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.mime.MIME;
+import net.lecousin.framework.network.mime.MIMEUtil;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -258,7 +259,7 @@ public class HTTPRequest implements AttributesContainer {
 				String n = pair.substring(0,i).trim();
 				if (n.equals(name)) {
 					String value = pair.substring(i + 1).trim();
-					try { value = MIME.decodeHeaderRFC2047(value); }
+					try { value = MIMEUtil.decodeHeaderRFC2047(value); }
 					catch (Throwable t) { /* ignore */ }
 					return value;
 				}
