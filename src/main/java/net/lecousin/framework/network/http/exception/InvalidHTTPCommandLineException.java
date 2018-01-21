@@ -3,7 +3,6 @@ package net.lecousin.framework.network.http.exception;
 import net.lecousin.framework.locale.LocalizableString;
 import net.lecousin.framework.locale.LocalizableStringBuffer;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Invalid command line in the HTTP request. */
 public class InvalidHTTPCommandLineException extends HTTPException {
 

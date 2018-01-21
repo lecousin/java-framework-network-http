@@ -1,6 +1,5 @@
 package net.lecousin.framework.network.http.exception;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Exception raised as an IOException when the server returned a status code corresponding to an error. */
 public class HTTPError extends Exception {
 

@@ -37,7 +37,6 @@ import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Implements the HTTP protocol on server side. */
 public class HTTPServerProtocol implements ServerProtocol {
 

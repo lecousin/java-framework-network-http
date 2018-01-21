@@ -34,7 +34,6 @@ import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Provider;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** HTTP client. */
 public class HTTPClient implements Closeable {
 	

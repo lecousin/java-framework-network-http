@@ -2,7 +2,6 @@ package net.lecousin.framework.network.http.exception;
 
 import java.io.IOException;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Exception raised as an IOException when the server returned a status code corresponding to an error. */
 public class HTTPResponseError extends IOException {
 

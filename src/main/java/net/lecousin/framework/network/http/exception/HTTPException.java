@@ -3,7 +3,6 @@ package net.lecousin.framework.network.http.exception;
 import net.lecousin.framework.exception.LocalizableException;
 import net.lecousin.framework.locale.ILocalizableString;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** HTTP exception. */
 public abstract class HTTPException extends LocalizableException {
 

@@ -24,7 +24,6 @@ import net.lecousin.framework.network.mime.MIME;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.util.Pair;
 
-//skip checkstyle: AbbreviationAsWordInName
 //skip checkstyle: MethodName
 /** Utility methods for HTTP client. */
 public final class HTTPClientUtil {

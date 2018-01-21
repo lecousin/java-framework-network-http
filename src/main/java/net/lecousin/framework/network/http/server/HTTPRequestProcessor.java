@@ -5,7 +5,6 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Process requests received by the server. */
 public interface HTTPRequestProcessor {
 

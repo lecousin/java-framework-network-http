@@ -19,7 +19,6 @@ import net.lecousin.framework.network.mime.MIMEUtil;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** HTTP Response. */
 public class HTTPResponse {
 	

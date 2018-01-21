@@ -13,7 +13,6 @@ import net.lecousin.framework.network.http.client.interceptors.ConnectionInterce
 import net.lecousin.framework.network.http.client.interceptors.EnsureHostInterceptor;
 import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Configuration for an HTTP client. */
 public class HTTPClientConfiguration {
 

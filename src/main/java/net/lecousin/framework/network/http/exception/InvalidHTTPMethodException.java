@@ -5,7 +5,6 @@ import net.lecousin.framework.locale.LocalizableStringBuffer;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.util.StringUtil;
 
-//skip checkstyle: AbbreviationAsWordInName
 /** Invalid HTTP method. */
 public class InvalidHTTPMethodException extends HTTPException {
 
