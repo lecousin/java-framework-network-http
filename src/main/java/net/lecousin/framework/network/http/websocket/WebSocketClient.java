@@ -104,11 +104,12 @@ public class WebSocketClient implements Closeable {
 		AsyncWork<String, IOException> result = new AsyncWork<>();
 		// prepare the CONNECT request
 		HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-		connectRequest.getMIME().addHeaderValue(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+		connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
 		StringBuilder s = new StringBuilder(512);
 		connectRequest.generateCommandLine(s);
 		s.append("\r\n");
-		connectRequest.getMIME().generateHeaders(s, true);
+		connectRequest.getMIME().appendHeadersTo(s);
+		s.append("\r\n");
 		ByteBuffer data = ByteBuffer.wrap(s.toString().getBytes(StandardCharsets.US_ASCII));
 		tunnelConnect.listenInline(() -> {
 			ISynchronizationPoint<IOException> send = tunnelClient.send(data);
@@ -184,8 +185,8 @@ public class WebSocketClient implements Closeable {
 		HTTPClient httpClient = new HTTPClient(client, hostname, port, config);
 		HTTPRequest request = new HTTPRequest(Method.GET, path);
 		// Upgrade connection
-		request.getMIME().addHeaderValue(HTTPRequest.HEADER_CONNECTION, "Upgrade");
-		request.getMIME().addHeaderValue("Upgrade", "websocket");
+		request.getMIME().addHeaderRaw(HTTPRequest.HEADER_CONNECTION, "Upgrade");
+		request.getMIME().addHeaderRaw("Upgrade", "websocket");
 		// Generate random key
 		Random rand = LCCore.getApplication().getInstance(Random.class);
 		if (rand == null) {
@@ -195,19 +196,19 @@ public class WebSocketClient implements Closeable {
 		byte[] keyBytes = new byte[16];
 		rand.nextBytes(keyBytes);
 		String key = new String(Base64.encodeBase64(keyBytes), StandardCharsets.US_ASCII);
-		request.getMIME().setHeader("Sec-WebSocket-Key", key);
+		request.getMIME().addHeaderRaw("Sec-WebSocket-Key", key);
 		// protocols
 		StringBuilder protocolList = new StringBuilder();
 		for (String p : protocols) {
 			if (protocolList.length() > 0) protocolList.append(", ");
 			protocolList.append(p);
 		}
-		request.getMIME().setHeader("Sec-WebSocket-Protocol", protocolList.toString());
+		request.getMIME().addHeaderRaw("Sec-WebSocket-Protocol", protocolList.toString());
 		// set version
-		request.getMIME().setHeader("Sec-WebSocket-Version", "13");
+		request.getMIME().addHeaderRaw("Sec-WebSocket-Version", "13");
 		
 		// send HTTP request
-		SynchronizationPoint<IOException> send = httpClient.sendRequest(request, null);
+		SynchronizationPoint<IOException> send = httpClient.sendRequest(request);
 		
 		// calculate the expected accept key
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -229,7 +230,7 @@ public class WebSocketClient implements Closeable {
 						result.error(new IOException("Server does not support websocket on this address"));
 						return;
 					}
-					String accept = response.getMIME().getHeaderSingleValue("Sec-WebSocket-Accept");
+					String accept = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Accept");
 					if (accept == null) {
 						client.close();
 						result.error(new IOException("The server did not return the accept key"));
@@ -240,7 +241,7 @@ public class WebSocketClient implements Closeable {
 						result.error(new IOException("The server returned an invalid accept key"));
 						return;
 					}
-					String protocol = response.getMIME().getHeaderSingleValue("Sec-WebSocket-Protocol");
+					String protocol = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Protocol");
 					if (protocol == null) {
 						client.close();
 						result.error(new IOException("The server did not return the selected protocol"));

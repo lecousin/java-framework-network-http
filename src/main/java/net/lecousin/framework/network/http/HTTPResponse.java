@@ -13,8 +13,8 @@ import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.network.client.TCPClient;
-import net.lecousin.framework.network.mime.MIME;
-import net.lecousin.framework.network.mime.MIMEUtil;
+import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.mime.MimeUtil;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -29,7 +29,7 @@ public class HTTPResponse {
 	private int statusCode = -1;
 	private String statusMessage = null;
 	private HTTPRequest.Protocol protocol = null;
-	private MIME mime = new MIME();
+	private MimeMessage mime = new MimeMessage();
 	private boolean forceClose = false;
 	
 	public void setProtocol(HTTPRequest.Protocol protocol) {
@@ -59,21 +59,21 @@ public class HTTPResponse {
 	
 	public String getStatusMessage() { return statusMessage; }
 	
-	public MIME getMIME() { return mime; }
+	public MimeMessage getMIME() { return mime; }
 	
 	/** Set the Content-Type header. */
-	public void setContentType(String type) {
-		mime.setHeader(MIME.CONTENT_TYPE, type);
+	public void setRawContentType(String type) {
+		mime.setHeaderRaw(MimeMessage.CONTENT_TYPE, type);
 	}
 	
 	/** Set a header. */
-	public void setHeader(String name, String value) {
-		mime.setHeader(name, value);
+	public void setHeaderRaw(String name, String value) {
+		mime.setHeaderRaw(name, value);
 	}
 	
 	/** Add a value to a header. */
-	public void addHeaderValue(String headerName, String value) {
-		mime.addHeaderValue(headerName, value);
+	public void addHeaderRaw(String headerName, String value) {
+		mime.addHeaderRaw(headerName, value);
 	}
 	
 	/** Add a cookie.
@@ -82,7 +82,7 @@ public class HTTPResponse {
 	public void addCookie(String name, String value, long expiration, String path, String domain, boolean secure, boolean httpOnly) {
 		StringBuilder s = new StringBuilder();
 		s.append(name).append('=');
-		s.append(MIMEUtil.encodeUTF8HeaderParameterValue(value));
+		s.append(MimeUtil.encodeUTF8Value(value));
 		if (expiration != 0)
 			s.append("; Expires=").append(DateTimeFormatter.RFC_1123_DATE_TIME.format(
 					Instant.ofEpochMilli(System.currentTimeMillis() + expiration).atZone(ZoneId.of("GMT"))));
@@ -94,24 +94,24 @@ public class HTTPResponse {
 			s.append("; Secure");
 		if (httpOnly)
 			s.append("; HttpOnly");
-		addHeaderValue("Set-Cookie", s.toString());
+		addHeaderRaw("Set-Cookie", s.toString());
 	}
 	
 	/** Set headers to indicate that the response must not be cached. */
 	public void noCache() {
-		mime.setHeader("Cache-Control", "no-cache,no-store");
-		mime.setHeader("Pragma", "no-cache");
-		mime.setHeader("Expires", DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
+		mime.setHeaderRaw("Cache-Control", "no-cache,no-store");
+		mime.setHeaderRaw("Pragma", "no-cache");
+		mime.setHeaderRaw("Expires", DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
 	}
 	
 	/** Set headers to indicate that the response can be cached for the given duration in milliseconds. */
 	public void publicCache(Long maxAge) {
 		if (maxAge != null) {
-			mime.setHeader("Cache-Control", "public,max-age=" + maxAge);
-			mime.setHeader("Expires",DateTimeFormatter.RFC_1123_DATE_TIME.format(
+			mime.setHeaderRaw("Cache-Control", "public,max-age=" + maxAge);
+			mime.setHeaderRaw("Expires",DateTimeFormatter.RFC_1123_DATE_TIME.format(
 				Instant.ofEpochMilli(System.currentTimeMillis() + maxAge.longValue()).atZone(ZoneId.of("GMT"))));
 		} else
-			mime.setHeader("Cache-Control", "public");
+			mime.setHeaderRaw("Cache-Control", "public");
 	}
 	
 	/** Return true if a body is expected to be received in this response. */
@@ -126,7 +126,7 @@ public class HTTPResponse {
 	/** Set status code to 301 with the given location. */
 	public void redirectPerm(String location) {
 		setStatus(HttpURLConnection.HTTP_MOVED_PERM);
-		setHeader("Location", location);
+		setHeaderRaw("Location", location);
 	}
 	
 	public void setForceClose(boolean forceClose) {

@@ -29,10 +29,15 @@ import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
-import net.lecousin.framework.network.mime.MIME;
+import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.mime.MimeUtil;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
+import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
+import net.lecousin.framework.network.mime.transfer.TransferReceiver;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
+import net.lecousin.framework.util.UnprotectedString;
+import net.lecousin.framework.util.UnprotectedStringBuffer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -44,6 +49,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 	
 	public static final String REQUEST_ATTRIBUTE = "protocol.http.request";
 	private static final String CURRENT_LINE_ATTRIBUTE = "protocol.http.current_line";
+	private static final String HEADERS_RECEIVER_ATTRIBUTE = "protocol.http.headers_receiver";
 	private static final String RECEIVE_STATUS_ATTRIBUTE = "protocol.http.receive_status";
 	private static final String BODY_TRANSFER_ATTRIBUTE = "protocol.http.receive.body.io";
 	private static final String LAST_RESPONSE_SENT_ATTRIBUTE = "protocol.http.send.last";
@@ -137,15 +143,32 @@ public class HTTPServerProtocol implements ServerProtocol {
 		}
 		StringBuilder line = (StringBuilder)client.getAttribute(CURRENT_LINE_ATTRIBUTE);
 		if (line == null) {
-			line = new StringBuilder();
+			line = new StringBuilder(128);
 			client.setAttribute(CURRENT_LINE_ATTRIBUTE, line);
+		}
+		MimeUtil.HeadersLinesReceiver linesReceiver = (MimeUtil.HeadersLinesReceiver)client.getAttribute(HEADERS_RECEIVER_ATTRIBUTE);
+		if (linesReceiver == null) {
+			linesReceiver = new MimeUtil.HeadersLinesReceiver(request.getMIME().getHeaders());
+			client.setAttribute(HEADERS_RECEIVER_ATTRIBUTE, linesReceiver);
 		}
 		while (data.hasRemaining()) {
 			char c = (char)(data.get() & 0xFF);
 			if (c == '\n') {
-				String s = line.toString().trim();
+				String s;
+				if (line.length() > 0 && line.charAt(line.length() - 1) == '\r')
+					s = line.substring(0, line.length() - 1);
+				else
+					s = line.toString();
 				if (s.isEmpty()) {
 					// end of header
+					client.removeAttribute(HEADERS_RECEIVER_ATTRIBUTE);
+					try { linesReceiver.newLine(s); }
+					catch (Exception e) {
+						logger.error("Error parsing HTTP headers", e);
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, "Error parsing HTTP headers: " + e.getMessage(), request, true);
+						onbufferavailable.run();
+						return;
+					}
 					if (logger.isTraceEnabled()) {
 						logger.trace("End of headers received");
 					}
@@ -154,22 +177,31 @@ public class HTTPServerProtocol implements ServerProtocol {
 					}
 					// Analyze headers to check if an upgrade of the protocol is requested
 					if (upgradableProtocols != null &&
-						request.getMIME().hasHeader("Upgrade") &&
-						request.getMIME().isHeaderCommaSeparatedContainingValue("Connection", "Upgrade")) {
-						// there is an upgrade request
-						String protoName = request.getMIME().getHeaderSingleValue("Upgrade").trim().toLowerCase();
-						ServerProtocol proto = upgradableProtocols.get(protoName);
-						if (proto != null) {
-							// the protocol is supported
-							client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
-							client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
-							logger.debug("Upgrading protocol to " + protoName);
-							proto.startProtocol(client);
-							if (data.hasRemaining())
-								proto.dataReceivedFromClient(client, data, onbufferavailable);
-							else
-								onbufferavailable.run();
-							return;
+						request.getMIME().hasHeader("Upgrade")) {
+						String conn = request.getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
+						boolean isUpgrade = false;
+						if (conn != null)
+							for (String str : conn.split(","))
+								if (str.equalsIgnoreCase("Upgrade")) {
+									isUpgrade = true;
+									break;
+								}
+						if (isUpgrade) {
+							// there is an upgrade request
+							String protoName = request.getMIME().getFirstHeaderRawValue("Upgrade").trim().toLowerCase();
+							ServerProtocol proto = upgradableProtocols.get(protoName);
+							if (proto != null) {
+								// the protocol is supported
+								client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
+								client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
+								logger.debug("Upgrading protocol to " + protoName);
+								proto.startProtocol(client);
+								if (data.hasRemaining())
+									proto.dataReceivedFromClient(client, data, onbufferavailable);
+								else
+									onbufferavailable.run();
+								return;
+							}
 						}
 					}
 					if (!request.isExpectingBody()) {
@@ -189,11 +221,13 @@ public class HTTPServerProtocol implements ServerProtocol {
 					}
 					if (logger.isTraceEnabled())
 						logger.trace("Start receiving the body");
+					// maximum 1MB in memory
 					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, "HTTP Body");
-					client.setAttribute(BODY_TRANSFER_ATTRIBUTE, io);
+					request.getMIME().setBodyReceived(io);
 					client.addToClose(io);
 					try {
-						request.getMIME().initBodyTransfer(io); // maximum 1MB in memory
+						TransferReceiver transfer = TransferEncodingFactory.create(request.getMIME(), io);
+						client.setAttribute(BODY_TRANSFER_ATTRIBUTE, transfer);
 					} catch (IOException e) {
 						logger.error("Error initializing body transfer", e);
 						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, true);
@@ -208,7 +242,14 @@ public class HTTPServerProtocol implements ServerProtocol {
 				if (logger.isTraceEnabled())
 					logger.trace("Request header line received: " + line.toString().trim());
 				if (request.isCommandSet())
-					request.getMIME().appendHeaderLine(s);
+					try { linesReceiver.newLine(s); }
+					catch (Exception e) {
+						logger.error("Error parsing HTTP headers", e);
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, "Error parsing HTTP headers: " + e.getMessage(), request, true);
+						line.setLength(0);
+						onbufferavailable.run();
+						return;
+					}
 				else {
 					try { request.setCommand(s); }
 					catch (Exception e) {
@@ -231,7 +272,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 	
 	private void receiveBody(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
 		HTTPRequest request = (HTTPRequest)client.getAttribute(REQUEST_ATTRIBUTE);
-		AsyncWork<Boolean, IOException> sp = request.getMIME().bodyDataReady(data);
+		TransferReceiver transfer = (TransferReceiver)client.getAttribute(BODY_TRANSFER_ATTRIBUTE);
+		AsyncWork<Boolean, IOException> sp = transfer.consume(data);
 		sp.listenInline(new AsyncWorkListener<Boolean, IOException>() {
 			@Override
 			public void ready(Boolean result) {
@@ -239,10 +281,11 @@ public class HTTPServerProtocol implements ServerProtocol {
 				if (result.booleanValue()) {
 					// end of body reached
 					@SuppressWarnings("resource")
-					IO.Readable.Seekable io = (IO.Readable.Seekable)client.getAttribute(BODY_TRANSFER_ATTRIBUTE);
+					IO.Readable.Seekable io = (IO.Readable.Seekable)request.getMIME().getBodyReceivedAsInput();
 					try { io.seekSync(SeekType.FROM_BEGINNING, 0); }
 					catch (Throwable e) { /* ignore */ }
 					client.removeAttribute(REQUEST_ATTRIBUTE);
+					client.removeAttribute(BODY_TRANSFER_ATTRIBUTE);
 					client.removeAttribute(CURRENT_LINE_ATTRIBUTE);
 					client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 					client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
@@ -295,7 +338,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			public Void run() {
 				if (processing.isCancelled()) {
 					client.close();
-					IO.Readable responseBody = response.getMIME().getBodyInput();
+					IO.Readable responseBody = response.getMIME().getBodyToSend();
 					if (responseBody != null) responseBody.closeAsync();
 					responseSent.cancel(processing.getCancelEvent());
 					return null;
@@ -359,14 +402,14 @@ public class HTTPServerProtocol implements ServerProtocol {
 		}
 		if (previousResponseSent.isCancelled()) {
 			client.close();
-			IO.Readable responseBody = response.getMIME().getBodyInput();
+			IO.Readable responseBody = response.getMIME().getBodyToSend();
 			if (responseBody != null) responseBody.closeAsync();
 			responseSent.cancel(previousResponseSent.getCancelEvent());
 			return;
 		}
 		if (previousResponseSent.hasError()) {
 			client.close();
-			IO.Readable responseBody = response.getMIME().getBodyInput();
+			IO.Readable responseBody = response.getMIME().getBodyToSend();
 			if (responseBody != null) responseBody.closeAsync();
 			responseSent.error(previousResponseSent.getError());
 			return;
@@ -388,7 +431,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		TCPServerClient client, HTTPRequest request, HTTPResponse response, SynchronizationPoint<Exception> responseSent
 	) {
 		@SuppressWarnings("resource")
-		IO.Readable body = response.getMIME().getBodyInput();
+		IO.Readable body = response.getMIME().getBodyToSend();
 		if (body == null)
 			sendResponse(client, request, response, null, 0, responseSent);
 		else if (body instanceof IO.KnownSize) {
@@ -406,35 +449,43 @@ public class HTTPServerProtocol implements ServerProtocol {
 		SynchronizationPoint<Exception> responseSent
 	) {
 		if (!response.getMIME().hasHeader(HTTPResponse.SERVER_HEADER))
-			response.getMIME().setHeader(HTTPResponse.SERVER_HEADER,
+			response.getMIME().setHeaderRaw(HTTPResponse.SERVER_HEADER,
 				"net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
 		if (bodySize >= 0)
-			response.getMIME().setHeader(MIME.CONTENT_LENGTH, Long.toString(bodySize));
+			response.getMIME().setContentLength(bodySize);
 		else
-			response.getMIME().setHeader(MIME.TRANSFER_ENCODING, "chunked");
+			response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
 		endOfProcessing(client);
-		String s = response.getMIME().generateHeaders(false);
-		if (logger.isTraceEnabled())
-			logger.trace("Sending response with headers:\n" + s);
-		Protocol protocol = response.getProtocol();
-		if (protocol == null) protocol = request.getProtocol();
-		byte[] status = (protocol.getName() + ' ' + Integer.toString(response.getStatusCode()) + ' ' + response.getStatusMessage())
-			.getBytes(StandardCharsets.US_ASCII);
-		byte[] header = s.getBytes();
-		ByteBuffer buffer = ByteBuffer.allocate(status.length + 2 + header.length + 2);
-		buffer.put(status);
-		buffer.put(MIME.CRLF);
-		buffer.put(header);
-		buffer.put(MIME.CRLF);
-		buffer.flip();
+		
 		if (logger.isDebugEnabled())
 			logger.debug("Response code " + response.getStatusCode() + " for request " + request.generateCommandLine());
-		SynchronizationPoint<IOException> sendHeaders;
+
+		Protocol protocol = response.getProtocol();
+		if (protocol == null) protocol = request.getProtocol();
+		byte[] status = (protocol.getName() + ' ' + Integer.toString(response.getStatusCode()) + ' ' + response.getStatusMessage() + "\r\n")
+			.getBytes(StandardCharsets.US_ASCII);
 		try {
-			sendHeaders = client.send(buffer, bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
+			client.send(ByteBuffer.wrap(status), false);
 		} catch (Exception e) {
 			if (body != null) body.closeAsync();
-			if (request.getMIME().getBodyOutput() != null) request.getMIME().getBodyOutput().closeAsync();
+			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
+			client.close();
+			responseSent.error(e);
+			return;
+		}
+
+		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(2048));
+		response.getMIME().appendHeadersTo(s);
+		s.append("\r\n");
+		byte[] headers = s.toUsAsciiBytes();
+		if (logger.isTraceEnabled())
+			logger.trace("Sending response with headers:\n" + s);
+		SynchronizationPoint<IOException> sendHeaders;
+		try {
+			sendHeaders = client.send(ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
+		} catch (Exception e) {
+			if (body != null) body.closeAsync();
+			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			client.close();
 			responseSent.error(e);
 			return;
@@ -442,7 +493,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		if (bodySize == 0) {
 			// empty answer
 			if (body != null) body.closeAsync();
-			if (request.getMIME().getBodyOutput() != null) request.getMIME().getBodyOutput().closeAsync();
+			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			sendHeaders.listenInlineSP(responseSent);
 			return;
 		}
@@ -495,8 +546,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 				} else {
 					responseSent.unblock();
 					body.closeAsync();
-					if (request.getMIME().getBodyOutput() != null)
-						request.getMIME().getBodyOutput().closeAsync();
+					if (request.getMIME().getBodyReceivedAsOutput() != null)
+						request.getMIME().getBodyReceivedAsOutput().closeAsync();
 				}
 			}
 		});
@@ -525,8 +576,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 						body.closeAsync();
 						if (!request.isConnectionPersistent() || response.forceClose())
 							client.close();
-						else if (request.getMIME().getBodyOutput() != null)
-							request.getMIME().getBodyOutput().closeAsync();
+						else if (request.getMIME().getBodyReceivedAsOutput() != null)
+							request.getMIME().getBodyReceivedAsOutput().closeAsync();
 						responseSent.unblock();
 						return;
 					}
@@ -573,8 +624,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 		SynchronizationPoint<IOException> send = ChunkedTransfer.send(client, input);
 		send.listenInline(() -> {
 			input.closeAsync();
-			if (request.getMIME().getBodyOutput() != null)
-				request.getMIME().getBodyOutput().closeAsync();
+			if (request.getMIME().getBodyReceivedAsOutput() != null)
+				request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			if (send.isCancelled()) {
 				client.close();
 				responseSent.cancel(send.getCancelEvent());

@@ -21,9 +21,11 @@ import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.mime.MimeHeader;
+import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
-import net.lecousin.framework.network.mime.entity.MimeEntity;
+import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
@@ -64,21 +66,21 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=120000)
 	public void testHttpBinGet() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/get", "X-Test", "a test");
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
 		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "http://httpbin.org/get");
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpsBinGet() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("https://httpbin.org/get", "X-Test", "a test");
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("https://httpbin.org/get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
 		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "https://httpbin.org/get");
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpBinGetGzip() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/gzip", "X-Test", "a test");
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/gzip", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
 		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "http://httpbin.org/gzip");
 	}
@@ -113,7 +115,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		form2.add("another key", "a value with a = and spaces");
 		FormDataEntity form3 = new FormDataEntity();
 		form3.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		form3.addFile("myfile", "the_filename", "application/octet-stream", new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		form3.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> send;
 
 		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form1);
@@ -175,23 +177,23 @@ public class TestHttpClient extends AbstractHTTPTest {
 	public void testSendAndReceiveHeaders() throws Exception {
 		Pair<HTTPClient, HTTPResponse> p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", (IO.Readable)null).blockResult(0);
 		p.getValue1().close();
-		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", (MimeEntity)null).blockResult(0);
+		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", new MimeMessage()).blockResult(0);
 		p.getValue1().close();
 	}
 	
 	@Test(timeout=120000)
 	public void testSendAndReceive() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (IO.Readable)null, "X-Test", "a test").blockResult(0);
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
-		p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (MimeEntity)null, "X-Test", "a test").blockResult(0);
+		p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
 	}
 	
 	@Test(timeout=120000)
 	public void testSendAndReceiveFully() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (IO.Readable)null, "X-Test", "a test").blockResult(0);
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (MimeEntity)null, "X-Test", "a test").blockResult(0);
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
 	}
 	
@@ -211,8 +213,8 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	private static void checkHttpBinRequestHeaders(HTTPRequest request, JSONObject json) {
 		System.out.println("Headers sent:");
-		for (Pair<String, String> header : request.getMIME().getHeadersList())
-			System.out.println("  " + header.getValue1() + ": " + header.getValue2());
+		for (MimeHeader header : request.getMIME().getHeaders())
+			System.out.println("  " + header.getName() + ": " + header.getRawValue());
 		System.out.println("Headers received:");
 		Map<String, String> received = new HashMap<>();
 		for (Object key : json.keySet()) {
@@ -220,18 +222,18 @@ public class TestHttpClient extends AbstractHTTPTest {
 			received.put(key.toString().toLowerCase(), (String)json.get(key));
 		}
 		
-		for (Pair<String, String> header : request.getMIME().getHeadersList()) {
-			String h = header.getValue1();
+		for (MimeHeader header : request.getMIME().getHeaders()) {
+			String h = header.getNameLowerCase();
 			if ("content-length".equals(h)) continue;
 			if ("host".equals(h)) continue;
 			if ("connection".equals(h)) continue;
-			Assert.assertEquals("Header sent: " + h, header.getValue2(), received.get(h));
+			Assert.assertEquals("Header sent: " + h, header.getRawValue(), received.get(h));
 		}
 		for (String key : received.keySet())
 			Assert.assertTrue("Header received: " + key, request.getMIME().hasHeader(key));
 	}
 	
-	private static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> testGet(String url, int maxRedirects, String... headers) {
+	private static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> testGet(String url, int maxRedirects, MimeHeader... headers) {
 		System.out.println("Requesting HTTP server with GET method: " + url);
 		try { return HTTPClientUtil.GETfully(url, maxRedirects, headers); }
 		catch (Throwable t) {
@@ -240,15 +242,15 @@ public class TestHttpClient extends AbstractHTTPTest {
 	}
 	
 	@SuppressWarnings("resource")
-	private static AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> testGetWithRequest(String url, String... headers) throws Exception {
+	private static AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> testGetWithRequest(String url, MimeHeader... headers) throws Exception {
 		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
 		System.out.println("Requesting HTTP server with GET method: " + url);
 		URI uri = new URI(url);
 		HTTPClient client = HTTPClient.create(uri);
 		HTTPRequest request = new HTTPRequest(Method.GET, HTTPClientUtil.getRequestPath(uri));
-		for (int i = 0; i < headers.length - 1; i += 2)
-			request.getMIME().setHeader(headers[i], headers[i + 1]);
-		client.sendRequest(request, null).listenInline(
+		for (int i = 0; i < headers.length; ++i)
+			request.getMIME().addHeader(headers[i]);
+		client.sendRequest(request).listenInline(
 			() -> {
 				client.receiveResponseHeader().listenInline(
 					(response) -> {

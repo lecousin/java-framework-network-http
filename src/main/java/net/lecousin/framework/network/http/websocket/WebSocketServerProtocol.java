@@ -65,8 +65,8 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	@Override
 	public void startProtocol(TCPServerClient client) {
 		HTTPRequest request = (HTTPRequest)client.getAttribute(HTTPServerProtocol.REQUEST_ATTRIBUTE);
-		String key = request.getMIME().getHeaderSingleValue("Sec-WebSocket-Key");
-		String version = request.getMIME().getHeaderSingleValue("Sec-WebSocket-Version");
+		String key = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Key");
+		String version = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Version");
 		if (key == null || key.trim().length() == 0) {
 			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Key header", request, true);
 			return;
@@ -77,15 +77,17 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		}
 		if (!version.trim().equals("13")) {
 			HTTPResponse resp = new HTTPResponse();
-			resp.addHeaderValue("Sec-WebSocket-Version", "13");
+			resp.addHeaderRaw("Sec-WebSocket-Version", "13");
 			resp.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 400, "Unsupported WebSocket version", request, resp);
 			return;
 		}
 		// TODO Sec-WebSocket-Protocol
 		// TODO Sec-WebSocket-Extensions
-		String[] requestedProtocols = request.getMIME().getHeaderCommaSeparatedValues("Sec-WebSocket-Protocol");
-		if (requestedProtocols == null) requestedProtocols = new String[0];
+		String s = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Protocol");
+		String[] requestedProtocols = s != null ? s.split(",") : new String[0];
+		for (int i = 0; i < requestedProtocols.length; ++i)
+			requestedProtocols[i] = requestedProtocols[i].trim();
 		String protocol;
 		try {
 			protocol = listener.onClientConnected(this, client, requestedProtocols);
@@ -96,8 +98,8 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		
 		HTTPResponse resp = new HTTPResponse();
 		resp.setStatus(101, "Switching Protocols");
-		resp.addHeaderValue("Upgrade", "websocket");
-		resp.addHeaderValue("Connection", "Upgrade");
+		resp.addHeaderRaw("Upgrade", "websocket");
+		resp.addHeaderRaw("Connection", "Upgrade");
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 		byte[] buf;
 		try {
@@ -107,9 +109,9 @@ public class WebSocketServerProtocol implements ServerProtocol {
 			return;
 		}
 		acceptKey = new String(buf);
-		resp.addHeaderValue("Sec-WebSocket-Accept", acceptKey);
+		resp.addHeaderRaw("Sec-WebSocket-Accept", acceptKey);
 		if (protocol != null)
-			resp.addHeaderValue("Sec-WebSocket-Protocol", protocol);
+			resp.addHeaderRaw("Sec-WebSocket-Protocol", protocol);
 		HTTPServerProtocol.sendResponse(client, request, resp);
 		try { client.waitForData(0); }
 		catch (ClosedChannelException e) { /* ignore */ }

@@ -9,8 +9,9 @@ import net.lecousin.framework.network.AttributesContainer;
 import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineException;
 import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
-import net.lecousin.framework.network.mime.MIME;
-import net.lecousin.framework.network.mime.MIMEUtil;
+import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
+import net.lecousin.framework.util.IString;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -186,38 +187,67 @@ public class HTTPRequest implements AttributesContainer {
 		}
 	}
 	
+	/** Generate path with query string. */
+	public void generateFullPath(IString s) {
+		s.append(path);
+		if (parameters == null || parameters.isEmpty())
+			return;
+		s.append('?');
+		boolean first = true;
+		for (Map.Entry<String,String> param : parameters.entrySet()) {
+			if (first) first = false;
+			else s.append('&');
+			s.append(param.getKey());
+			s.append('=');
+			s.append(param.getValue());
+		}
+	}
+	
 	/** Generate the command line. */
 	public void generateCommandLine(StringBuilder s) {
-		s.append(method.toString()).append(' ');
+		if (method == null)
+			s.append("NULL ");
+		else
+			s.append(method.toString()).append(' ');
+		generateFullPath(s);
+		s.append(' ').append(protocol.getName());
+	}
+	
+	/** Generate the command line. */
+	public void generateCommandLine(IString s) {
+		if (method == null)
+			s.append("NULL ");
+		else
+			s.append(method.toString()).append(' ');
 		generateFullPath(s);
 		s.append(' ').append(protocol.getName());
 	}
 	
 	/** Generate the command line. */
 	public String generateCommandLine() {
-		StringBuilder s = new StringBuilder();
+		StringBuilder s = new StringBuilder(128);
 		generateCommandLine(s);
 		return s.toString();
 	}
 	
 	// Content
 	
-	private MIME mime = new MIME();
+	private MimeMessage mime = new MimeMessage();
 	
-	public MIME getMIME() { return mime; }
+	public MimeMessage getMIME() { return mime; }
 	
 	// Utilities
 	
 	/** Return true if a body is expected to be sent. */
 	public boolean isExpectingBody() {
 		if (Method.GET.equals(method)) return false;
-		String s = mime.getHeaderSingleValue(MIME.CONTENT_LENGTH);
-		if (s != null) {
-			if ("0".equals(s)) return false;
+		Long size = mime.getContentLength();
+		if (size != null) {
+			if (size.longValue() == 0) return false;
 			return true;
 		}
-		s = mime.getHeaderSingleValue(MIME.TRANSFER_ENCODING);
-		if (s == null) s = mime.getHeaderSingleValue(MIME.CONTENT_TRANSFER_ENCODING);
+		String s = mime.getFirstHeaderRawValue(MimeMessage.TRANSFER_ENCODING);
+		if (s == null) s = mime.getFirstHeaderRawValue(MimeMessage.CONTENT_TRANSFER_ENCODING);
 		if (s == null || s.length() == 0)
 			return false;
 		return true;
@@ -227,7 +257,7 @@ public class HTTPRequest implements AttributesContainer {
 	public boolean isConnectionPersistent() {
 		switch (protocol) {
 		case HTTP_1_1: {
-			String s = mime.getHeaderSingleValue(MIME.CONNECTION);
+			String s = mime.getFirstHeaderRawValue(MimeMessage.CONNECTION);
 			if (s == null) return true;
 			if (s.equalsIgnoreCase("close")) return false;
 			return true;
@@ -239,48 +269,31 @@ public class HTTPRequest implements AttributesContainer {
 	
 	// Convenient methods
 	
-	/**
-	 * Convenient method, equivalent to getMIME().getHeaderSingleValue(headerName)
-	 */
-	public String getHeader(String headerName) {
-		return mime.getHeaderSingleValue(headerName);
-	}
-	
 	/** Return the requested cookie or null. */
 	public String getCookie(String name) {
-		List<String> lines = mime.getHeaderValues("cookie");
-		if (lines == null) return null;
-		for (String line : lines) {
-			String[] pairs = line.split(";");
-			for (String pair : pairs) {
-				int i = pair.indexOf('=');
-				if (i <= 0) continue;
-				String n = pair.substring(0,i).trim();
-				if (n.equals(name)) {
-					String value = pair.substring(i + 1).trim();
-					try { value = MIMEUtil.decodeHeaderRFC2047(value); }
-					catch (Throwable t) { /* ignore */ }
+		try {
+			for (ParameterizedHeaderValue h : mime.getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+				String value = h.getParameter(name);
+				if (value != null)
 					return value;
-				}
 			}
+		} catch (Exception e) {
+			// ignore
 		}
 		return null;
 	}
 
 	/** Return the list of values for the given cookie. */
 	public List<String> getCookies(String name) {
-		List<String> lines = mime.getHeaderValues("cookie");
-		if (lines == null) return null;
 		List<String> values = new ArrayList<>();
-		for (String line : lines) {
-			String[] pairs = line.split(";");
-			for (String pair : pairs) {
-				int i = pair.indexOf('=');
-				if (i <= 0) continue;
-				String n = pair.substring(0,i).trim();
-				if (n.equals(name))
-					values.add(pair.substring(i + 1).trim());
+		try {
+			for (ParameterizedHeaderValue h : mime.getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+				String value = h.getParameter(name);
+				if (value != null)
+					values.add(value);
 			}
+		} catch (Exception e) {
+			// ignore
 		}
 		return values;
 	}

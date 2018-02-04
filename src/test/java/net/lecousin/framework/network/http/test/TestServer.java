@@ -50,9 +50,9 @@ public class TestServer extends AbstractHTTPTest {
 					
 					response.setStatus(code, "Test OK");
 					if (request.getParameter("test") != null)
-						response.setHeader("X-Test", request.getParameter("test"));
+						response.setHeaderRaw("X-Test", request.getParameter("test"));
 					
-					IO.Readable body = request.getMIME().getBodyOutputAsInput();
+					IO.Readable body = request.getMIME().getBodyReceivedAsInput();
 					if (body != null)
 						response.getMIME().setBodyToSend(body);
 					
@@ -114,7 +114,7 @@ public class TestServer extends AbstractHTTPTest {
 		Pair<HTTPResponse, IO.Readable.Seekable> p = req.getResult();
 		HTTPResponse response = p.getValue1();
 		if (expectedXTest != null)
-			Assert.assertEquals("X-Test header", expectedXTest, response.getMIME().getHeaderSingleValue("X-Test"));
+			Assert.assertEquals("X-Test header", expectedXTest, response.getMIME().getFirstHeaderRawValue("X-Test"));
 		else
 			Assert.assertFalse(response.getMIME().hasHeader("X-Test"));
 	}

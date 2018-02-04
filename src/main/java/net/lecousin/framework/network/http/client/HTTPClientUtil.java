@@ -20,8 +20,8 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
-import net.lecousin.framework.network.mime.MIME;
-import net.lecousin.framework.network.mime.entity.MimeEntity;
+import net.lecousin.framework.network.mime.MimeHeader;
+import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.util.Pair;
 
 //skip checkstyle: MethodName
@@ -61,15 +61,16 @@ public final class HTTPClientUtil {
 	/** Send an HTTP request, with an optional body and headers. */
 	@SuppressWarnings("resource")
 	public static AsyncWork<HTTPClient, IOException> send(
-		HTTPRequest.Method method, String url, IO.Readable body, String... headers
+		HTTPRequest.Method method, String url, IO.Readable body, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		URI uri = new URI(url);
 		HTTPClient client = HTTPClient.create(uri);
 		HTTPRequest request = new HTTPRequest(method, getRequestPath(uri));
-		for (int i = 0; i < headers.length - 1; i += 2)
-			request.getMIME().setHeader(headers[i], headers[i + 1]);
+		for (int i = 0; i < headers.length; ++i)
+			request.getMIME().setHeader(headers[i]);
+		request.getMIME().setBodyToSend(body);
 		AsyncWork<HTTPClient, IOException> result = new AsyncWork<>();
-		client.sendRequest(request, body).listenInline(
+		client.sendRequest(request).listenInline(
 			() -> { result.unblockSuccess(client); },
 			result
 		);
@@ -79,17 +80,15 @@ public final class HTTPClientUtil {
 	/** Send an HTTP request, with a body and headers. */
 	@SuppressWarnings("resource")
 	public static AsyncWork<HTTPClient, IOException> send(
-		HTTPRequest.Method method, String url, MimeEntity entity, String... headers
+		HTTPRequest.Method method, String url, MimeMessage message
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		URI uri = new URI(url);
 		HTTPClient client = HTTPClient.create(uri);
 		HTTPRequest request = new HTTPRequest(method, getRequestPath(uri));
-		if (entity != null)
-			request.getMIME().setHeader(MIME.CONTENT_TYPE, entity.getContentType());
-		for (int i = 0; i < headers.length - 1; i += 2)
-			request.getMIME().setHeader(headers[i], headers[i + 1]);
+		request.getMIME().getHeaders().addAll(message.getHeaders());
+		request.getMIME().setBodyToSend(message.getBodyToSend());
 		AsyncWork<HTTPClient, IOException> result = new AsyncWork<>();
-		client.sendRequest(request, entity != null ? entity.getReadableStream() : null).listenInline(
+		client.sendRequest(request).listenInline(
 			() -> { result.unblockSuccess(client); },
 			result
 		);
@@ -99,7 +98,7 @@ public final class HTTPClientUtil {
 	/** Send an HTTP request, with an optional body and headers, then receive the response headers,
 	 * but not yet the body. */
 	public static AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> sendAndReceiveHeaders(
-		HTTPRequest.Method method, String url, IO.Readable body, String... headers
+		HTTPRequest.Method method, String url, IO.Readable body, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
@@ -115,9 +114,9 @@ public final class HTTPClientUtil {
 	/** Send an HTTP request, with a body and headers, then receive the response headers,
 	 * but not yet the body. */
 	public static AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> sendAndReceiveHeaders(
-		HTTPRequest.Method method, String url, MimeEntity entity, String... headers
+		HTTPRequest.Method method, String url, MimeMessage message
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
-		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
+		AsyncWork<HTTPClient, IOException> send = send(method, url, message);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
 		send.listenInline((client) -> {
 			client.receiveResponseHeader().listenInline(
@@ -132,7 +131,7 @@ public final class HTTPClientUtil {
 	 * and start to receive the body (but the body may not yet fully received). */
 	@SuppressWarnings("resource")
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> sendAndReceive(
-		HTTPRequest.Method method, String url, IO.Readable body, String... headers
+		HTTPRequest.Method method, String url, IO.Readable body, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
@@ -166,9 +165,9 @@ public final class HTTPClientUtil {
 	 * and start to receive the body (but the body may not yet fully received). */
 	@SuppressWarnings("resource")
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> sendAndReceive(
-		HTTPRequest.Method method, String url, MimeEntity entity, String... headers
+		HTTPRequest.Method method, String url, MimeMessage message
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
-		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
+		AsyncWork<HTTPClient, IOException> send = send(method, url, message);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
 		send.listenInline((client) -> {
 			client.receiveResponseHeader().listenInline(
@@ -200,7 +199,7 @@ public final class HTTPClientUtil {
 	 * and receive the full body before to unblock the returned AsyncWork. */
 	@SuppressWarnings("resource")
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> sendAndReceiveFully(
-		HTTPRequest.Method method, String url, IO.Readable body, String... headers
+		HTTPRequest.Method method, String url, IO.Readable body, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(method, url, body, headers);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
@@ -242,9 +241,9 @@ public final class HTTPClientUtil {
 	 * and receive the full body before to unblock the returned AsyncWork. */
 	@SuppressWarnings("resource")
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> sendAndReceiveFully(
-		HTTPRequest.Method method, String url, MimeEntity entity, String... headers
+		HTTPRequest.Method method, String url, MimeMessage message
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
-		AsyncWork<HTTPClient, IOException> send = send(method, url, entity, headers);
+		AsyncWork<HTTPClient, IOException> send = send(method, url, message);
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
 		send.listenInline((client) -> {
 			client.receiveResponseHeader().listenInline(
@@ -287,7 +286,7 @@ public final class HTTPClientUtil {
 	 * The given headers are added to the request, including the subsequent requests in case of redirection.
 	 */
 	public static AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> sendGET(
-		String url, int maxRedirects, String... headers
+		String url, int maxRedirects, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<HTTPClient, IOException> send = send(HTTPRequest.Method.GET, url, (IO.Readable)null, headers);
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
@@ -310,17 +309,17 @@ public final class HTTPClientUtil {
 						result.unblockSuccess(new Pair<>(client, response));
 						return;
 					}
-					String location = response.getMIME().getHeaderSingleValue("Location");
+					String location = response.getMIME().getFirstHeaderRawValue("Location");
 					try {
 						URI u = new URI(location);
 						if (u.getHost() == null) {
 							// relative
 							HTTPRequest newRequest = new HTTPRequest(HTTPRequest.Method.GET, location);
-							for (int i = 0; i < headers.length - 1; i += 2)
-								newRequest.getMIME().setHeader(headers[i], headers[i + 1]);
+							for (int i = 0; i < headers.length; ++i)
+								newRequest.getMIME().addHeader(headers[i]);
 							redirectCount.inc();
 							AsyncWorkListener<HTTPResponse, IOException> that = this;
-							client.sendRequest(newRequest, null).listenInline(
+							client.sendRequest(newRequest).listenInline(
 								() -> { client.receiveResponseHeader().listenInline(that); },
 								result
 							);
@@ -356,7 +355,7 @@ public final class HTTPClientUtil {
 	 * Send a GET request, and receive the response into the given file.
 	 */
 	public static AsyncWork<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> GET(
-		String url, File file, int maxRedirects, String... headers
+		String url, File file, int maxRedirects, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> result = new AsyncWork<>();
 		sendGET(url, maxRedirects, headers).listenInline((p) -> {
@@ -408,7 +407,7 @@ public final class HTTPClientUtil {
 	 * The returned IO is not yet filled but will be.
 	 */
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> GET(
-		String url, int maxRedirects, String... headers
+		String url, int maxRedirects, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
 		sendGET(url, maxRedirects, headers).listenInline((p) -> {
@@ -448,7 +447,7 @@ public final class HTTPClientUtil {
 	 * The returned IO is completely filled.
 	 */
 	public static AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> GETfully(
-		String url, int maxRedirects, String... headers
+		String url, int maxRedirects, MimeHeader... headers
 	) throws URISyntaxException, GeneralSecurityException, UnsupportedHTTPProtocolException {
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncWork<>();
 		sendGET(url, maxRedirects, headers).listenInline((p) -> {

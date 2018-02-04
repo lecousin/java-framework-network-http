@@ -9,7 +9,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.List;
 
@@ -28,11 +27,15 @@ import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
-import net.lecousin.framework.network.mime.MIME;
+import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
+import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
+import net.lecousin.framework.network.mime.transfer.TransferReceiver;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Provider;
+import net.lecousin.framework.util.UnprotectedString;
+import net.lecousin.framework.util.UnprotectedStringBuffer;
 
 /** HTTP client. */
 public class HTTPClient implements Closeable {
@@ -119,7 +122,8 @@ public class HTTPClient implements Closeable {
 	 *  for a size less than 32KB.
 	 * </ul>
 	 */
-	public SynchronizationPoint<IOException> sendRequest(HTTPRequest request, IO.Readable body) {
+	@SuppressWarnings("resource")
+	public SynchronizationPoint<IOException> sendRequest(HTTPRequest request) {
 		// connection
 		SynchronizationPoint<IOException> connect = null;
 		if (!client.isClosed())
@@ -154,7 +158,6 @@ public class HTTPClient implements Closeable {
 					inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 					if (client instanceof SSLClient) {
 						// we have to create a HTTP tunnel with the proxy
-						@SuppressWarnings("resource")
 						TCPClient tunnelClient = new TCPClient();
 						SynchronizationPoint<IOException> tunnelConnect =
 							tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
@@ -162,12 +165,13 @@ public class HTTPClient implements Closeable {
 						SynchronizationPoint<IOException> result = connect;
 						// prepare the CONNECT request
 						HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-						connectRequest.getMIME().addHeaderValue(HTTPRequest.HEADER_HOST, hostname + ":" + port);
-						StringBuilder s = new StringBuilder(512);
+						connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+						UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
 						connectRequest.generateCommandLine(s);
 						s.append("\r\n");
-						connectRequest.getMIME().generateHeaders(s, true);
-						ByteBuffer data = ByteBuffer.wrap(s.toString().getBytes(StandardCharsets.US_ASCII));
+						connectRequest.getMIME().appendHeadersTo(s);
+						s.append("\r\n");
+						ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
 						tunnelConnect.listenInline(() -> {
 							ISynchronizationPoint<IOException> send = tunnelClient.send(data);
 							send.listenInline(() -> {
@@ -209,7 +213,9 @@ public class HTTPClient implements Closeable {
 			interceptor.intercept(request, hostname, port);
 
 		final Long size;
+		IO.Readable body = request.getMIME().getBodyToSend();
 		if (body != null) {
+			result.listenInline(() -> { body.closeAsync(); });
 			if (body instanceof IO.KnownSize) {
 				try {
 					request.getMIME().setContentLength((size = Long.valueOf(((IO.KnownSize)body).getSizeSync())).longValue());
@@ -219,18 +225,19 @@ public class HTTPClient implements Closeable {
 				}
 				//request.getMIME().setHeader(MIME.TRANSFER_ENCODING, "8bit");
 			} else {
-				request.getMIME().setHeader(MIME.TRANSFER_ENCODING, "chunked");
+				request.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
 				size = null;
 			}
 		} else {
 			size = Long.valueOf(0);
 			request.getMIME().setContentLength(0);
 		}
-		StringBuilder s = new StringBuilder(512);
+		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
 		request.generateCommandLine(s);
 		s.append("\r\n");
-		request.getMIME().generateHeaders(s, true);
-		ByteBuffer data = ByteBuffer.wrap(s.toString().getBytes(StandardCharsets.US_ASCII));
+		request.getMIME().appendHeadersTo(s);
+		s.append("\r\n");
+		ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
 		connect.listenInline(() -> {
 			ISynchronizationPoint<IOException> send = client.send(data);
 			if (body == null || (size != null && size.longValue() == 0)) {
@@ -295,7 +302,9 @@ public class HTTPClient implements Closeable {
 				@SuppressWarnings("resource")
 				OutputToInput output = new OutputToInput(io, source);
 				try {
-					if (response.getMIME().initBodyTransfer(output)) {
+					response.getMIME().setBodyReceived(output);
+					TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output);
+					if (!transfer.isExpectingData()) {
 						output.endOfData();
 						if (responseHeaderListener != null)
 							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
@@ -303,7 +312,7 @@ public class HTTPClient implements Closeable {
 					} else {
 						if (responseHeaderListener != null)
 							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
-						receiveBody(response, outputReceived, bufferSize);
+						receiveBody(response, transfer, outputReceived, bufferSize);
 					}
 				} catch (IOException error) {
 					outputReceived.unblockError(error);
@@ -342,11 +351,13 @@ public class HTTPClient implements Closeable {
 					return;
 				}
 				try {
-					if (response.getMIME().initBodyTransfer(output)) {
+					response.getMIME().setBodyReceived(output);
+					TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output);
+					if (!transfer.isExpectingData()) {
 						result.unblockSuccess(response);
 						return;
 					}
-					receiveBody(response, result, bufferSize);
+					receiveBody(response, transfer, result, bufferSize);
 				} catch (IOException error) {
 					result.error(error);
 				}
@@ -394,11 +405,13 @@ public class HTTPClient implements Closeable {
 					onReceived.unblockSuccess(response);
 				else {
 					try {
-						if (response.getMIME().initBodyTransfer(output.getValue1())) {
+						response.getMIME().setBodyReceived(output.getValue1());
+						TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output.getValue1());
+						if (!transfer.isExpectingData()) {
 							onReceived.unblockSuccess(response);
 							return;
 						}
-						receiveBody(response, onReceived, output.getValue2().intValue());
+						receiveBody(response, transfer, onReceived, output.getValue2().intValue());
 					} catch (IOException error) {
 						onReceived.error(error);
 					}
@@ -418,12 +431,14 @@ public class HTTPClient implements Closeable {
 			return result;
 		}
 		try {
-			if (response.getMIME().initBodyTransfer(out)) {
+			response.getMIME().setBodyReceived(out);
+			TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), out);
+			if (!transfer.isExpectingData()) {
 				result.unblock();
 				return result;
 			}
 			AsyncWork<HTTPResponse,IOException> r = new AsyncWork<>();
-			receiveBody(response, r, bufferSize);
+			receiveBody(response, transfer, r, bufferSize);
 			r.listenInline(result);
 		} catch (IOException error) {
 			result.error(error);
@@ -431,11 +446,11 @@ public class HTTPClient implements Closeable {
 		return result;
 	}
 	
-	private void receiveBody(HTTPResponse response, AsyncWork<HTTPResponse,IOException> result, int bufferSize) {
+	private void receiveBody(HTTPResponse response, TransferReceiver transfer, AsyncWork<HTTPResponse,IOException> result, int bufferSize) {
 		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(
 		(data) -> {
-			AsyncWork<Boolean,IOException> transfer = response.getMIME().bodyDataReady(data);
-			transfer.listenInline((end) -> {
+			AsyncWork<Boolean,IOException> t = transfer.consume(data);
+			t.listenInline((end) -> {
 				if (end.booleanValue()) {
 					if (data.hasRemaining()) {
 						// TODO it must not happen, but we have to request to the transfer,
@@ -444,7 +459,7 @@ public class HTTPClient implements Closeable {
 					result.unblockSuccess(response);
 					return;
 				}
-				receiveBody(response, result, bufferSize);
+				receiveBody(response, transfer, result, bufferSize);
 			}, result);
 		}, result);
 	}

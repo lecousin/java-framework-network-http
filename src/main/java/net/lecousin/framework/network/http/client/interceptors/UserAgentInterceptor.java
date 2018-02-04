@@ -18,7 +18,7 @@ public class UserAgentInterceptor implements HTTPRequestInterceptor {
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
 		if (force || !request.getMIME().hasHeader(HTTPRequest.HEADER_USER_AGENT))
-			request.getMIME().setHeader(HTTPRequest.HEADER_USER_AGENT, userAgent);
+			request.getMIME().setHeaderRaw(HTTPRequest.HEADER_USER_AGENT, userAgent);
 	}
 	
 }

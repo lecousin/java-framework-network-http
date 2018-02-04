@@ -8,7 +8,7 @@
 
   <groupId>net.lecousin.framework.network</groupId>
   <artifactId>http</artifactId>
-  <version>0.2.1</version>
+  <version>0.3.0</version>
 
   <name>lecousin.net Java framework - network - http</name>
   <description>Core http functionalities</description>
@@ -140,7 +140,7 @@
   	<dependency>
   		<groupId>${project.groupId}</groupId>
   		<artifactId>mime</artifactId>
-  		<version>0.2.1</version>
+  		<version>0.3.0</version>
   	</dependency>
   	<dependency>
 		<groupId>junit</groupId>
@@ -151,7 +151,7 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-		<version>0.9.15</version>
+		<version>0.9.16</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>

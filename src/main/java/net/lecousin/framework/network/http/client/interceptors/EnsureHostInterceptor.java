@@ -10,9 +10,9 @@ public class EnsureHostInterceptor implements HTTPRequestInterceptor {
 	public void intercept(HTTPRequest request, String hostname, int port) {
 		if (!request.getMIME().hasHeader(HTTPRequest.HEADER_HOST)) {
 			if (port != 80)
-				request.getMIME().setHeader(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+				request.getMIME().setHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
 			else
-				request.getMIME().setHeader(HTTPRequest.HEADER_HOST, hostname);
+				request.getMIME().setHeaderRaw(HTTPRequest.HEADER_HOST, hostname);
 		}
 	}
 	
