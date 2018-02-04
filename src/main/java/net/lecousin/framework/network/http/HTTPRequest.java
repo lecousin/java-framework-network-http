@@ -1,5 +1,8 @@
 package net.lecousin.framework.network.http;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -12,6 +15,7 @@ import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolExce
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.IString;
+import net.lecousin.framework.util.Pair;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -167,7 +171,10 @@ public class HTTPRequest implements AttributesContainer {
 			if (i < 0)
 				parameters.put(p, "");
 			else
-				parameters.put(p.substring(0, i), p.substring(i + 1));
+				try { parameters.put(URLDecoder.decode(p.substring(0, i), "UTF-8"), URLDecoder.decode(p.substring(i + 1), "UTF-8")); }
+				catch (UnsupportedEncodingException e) {
+					// cannot happen... utf-8 is always supported
+				}
 		}
 	}
 	
@@ -181,9 +188,13 @@ public class HTTPRequest implements AttributesContainer {
 		for (Map.Entry<String,String> param : parameters.entrySet()) {
 			if (first) first = false;
 			else s.append('&');
-			s.append(param.getKey());
-			s.append('=');
-			s.append(param.getValue());
+			try {
+				s.append(URLEncoder.encode(param.getKey(), "UTF-8"));
+				s.append('=');
+				s.append(URLEncoder.encode(param.getValue(), "UTF-8"));
+			} catch (UnsupportedEncodingException e) {
+				// cannot happen... utf-8 is always supported
+			}
 		}
 	}
 	
@@ -197,9 +208,13 @@ public class HTTPRequest implements AttributesContainer {
 		for (Map.Entry<String,String> param : parameters.entrySet()) {
 			if (first) first = false;
 			else s.append('&');
-			s.append(param.getKey());
-			s.append('=');
-			s.append(param.getValue());
+			try {
+				s.append(URLEncoder.encode(param.getKey(), "UTF-8"));
+				s.append('=');
+				s.append(URLEncoder.encode(param.getValue(), "UTF-8"));
+			} catch (UnsupportedEncodingException e) {
+				// cannot happen... utf-8 is always supported
+			}
 		}
 	}
 	
@@ -288,9 +303,9 @@ public class HTTPRequest implements AttributesContainer {
 		List<String> values = new ArrayList<>();
 		try {
 			for (ParameterizedHeaderValue h : mime.getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
-				String value = h.getParameter(name);
-				if (value != null)
-					values.add(value);
+				for (Pair<String, String> p : h.getParameters())
+					if (p.getValue1().equals(name))
+						values.add(p.getValue2());
 			}
 		} catch (Exception e) {
 			// ignore

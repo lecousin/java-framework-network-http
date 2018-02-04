@@ -7,9 +7,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
-import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.network.client.TCPClient;
@@ -144,9 +142,8 @@ public class HTTPResponse {
 		if (logger.isTraceEnabled())
 			logger.trace("Receiving status line...");
 		AsyncWork<ByteArrayIO,IOException> statusLine = client.getReceiver().readUntil((byte)'\n', 1024, timeout);
-		statusLine.listenInline(new AsyncWorkListener<ByteArrayIO, IOException>() {
-			@Override
-			public void ready(ByteArrayIO line) {
+		statusLine.listenInline(
+			(line) -> {
 				String s = line.getAsString(StandardCharsets.US_ASCII);
 				if (logger.isTraceEnabled())
 					logger.trace("Status line received: " + s);
@@ -176,18 +173,9 @@ public class HTTPResponse {
 					() -> { result.unblockSuccess(response); },
 					result
 				);
-			}
-			
-			@Override
-			public void error(IOException error) {
-				result.unblockError(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				result.unblockCancel(event);
-			}
-		});
+			},
+			result
+		);
 		return result;
 	}
 	

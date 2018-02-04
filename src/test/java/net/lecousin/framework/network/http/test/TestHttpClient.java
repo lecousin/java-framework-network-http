@@ -93,6 +93,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		byte[] buf = new byte[20000];
 		int nb = data.readFullyAsync(ByteBuffer.wrap(buf)).blockResult(0).intValue();
 		Assert.assertEquals(15000, nb);
+		data.close();
 	}
 	
 	@Test(timeout=120000)
@@ -103,6 +104,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		byte[] buf = new byte[20000];
 		int nb = data.readFullyAsync(ByteBuffer.wrap(buf)).blockResult(0).intValue();
 		Assert.assertEquals(15000, nb);
+		data.close();
 	}
 	
 	@SuppressWarnings("resource")

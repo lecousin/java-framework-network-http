@@ -165,7 +165,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 					try { linesReceiver.newLine(s); }
 					catch (Exception e) {
 						logger.error("Error parsing HTTP headers", e);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, "Error parsing HTTP headers: " + e.getMessage(), request, true);
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
+							"Error parsing HTTP headers: " + e.getMessage(), request, true);
 						onbufferavailable.run();
 						return;
 					}
@@ -192,7 +193,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 							ServerProtocol proto = upgradableProtocols.get(protoName);
 							if (proto != null) {
 								// the protocol is supported
-								client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
+								client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE,
+									Long.valueOf(System.nanoTime()));
 								client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
 								logger.debug("Upgrading protocol to " + protoName);
 								proto.startProtocol(client);
@@ -245,7 +247,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 					try { linesReceiver.newLine(s); }
 					catch (Exception e) {
 						logger.error("Error parsing HTTP headers", e);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, "Error parsing HTTP headers: " + e.getMessage(), request, true);
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
+							"Error parsing HTTP headers: " + e.getMessage(), request, true);
 						line.setLength(0);
 						onbufferavailable.run();
 						return;
@@ -482,7 +485,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 			logger.trace("Sending response with headers:\n" + s);
 		SynchronizationPoint<IOException> sendHeaders;
 		try {
-			sendHeaders = client.send(ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
+			sendHeaders = client.send(
+				ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
 		} catch (Exception e) {
 			if (body != null) body.closeAsync();
 			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();

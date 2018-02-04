@@ -31,6 +31,7 @@ public class TestServer extends AbstractHTTPTest {
 		@Override
 		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
 			Task<Void, HTTPResponseError> task = new Task.Cpu<Void, HTTPResponseError>("Processing test request", Task.PRIORITY_NORMAL) {
+				@SuppressWarnings("resource")
 				@Override
 				public Void run() throws HTTPResponseError {
 					String path = request.getPath();
