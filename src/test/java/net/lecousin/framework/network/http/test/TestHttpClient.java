@@ -1,5 +1,6 @@
 package net.lecousin.framework.network.http.test;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -12,6 +13,7 @@ import java.util.Map;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.io.FileIO;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOAsInputStream;
@@ -140,6 +142,14 @@ public class TestHttpClient extends AbstractHTTPTest {
 		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("https://httpbin.org/get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
 		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "https://httpbin.org/get");
+	}
+	
+	@Test(timeout=120000)
+	public void testHttpBinRedirect() throws Exception {
+		File file = File.createTempFile("test", "http");
+		file.deleteOnExit();
+		Pair<HTTPResponse, FileIO.ReadWrite> p1 = HTTPClientUtil.GET("http://httpbin.org/redirect/2", file, 3).blockResult(0);
+		checkHttpBin(null, p1.getValue1(), p1.getValue2(), "http://httpbin.org/get");
 	}
 	
 	@Test(timeout=120000)

@@ -6,10 +6,8 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.security.GeneralSecurityException;
 
-import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
 import net.lecousin.framework.io.FileIO;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
@@ -292,9 +290,8 @@ public final class HTTPClientUtil {
 		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> result = new AsyncWork<>();
 		MutableInteger redirectCount = new MutableInteger(0);
 		send.listenInline((client) -> {
-			client.receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
-				@Override
-				public void ready(HTTPResponse response) {
+			client.receiveResponseHeader().listenInline(
+				(response) -> {
 					boolean isRedirect;
 					if (maxRedirects - redirectCount.get() <= 0) isRedirect = false;
 					else if (!response.getMIME().hasHeader("Location")) isRedirect = false;
@@ -309,21 +306,14 @@ public final class HTTPClientUtil {
 						result.unblockSuccess(new Pair<>(client, response));
 						return;
 					}
+					client.close();
 					String location = response.getMIME().getFirstHeaderRawValue("Location");
 					try {
 						URI u = new URI(location);
 						if (u.getHost() == null) {
 							// relative
-							HTTPRequest newRequest = new HTTPRequest(HTTPRequest.Method.GET, location);
-							for (int i = 0; i < headers.length; ++i)
-								newRequest.getMIME().addHeader(headers[i]);
-							redirectCount.inc();
-							AsyncWorkListener<HTTPResponse, IOException> that = this;
-							client.sendRequest(newRequest).listenInline(
-								() -> { client.receiveResponseHeader().listenInline(that); },
-								result
-							);
-							return;
+							URI u2 = new URI(url).resolve(u);
+							location = u2.toString();
 						}
 						// absolute
 						try {
@@ -334,18 +324,8 @@ public final class HTTPClientUtil {
 					} catch (URISyntaxException e) {
 						result.error(new IOException("Invalid redirect location: " + location, e));
 					}
-				}
-
-				@Override
-				public void error(IOException error) {
-					result.error(error);
-				}
-
-				@Override
-				public void cancelled(CancelException event) {
-					result.cancel(event);
-				}
-			});
+				}, result
+			);
 		}, result);
 		return result;
 	}
