@@ -5,6 +5,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.concurrent.Task;
@@ -12,10 +13,12 @@ import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.MemoryIO;
+import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -158,4 +161,40 @@ public class TestServer extends AbstractHTTPTest {
 		server.close();
 	}
 
+	
+	@Test(timeout=120000)
+	public void testSendRequestBySmallPackets() throws Exception {
+		// launch server
+		TCPServer server = new TCPServer();
+		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+
+		TCPClient client = new TCPClient();
+		client.connect(new InetSocketAddress("localhost", serverPort), 10000).blockThrow(0);
+		String req =
+			"GET /test/get?status=200&test=world HTTP/1.1\r\n" +
+			"Host: localhost:" + serverPort + "\r\n" +
+			"X-Test: hello world\r\n" +
+			"\r\n";
+		byte[] buf = req.getBytes(StandardCharsets.US_ASCII);
+		for (int i = 0; i < buf.length; i += 10) {
+			int len = 10;
+			if (i + len > buf.length) len = buf.length - i;
+			client.send(ByteBuffer.wrap(buf, i, len));
+			Thread.sleep(100);
+		}
+		HTTPClient httpClient = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
+		MemoryIO io = new MemoryIO(1024, "test1");
+		AsyncWork<HTTPResponse, IOException> headers = new AsyncWork<>();
+		httpClient.receiveResponse(headers, io, 1024).blockThrow(0);
+		httpClient.close();
+		client.close();
+		
+		check(new AsyncWork<>(new Pair<>(headers.getResult(), io), null), Method.GET, 200, "world");
+
+		io.close();
+		server.close();
+	}
+	
 }
