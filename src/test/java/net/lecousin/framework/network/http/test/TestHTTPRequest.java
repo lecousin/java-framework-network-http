@@ -25,7 +25,11 @@ public class TestHTTPRequest extends LCCoreAbstractTest {
 		Assert.assertNull(r.getAttribute("test"));
 		Assert.assertFalse(r.hasAttribute("test"));
 		
+		Assert.assertFalse(r.isCommandSet());
+		Assert.assertNull(r.getParameter("toto"));
+		
 		r.setCommand(Method.GET, "/toto/titi", Protocol.HTTP_1_0);
+		Assert.assertTrue(r.isCommandSet());
 		Assert.assertEquals(Method.GET, r.getMethod());
 		Assert.assertEquals(Protocol.HTTP_1_0, r.getProtocol());
 		Assert.assertEquals("/toto/titi", r.getPath());

@@ -284,7 +284,10 @@ public class HTTPClient implements Closeable {
 		return HTTPResponse.receive(client, config.getReceiveTimeout());
 	}
 	
-	/** Receive the response header and body, and write the body to the given IO. */
+	/** Receive the response header and body, and write the body to the given IO.
+	 * The given IO is wrapped into an OutputToInput so we can start reading from it before
+	 * the body has been fully received.
+	 */
 	public <T extends IO.Readable.Seekable & IO.Writable.Seekable> void receiveResponse(
 		String source, T io, int bufferSize,
 		AsyncWork<Pair<HTTPResponse,OutputToInput>,IOException> responseHeaderListener,
@@ -312,7 +315,12 @@ public class HTTPClient implements Closeable {
 					} else {
 						if (responseHeaderListener != null)
 							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
-						receiveBody(response, transfer, outputReceived, bufferSize);
+						SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+						receiveBody(transfer, result, bufferSize);
+						result.listenInline(() -> {
+							output.endOfData();
+							outputReceived.unblockSuccess(response);
+						}, outputReceived);
 					}
 				} catch (IOException error) {
 					outputReceived.unblockError(error);
@@ -336,28 +344,28 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> AsyncWork<HTTPResponse,IOException> receiveResponse(
+	public <TIO extends IO.Writable & IO.Readable> SynchronizationPoint<IOException> receiveResponse(
 		AsyncWork<HTTPResponse,IOException> responseHeaderListener,
 		TIO output, int bufferSize
 	) {
-		AsyncWork<HTTPResponse,IOException> result = new AsyncWork<HTTPResponse,IOException>();
+		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
 		receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
 			@Override
 			public void ready(HTTPResponse response) {
 				if (responseHeaderListener != null)
 					responseHeaderListener.unblockSuccess(response);
 				if (!response.isBodyExpected()) {
-					result.unblockSuccess(response);
+					result.unblock();
 					return;
 				}
 				try {
 					response.getMIME().setBodyReceived(output);
 					TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output);
 					if (!transfer.isExpectingData()) {
-						result.unblockSuccess(response);
+						result.unblock();
 						return;
 					}
-					receiveBody(response, transfer, result, bufferSize);
+					receiveBody(transfer, result, bufferSize);
 				} catch (IOException error) {
 					result.error(error);
 				}
@@ -381,7 +389,7 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> AsyncWork<HTTPResponse,IOException> receiveResponse(
+	public <TIO extends IO.Writable & IO.Readable> SynchronizationPoint<IOException> receiveResponse(
 		TIO output, int bufferSize
 	) {
 		return receiveResponse(null, output, bufferSize);
@@ -389,29 +397,36 @@ public class HTTPClient implements Closeable {
 	
 	/** Receive the response header, then the body to the IO provided by the provider.
 	 * The provider gives a Writable and a buffer size based on the HTTP response headers received.
+	 * The provider may not be called, and the IO set to null in the response, in case it is detected
+	 * that there will be no body.
+	 * If the provider provides a null pair, the body is not received.
 	 */
 	public <TIO extends IO.Writable & IO.Readable> void receiveResponse(
 		Provider.FromValue<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
-		AsyncWork<HTTPResponse, IOException> onReceived
+		AsyncWork<Pair<HTTPResponse, TIO>, IOException> onReceived
 	) {
 		receiveResponseHeader().listenInline(
 			(response) -> {
 				if (!response.isBodyExpected()) {
-					onReceived.unblockSuccess(response);
+					onReceived.unblockSuccess(new Pair<>(response, null));
 					return;
 				}
 				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.provide(response);
 				if (output == null)
-					onReceived.unblockSuccess(response);
+					onReceived.unblockSuccess(new Pair<>(response, null));
 				else {
 					try {
 						response.getMIME().setBodyReceived(output.getValue1());
 						TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output.getValue1());
 						if (!transfer.isExpectingData()) {
-							onReceived.unblockSuccess(response);
+							onReceived.unblockSuccess(new Pair<>(response, output.getValue1()));
 							return;
 						}
-						receiveBody(response, transfer, onReceived, output.getValue2().intValue());
+						SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+						receiveBody(transfer, result, output.getValue2().intValue());
+						result.listenInline(() -> {
+							onReceived.unblockSuccess(new Pair<>(response, output.getValue1()));
+						}, onReceived);
 					} catch (IOException error) {
 						onReceived.error(error);
 					}
@@ -437,16 +452,14 @@ public class HTTPClient implements Closeable {
 				result.unblock();
 				return result;
 			}
-			AsyncWork<HTTPResponse,IOException> r = new AsyncWork<>();
-			receiveBody(response, transfer, r, bufferSize);
-			r.listenInline(result);
+			receiveBody(transfer, result, bufferSize);
 		} catch (IOException error) {
 			result.error(error);
 		}
 		return result;
 	}
 	
-	private void receiveBody(HTTPResponse response, TransferReceiver transfer, AsyncWork<HTTPResponse,IOException> result, int bufferSize) {
+	private void receiveBody(TransferReceiver transfer, SynchronizationPoint<IOException> result, int bufferSize) {
 		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(
 		(data) -> {
 			AsyncWork<Boolean,IOException> t = transfer.consume(data);
@@ -456,10 +469,10 @@ public class HTTPClient implements Closeable {
 						// TODO it must not happen, but we have to request to the transfer,
 						// how many bytes are expected!
 					}
-					result.unblockSuccess(response);
+					result.unblock();
 					return;
 				}
-				receiveBody(response, transfer, result, bufferSize);
+				receiveBody(transfer, result, bufferSize);
 			}, result);
 		}, result);
 	}

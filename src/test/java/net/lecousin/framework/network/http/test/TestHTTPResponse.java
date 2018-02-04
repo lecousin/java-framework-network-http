@@ -17,7 +17,8 @@ public class TestHTTPResponse extends LCCoreAbstractTest {
 		Assert.assertEquals(400, r.getStatusCode());
 		r.setRawContentType("text/test;charset=utf-8");
 		Assert.assertEquals("text/test", r.getMIME().getContentTypeValue());
-		r.addCookie("toto", "titi", -1, null, null, false, false);
+		r.addCookie("toto", "titi", 0, null, null, false, false);
+		r.addCookie("toto2", "titi2", 10, "test", "domain.com", true, true);
 		r.noCache();
 		r.publicCache(Long.valueOf(10));
 		r.publicCache(null);

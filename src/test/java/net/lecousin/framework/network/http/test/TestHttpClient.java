@@ -3,6 +3,7 @@ package net.lecousin.framework.network.http.test;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -10,10 +11,13 @@ import java.util.Map;
 
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
+import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO;
+import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOAsInputStream;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
@@ -27,6 +31,7 @@ import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.Provider;
 import net.lecousin.framework.util.Triple;
 
 import org.json.simple.JSONObject;
@@ -64,11 +69,70 @@ public class TestHttpClient extends AbstractHTTPTest {
 			throw body.canStartReading().getError();
 	}
 	
-	@Test(timeout=120000)
+	@Test(timeout=240000)
 	public void testHttpBinGet() throws Exception {
 		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
 		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "http://httpbin.org/get");
+		
+		HTTPClient client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		HTTPRequest req = new HTTPRequest(Method.GET, "/get");
+		req.getMIME().addHeaderRaw("X-Test", "a test");
+		System.out.println("Sending request");
+		client.sendRequest(req).blockThrow(0);
+		System.out.println("Request sent");
+		MemoryIO io = new MemoryIO(2048, "test");
+		AsyncWork<Pair<HTTPResponse, OutputToInput>, IOException> headerListener = new AsyncWork<>();
+		AsyncWork<HTTPResponse,IOException> outputListener = new AsyncWork<>();
+		client.receiveResponse("test", io, 1024, headerListener, outputListener);
+		System.out.println("Waiting for headers");
+		headerListener.blockThrow(0);
+		System.out.println("Waiting for body");
+		outputListener.blockThrow(0);
+		System.out.println("Response received");
+		checkHttpBin(req, outputListener.getResult(), headerListener.getResult().getValue2(), "http://httpbin.org/get");
+		io.close();
+		client.close();
+
+		
+		client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		req = new HTTPRequest(Method.GET, "/get");
+		req.getMIME().addHeaderRaw("X-Test", "a test");
+		System.out.println("Sending request");
+		client.sendRequest(req).blockThrow(0);
+		System.out.println("Request sent");
+		io = new MemoryIO(2048, "test");
+		System.out.println("Waiting for response");
+		AsyncWork<HTTPResponse, IOException> headersListener = new AsyncWork<>();
+		SynchronizationPoint<IOException> result = client.receiveResponse(headersListener, io, 512);
+		result.blockThrow(0);
+		System.out.println("Response received");
+		io.seekSync(SeekType.FROM_BEGINNING, 0);
+		checkHttpBin(req, headersListener.getResult(), io, "http://httpbin.org/get");
+		io.close();
+		client.close();
+
+		client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		req = new HTTPRequest(Method.GET, "/get");
+		req.getMIME().addHeaderRaw("X-Test", "a test");
+		System.out.println("Sending request");
+		client.sendRequest(req).blockThrow(0);
+		System.out.println("Request sent");
+		AsyncWork<Pair<HTTPResponse, MemoryIO>, IOException> bodyReceived = new AsyncWork<>();
+		client.receiveResponse(new Provider.FromValue<HTTPResponse, Pair<MemoryIO, Integer>>() {
+			@SuppressWarnings("resource")
+			@Override
+			public Pair<MemoryIO, Integer> provide(HTTPResponse value) {
+				return new Pair<>(new MemoryIO(1024, "test"), Integer.valueOf(1024));
+			}
+		}, bodyReceived);
+		System.out.println("Waiting for response");
+		Pair<HTTPResponse, MemoryIO> p = bodyReceived.blockResult(0);
+		System.out.println("Response received");
+		p.getValue2().seekSync(SeekType.FROM_BEGINNING, 0);
+		checkHttpBin(req, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		io.close();
+		client.close();
 	}
 	
 	@Test(timeout=120000)
