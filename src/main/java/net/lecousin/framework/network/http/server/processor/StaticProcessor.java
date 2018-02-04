@@ -45,12 +45,11 @@ public class StaticProcessor implements HTTPRequestProcessor {
 			if (in == null) input = null;
 			else input = new IOFromInputStream(in, resourcePath, Threading.getUnmanagedTaskManager(), Task.PRIORITY_NORMAL);
 		}
-		HTTPResponse resp = new HTTPResponse();
 		if (input == null) {
-			resp.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Resource not found: " + resourcePath);
+			response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Resource not found: " + resourcePath);
 		} else {
-			resp.setStatus(HttpURLConnection.HTTP_OK);
-			resp.getMIME().setBodyToSend(input);
+			response.setStatus(HttpURLConnection.HTTP_OK);
+			response.getMIME().setBodyToSend(input);
 		}
 		return new SynchronizationPoint<>(true);
 	}
