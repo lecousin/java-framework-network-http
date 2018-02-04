@@ -132,7 +132,7 @@ public class TestServer extends AbstractHTTPTest {
 			Assert.assertFalse(response.getMIME().hasHeader("X-Test"));
 	}
 	
-	@Test(timeout=300000)
+	@Test(timeout=120000)
 	public void testConcurrentRequests() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
