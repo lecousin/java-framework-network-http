@@ -336,7 +336,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 		return list;
 	}
 	
-	private void processRequest(TCPServerClient client, HTTPRequest request, SynchronizationPoint<Exception> responseSent, SynchronizationPoint<Exception> previousResponseSent) {
+	private void processRequest(
+		TCPServerClient client, HTTPRequest request,
+		SynchronizationPoint<Exception> responseSent, SynchronizationPoint<Exception> previousResponseSent
+	) {
 		HTTPResponse response = new HTTPResponse();
 		ISynchronizationPoint<?> processing = processor.process(client, request, response);
 		client.addPending(processing);

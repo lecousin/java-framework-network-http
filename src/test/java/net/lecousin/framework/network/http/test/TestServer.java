@@ -132,7 +132,7 @@ public class TestServer extends AbstractHTTPTest {
 			Assert.assertFalse(response.getMIME().hasHeader("X-Test"));
 	}
 	
-	@Test(timeout=120000)
+	@Test(timeout=300000)
 	public void testConcurrentRequests() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
@@ -155,22 +155,18 @@ public class TestServer extends AbstractHTTPTest {
 		req6.setCommand("GET /test/get?status=606 HTTP/1.1");
 		HTTPRequest req7 = new HTTPRequest();
 		req7.setCommand("GET /test/get?status=607 HTTP/1.1");
-		HTTPRequest req8 = new HTTPRequest();
-		req8.setCommand("GET /test/get?status=608 HTTP/1.1");
-		HTTPRequest req9 = new HTTPRequest();
-		req9.setCommand("GET /test/get?status=609 HTTP/1.1");
-		HTTPRequest req10 = new HTTPRequest();
-		req10.setCommand("GET /test/get?status=610 HTTP/1.1");
-		client.sendRequest(req1);
-		client.sendRequest(req2);
-		client.sendRequest(req3);
-		client.sendRequest(req4);
-		client.sendRequest(req5);
+		client.sendRequest(req1).blockThrow(0);
+		client.sendRequest(req2).blockThrow(0);
+		client.sendRequest(req3).blockThrow(0);
+		client.sendRequest(req4).blockThrow(0);
+		client.sendRequest(req5).blockThrow(0);
 		client.sendRequest(req6);
 		client.sendRequest(req7);
-		client.sendRequest(req8);
-		client.sendRequest(req9);
-		client.sendRequest(req10);
+		String multiRequest =
+			"GET /test/get?status=608 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=609 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=610 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+		client.getTCPClient().send(ByteBuffer.wrap(multiRequest.getBytes(StandardCharsets.US_ASCII)));
 		MemoryIO io1 = new MemoryIO(1024, "test1");
 		AsyncWork<HTTPResponse, IOException> headers1 = new AsyncWork<>();
 		client.receiveResponse(headers1, io1, 1024).blockThrow(0);
