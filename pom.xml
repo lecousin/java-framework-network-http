@@ -126,6 +126,11 @@
   
   <dependencies>
   	<dependency>
+  		<groupId>net.lecousin</groupId>
+  		<artifactId>core</artifactId>
+  		<version>0.9.16</version>
+  	</dependency>
+  	<dependency>
   		<groupId>${project.groupId}</groupId>
   		<artifactId>core</artifactId>
   		<version>0.2.5</version>
