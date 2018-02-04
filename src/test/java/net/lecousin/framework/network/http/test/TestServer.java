@@ -4,15 +4,18 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.io.IO;
+import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -69,7 +72,11 @@ public class TestServer extends AbstractHTTPTest {
 	public void testHttpSimpleRequests() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
-		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+		HTTPServerProtocol protocol = new HTTPServerProtocol(new TestProcessor());
+		protocol.setReceiveDataTimeout(10000);
+		Assert.assertEquals(10000, protocol.getReceiveDataTimeout());
+		protocol.getProcessor();
+		server.setProtocol(protocol);
 		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		// tests
@@ -120,4 +127,35 @@ public class TestServer extends AbstractHTTPTest {
 			Assert.assertFalse(response.getMIME().hasHeader("X-Test"));
 	}
 	
+	@Test(timeout=120000)
+	public void test2ConcurrentRequests() throws Exception {
+		// launch server
+		TCPServer server = new TCPServer();
+		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+		// tests
+		HTTPClient client = HTTPClient.create(new URI("http://localhost:" + serverPort + "/test/get?status=200&test=hello"));
+		HTTPRequest req1 = new HTTPRequest();
+		req1.setCommand("GET /test/get?status=200&test=hello HTTP/1.1");
+		HTTPRequest req2 = new HTTPRequest();
+		req2.setCommand("GET /test/get?status=678 HTTP/1.1");
+		client.sendRequest(req1);
+		client.sendRequest(req2);
+		MemoryIO io1 = new MemoryIO(1024, "test1");
+		AsyncWork<HTTPResponse, IOException> headers1 = new AsyncWork<>();
+		client.receiveResponse(headers1, io1, 1024).blockThrow(0);
+		MemoryIO io2 = new MemoryIO(1024, "test2");
+		AsyncWork<HTTPResponse, IOException> headers2 = new AsyncWork<>();
+		client.receiveResponse(headers2, io2, 1024).blockThrow(0);
+		client.close();
+		
+		check(new AsyncWork<>(new Pair<>(headers1.getResult(), io1), null), Method.GET, 200, "hello");
+		check(new AsyncWork<>(new Pair<>(headers2.getResult(), io2), null), Method.GET, 678, null);
+
+		io1.close();
+		io2.close();
+		server.close();
+	}
+
 }
