@@ -215,7 +215,12 @@ public class HTTPServerProtocol implements ServerProtocol {
 						if (logger.isTraceEnabled())
 							logger.trace("Start processing the request");
 						// we are already in a CPU Thread, we can stay here
-						processRequest(client, request);
+						SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
+						@SuppressWarnings("unchecked")
+						SynchronizationPoint<Exception> previousResponseSent =
+							(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
+						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
+						processRequest(client, request, responseSent, previousResponseSent);
 						if (request.isConnectionPersistent())
 							try { client.waitForData(receiveDataTimeout); }
 							catch (ClosedChannelException e) { client.closed(); }
@@ -293,10 +298,15 @@ public class HTTPServerProtocol implements ServerProtocol {
 					client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 					client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
 					// process it in a new task as we are in an inline listener
+					SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
+					@SuppressWarnings("unchecked")
+					SynchronizationPoint<Exception> previousResponseSent =
+						(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
+					client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
 					client.addPending(new Task.Cpu<Void,NoException>("Processing HTTP request", Task.PRIORITY_NORMAL) {
 						@Override
 						public Void run() {
-							processRequest(client, request);
+							processRequest(client, request, responseSent, previousResponseSent);
 							return null;
 						}
 					}.start().getOutput());
@@ -326,15 +336,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 		return list;
 	}
 	
-	private void processRequest(TCPServerClient client, HTTPRequest request) {
+	private void processRequest(TCPServerClient client, HTTPRequest request, SynchronizationPoint<Exception> responseSent, SynchronizationPoint<Exception> previousResponseSent) {
 		HTTPResponse response = new HTTPResponse();
 		ISynchronizationPoint<?> processing = processor.process(client, request, response);
 		client.addPending(processing);
-		SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
-		@SuppressWarnings("unchecked")
-		SynchronizationPoint<Exception> previousResponseSent =
-			(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-		client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
 		processing.listenAsync(new Task.Cpu<Void, NoException>("Start sending HTTP response", Task.PRIORITY_NORMAL) {
 			@SuppressWarnings("resource")
 			@Override
