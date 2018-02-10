@@ -31,6 +31,20 @@ public class HTTPClientConfiguration {
 		defaultConfiguration.setProxySelector(ProxySelector.getDefault());
 	}
 	
+	public HTTPClientConfiguration() {
+	}
+	
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	public HTTPClientConfiguration(HTTPClientConfiguration copy) {
+		this.connectionTimeout = copy.connectionTimeout;
+		this.receiveTimeout = copy.receiveTimeout;
+		for (SocketOptionValue<?> so : copy.socketOptions)
+			socketOptions.add(new SocketOptionValue(so.getOption(), so.getValue()));
+		this.interceptors.addAll(copy.getInterceptors());
+		this.proxySelector = copy.proxySelector;
+		this.sslContext = copy.sslContext;
+	}
+	
 	private int connectionTimeout = 0;
 	private int receiveTimeout = 0;
 	private LinkedList<SocketOptionValue<?>> socketOptions = new LinkedList<>();

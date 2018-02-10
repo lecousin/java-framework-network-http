@@ -3,11 +3,17 @@ package net.lecousin.framework.network.http.test;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
 import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import net.lecousin.framework.concurrent.Task;
@@ -25,6 +31,7 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.mime.MimeHeader;
@@ -271,6 +278,35 @@ public class TestHttpClient extends AbstractHTTPTest {
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
 		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
 		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+	}
+	
+	@Test(timeout=120000)
+	public void testProxy() throws Exception {
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "https://gimmeproxy.com/api/getProxy", (IO.Readable)null).blockResult(0);
+		JSONParser parser = new JSONParser();
+		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(p.getValue2())));
+		Assert.assertTrue(o instanceof JSONObject);
+		String ip = (String)((JSONObject)o).get("ip");
+		String port = (String)((JSONObject)o).get("port");
+		
+		HTTPClientConfiguration cfg = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		cfg.setProxySelector(new ProxySelector() {
+			@Override
+			public List<Proxy> select(URI uri) {
+				return Collections.singletonList(new Proxy(Proxy.Type.HTTP, new InetSocketAddress(ip, Integer.parseInt(port))));
+			}
+			
+			@Override
+			public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+			}
+		});
+		
+		HTTPClient client = HTTPClient.create(new URI("http://example.com"), cfg);
+		HTTPRequest req = new HTTPRequest(Method.GET, "/");
+		req.getMIME().setHeaderRaw("Host", ip + ":" + port);
+		client.sendRequest(req).blockThrow(0);
+		client.receiveResponseHeader().blockResult(0);
+		client.close();
 	}
 	
 	@SuppressWarnings("unused")
