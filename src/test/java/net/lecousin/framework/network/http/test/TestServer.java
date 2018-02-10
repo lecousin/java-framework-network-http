@@ -14,6 +14,7 @@ import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.MemoryIO;
+import net.lecousin.framework.io.buffering.ReadableToSeekable;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
@@ -25,7 +26,9 @@ import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
+import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
+import net.lecousin.framework.network.mime.entity.MultipartEntity;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.util.Pair;
@@ -256,6 +259,68 @@ public class TestServer extends AbstractHTTPTest {
 		check(new AsyncWork<>(new Pair<>(headers.getResult(), io), null), Method.GET, 200, "world");
 
 		io.close();
+		server.close();
+	}
+	
+	public static class RangeProcessor extends StaticProcessor {
+		public RangeProcessor(String path) {
+			super(path);
+		}
+		
+		@Override
+		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+			ISynchronizationPoint<?> res = super.process(client, request, response);
+			IO.Readable io = response.getMIME().getBodyToSend();
+			if (io != null)
+				try { response.getMIME().setBodyToSend(new ReadableToSeekable(io, 256)); }
+				catch (IOException e) {
+					e.printStackTrace(System.err);
+				}
+			return res;
+		}
+	}
+	
+	@Test(timeout=120000)
+	public void testRangeRequests() throws Exception {
+		TCPServer server = new TCPServer();
+		HTTPServerProtocol protocol = new HTTPServerProtocol(new RangeProcessor("net/lecousin/framework/network/http/test"));
+		protocol.enableRangeRequests();
+		server.setProtocol(protocol);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+		
+		MimeMessage message = new MimeMessage();
+		message.setHeaderRaw("Range", "bytes=-2");
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
+		Assert.assertEquals(206, p.getValue1().getStatusCode());
+		String s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
+		Assert.assertEquals("ce", s);
+		
+		message = new MimeMessage();
+		message.setHeaderRaw("Range", "bytes=3-6");
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
+		Assert.assertEquals(206, p.getValue1().getStatusCode());
+		s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
+		Assert.assertEquals("s is", s);
+		
+		message = new MimeMessage();
+		message.setHeaderRaw("Range", "bytes=12-");
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
+		Assert.assertEquals(206, p.getValue1().getStatusCode());
+		s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
+		Assert.assertEquals("esource", s);
+		
+		message = new MimeMessage();
+		message.setHeaderRaw("Range", "bytes=3-6,12-");
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
+		Assert.assertEquals(206, p.getValue1().getStatusCode());
+		MultipartEntity multipart = MultipartEntity.from(p.getValue1().getMIME(), true).blockResult(0);
+		Assert.assertEquals(2, multipart.getParts().size());
+		s = IOUtil.readFullyAsStringSync(multipart.getParts().get(0).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+		Assert.assertEquals("s is", s);
+		s = IOUtil.readFullyAsStringSync(multipart.getParts().get(1).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+		Assert.assertEquals("esource", s);
+		
 		server.close();
 	}
 	

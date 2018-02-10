@@ -19,8 +19,10 @@ import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
+import net.lecousin.framework.io.SubIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.SimpleBufferedReadable;
+import net.lecousin.framework.math.RangeLong;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableLong;
 import net.lecousin.framework.network.http.HTTPRequest;
@@ -29,8 +31,10 @@ import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
+import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
+import net.lecousin.framework.network.mime.entity.MultipartEntity;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.network.mime.transfer.TransferReceiver;
@@ -77,6 +81,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 	private HTTPRequestProcessor processor;
 	private Map<String,ServerProtocol> upgradableProtocols;
 	private int receiveDataTimeout = 0;
+	private boolean enableRangeRequests = false;
 	
 	public HTTPRequestProcessor getProcessor() { return processor; }
 	
@@ -93,6 +98,11 @@ public class HTTPServerProtocol implements ServerProtocol {
 		if (upgradableProtocols == null)
 			upgradableProtocols = new HashMap<>();
 		upgradableProtocols.put("websocket", wsProtocol);
+	}
+	
+	/** Before to send any response, check if the request contains a range header and handle it. */
+	public void enableRangeRequests() {
+		enableRangeRequests = true;
 	}
 	
 	@Override
@@ -364,6 +374,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 				}
 				if (response.getStatusCode() < 100)
 					response.setStatus(500);
+				
+				if (enableRangeRequests)
+					handleRangeRequest(request, response);
+
 				sendResponse(client, request, response, previousResponseSent, responseSent);
 				return null;
 			}
@@ -664,5 +678,111 @@ public class HTTPServerProtocol implements ServerProtocol {
 				+ "s. and processed in "
 				+ String.format("%.5f", new Double((now - endReceive) * 1.d / 1000000000)) + "s.");
 	}
+
+	/**
+	 * By default range requests are disabled. It may be enabled globally by calling the method
+	 * {@link #enableRangeRequests()} or by calling this method only on the requests we want to enable it.
+	 */
+	@SuppressWarnings("resource")
+	public static void handleRangeRequest(HTTPRequest request, HTTPResponse response) {
+		IO.Readable io = response.getMIME().getBodyToSend();
+		if (io == null) return;
+		if (!(io instanceof IO.Readable.Seekable)) return;
+		if (!(io instanceof IO.KnownSize)) return;
+		if (response.getStatusCode() != 200) return;
+		
+		response.setHeaderRaw("Accept-Ranges", "bytes");
+			
+		MimeHeader rangeHeader = request.getMIME().getFirstHeader("Range");
+		if (rangeHeader == null) return;
+		String rangeStr = rangeHeader.getRawValue().trim();
+		if (!rangeStr.startsWith("bytes=")) return;
+		rangeStr = rangeStr.substring(6).trim();
+		String[] rangesStr = rangeStr.split(",");
+		if (rangesStr.length == 1) {
+			long totalSize;
+			try { totalSize = ((IO.KnownSize)io).getSizeSync(); }
+			catch (Throwable t) { return; }
+			RangeLong range = getRange(rangeStr, totalSize);
+			if (range == null) return;
+			if (range.max < range.min) {
+				response.setStatus(416, "Invalid range");
+				return;
+			}
+			SubIO.Readable subIO;
+			if (io instanceof IO.Readable.Buffered)
+				subIO = new SubIO.Readable.Seekable.Buffered(
+					(IO.Readable.Seekable & IO.Readable.Buffered)io,
+					range.min, range.getLength(), io.getSourceDescription(), true);
+			else
+				subIO = new SubIO.Readable.Seekable(
+					(IO.Readable.Seekable)io, range.min, range.getLength(), io.getSourceDescription(), true);
+			response.getMIME().setBodyToSend(subIO);
+			response.setStatus(206);
+			response.getMIME().setHeaderRaw("Content-Range", range.min + "-" + range.max + "/" + totalSize);
+			return;
+		}
+		// multipart
+		MultipartEntity multipart = new MultipartEntity("byteranges");
+		for (MimeHeader h : response.getMIME().getHeaders())
+			if (!h.getNameLowerCase().startsWith("content-"))
+				multipart.addHeader(h);
+		long totalSize;
+		try { totalSize = ((IO.KnownSize)io).getSizeSync(); }
+		catch (Throwable t) { return; }
+		for (String s : rangesStr) {
+			RangeLong range = getRange(s, totalSize);
+			if (range == null) return;
+			if (range.max < range.min) {
+				response.setStatus(416, "Invalid range");
+				return;
+			}
+			SubIO.Readable subIO;
+			if (io instanceof IO.Readable.Buffered)
+				subIO = new SubIO.Readable.Seekable.Buffered(
+					(IO.Readable.Seekable & IO.Readable.Buffered)io,
+					range.min, range.getLength(), io.getSourceDescription(), true);
+			else
+				subIO = new SubIO.Readable.Seekable(
+					(IO.Readable.Seekable)io, range.min, range.getLength(), io.getSourceDescription(), true);
+			MimeMessage part = new MimeMessage();
+			part.setBodyToSend(subIO);
+			for (MimeHeader h : response.getMIME().getHeaders())
+				if (h.getNameLowerCase().startsWith("content-"))
+					part.addHeader(h);
+			part.setHeaderRaw("Content-Range", range.min + "-" + range.max + "/" + totalSize);
+			multipart.add(part);
+		}
+		response.setStatus(206);
+		response.setMIME(multipart);
+	}
 	
+	private static RangeLong getRange(String rangeStr, long totalSize) {
+		int i = rangeStr.indexOf('-');
+		if (i < 0) return null;
+		String minStr = rangeStr.substring(0, i);
+		String maxStr = rangeStr.substring(i + 1);
+		if (minStr.length() == 0) {
+			long lastBytes;
+			try { lastBytes = Long.parseLong(maxStr); }
+			catch (Throwable t) { return null; }
+			return new RangeLong(totalSize - lastBytes, totalSize - 1);
+		}
+		if (maxStr.length() == 0) {
+			long start;
+			try { start = Long.parseLong(minStr); }
+			catch (Throwable t) { return null; }
+			return new RangeLong(start, totalSize - 1);
+		}
+
+		long start;
+		long end;
+		try {
+			start = Long.parseLong(minStr);
+			end = Long.parseLong(maxStr);
+		} catch (Throwable t) {
+			return null;
+		}
+		return new RangeLong(start, end);
+	}
 }

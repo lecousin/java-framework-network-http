@@ -59,6 +59,10 @@ public class HTTPResponse {
 	
 	public MimeMessage getMIME() { return mime; }
 	
+	public void setMIME(MimeMessage mime) {
+		this.mime = mime;
+	}
+	
 	/** Set the Content-Type header. */
 	public void setRawContentType(String type) {
 		mime.setHeaderRaw(MimeMessage.CONTENT_TYPE, type);
