@@ -26,6 +26,7 @@ import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.encoding.Base64;
 import net.lecousin.framework.io.util.DataUtil;
+import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
@@ -279,12 +280,29 @@ public class WebSocketClient implements Closeable {
 	public SynchronizationPoint<IOException> sendTextMessage(String message) {
 		byte[] text = message.getBytes(StandardCharsets.UTF_8);
 		ByteArrayIO io = new ByteArrayIO(text, "WebSocket message to send");
-		return sendMessage(1, io);
+		return sendMessage(WebSocketDataFrame.TYPE_TEXT, io);
 	}
 	
 	/** Send a binary message. */
 	public SynchronizationPoint<IOException> sendBinaryMessage(IO.Readable message) {
-		return sendMessage(2, message);
+		return sendMessage(WebSocketDataFrame.TYPE_BINARY, message);
+	}
+	
+	/** Send a ping empty message. */
+	@SuppressWarnings("resource")
+	public SynchronizationPoint<IOException> sendPing() {
+		return sendPing(new EmptyReadable("Empty", Task.PRIORITY_NORMAL));
+	}
+	
+	/** Send a ping message. */
+	public SynchronizationPoint<IOException> sendPing(IO.Readable message) {
+		return sendMessage(WebSocketDataFrame.TYPE_PING, message);
+	}
+	
+	/** Send a close message. */
+	@SuppressWarnings("resource")
+	public SynchronizationPoint<IOException> sendClose() {
+		return sendMessage(WebSocketDataFrame.TYPE_CLOSE, new EmptyReadable("Empty", Task.PRIORITY_NORMAL));
 	}
 	
 	/** Send a message to a client. */

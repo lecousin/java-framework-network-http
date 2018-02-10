@@ -207,12 +207,12 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		}
 		if (type == WebSocketDataFrame.TYPE_CLOSE) {
 			// close
-			sendMessage(client, 8, new ByteArrayIO(new byte[0], "Empty"), true);
+			sendMessage(client, WebSocketDataFrame.TYPE_CLOSE, new ByteArrayIO(new byte[0], "Empty"), true);
 			return;
 		}
 		if (type == WebSocketDataFrame.TYPE_PING) {
 			// ping
-			sendMessage(client, 10, message, false);
+			sendMessage(client, WebSocketDataFrame.TYPE_PONG, message, false);
 			return;
 		}
 		logger.error("Unknown message type received: opcode = " + type);

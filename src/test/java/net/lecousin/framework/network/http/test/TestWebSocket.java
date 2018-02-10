@@ -24,6 +24,7 @@ import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
 import net.lecousin.framework.network.http.websocket.WebSocketClient;
+import net.lecousin.framework.network.http.websocket.WebSocketDataFrame;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol.WebSocketMessageListener;
 import net.lecousin.framework.network.server.TCPServer;
@@ -181,6 +182,40 @@ public class TestWebSocket extends AbstractHTTPTest {
 		byte[] resp = new byte[buf.remaining()];
 		buf.get(resp);
 		Assert.assertArrayEquals(new byte[] { 3, 2, 1, 0 }, resp);
+		client.close();
+		
+		// test ping
+		client = new WebSocketClient();
+		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(5, connected.get());
+		Assert.assertEquals("test2", selected);
+		sp.set(new SynchronizationPoint<>());
+		client.onMessage((frame) -> {
+			if (frame.getMessageType() != WebSocketDataFrame.TYPE_PONG)
+				sp.get().error(new Exception("Unexpected message: " + frame.getMessageType()));
+			else
+				sp.get().unblock();
+		});
+		client.sendPing().blockThrow(0);
+		sp.get().blockThrow(5000);
+		client.close();
+		
+		// test close
+		client = new WebSocketClient();
+		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(6, connected.get());
+		Assert.assertEquals("test2", selected);
+		sp.set(new SynchronizationPoint<>());
+		client.onMessage((frame) -> {
+			if (frame.getMessageType() != WebSocketDataFrame.TYPE_CLOSE)
+				sp.get().error(new Exception("Unexpected message: " + frame.getMessageType()));
+			else
+				sp.get().unblock();
+		});
+		client.sendClose().blockThrow(0);
+		sp.get().blockThrow(5000);
 		client.close();
 		
 		server.close();
