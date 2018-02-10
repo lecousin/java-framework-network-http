@@ -138,7 +138,12 @@ public class HTTPClient implements Closeable {
 					url.append("https://");
 				else
 					url.append("http://");
-				url.append(hostname).append(':').append(port);
+				url.append(hostname);
+				if (client instanceof SSLClient) {
+					if (port != 443)
+						url.append(':').append(port);
+				} else if (port != 80)
+					url.append(':').append(port);
 				url.append(request.getPath());
 				URI uri = null;
 				try {

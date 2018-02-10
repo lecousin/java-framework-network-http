@@ -282,12 +282,18 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=120000)
 	public void testProxy() throws Exception {
+		/*
 		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "https://gimmeproxy.com/api/getProxy", (IO.Readable)null).blockResult(0);
 		JSONParser parser = new JSONParser();
 		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(p.getValue2())));
 		Assert.assertTrue(o instanceof JSONObject);
 		String ip = (String)((JSONObject)o).get("ip");
 		String port = (String)((JSONObject)o).get("port");
+		
+		System.out.println("Test with proxy " + ip + ":" + port);
+		*/
+		String ip = "httpbin.org";
+		String port = "80";
 		
 		HTTPClientConfiguration cfg = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
 		cfg.setProxySelector(new ProxySelector() {
@@ -303,7 +309,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		
 		HTTPClient client = HTTPClient.create(new URI("http://example.com"), cfg);
 		HTTPRequest req = new HTTPRequest(Method.GET, "/");
-		req.getMIME().setHeaderRaw("Host", ip + ":" + port);
+		req.getMIME().setHeaderRaw("Host", "example.com");
 		client.sendRequest(req).blockThrow(0);
 		client.receiveResponseHeader().blockResult(0);
 		client.close();
