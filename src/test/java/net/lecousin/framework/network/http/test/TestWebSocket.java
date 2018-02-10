@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.application.Application;
@@ -15,6 +16,7 @@ import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
+import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
@@ -64,6 +66,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		}
 	}
 	
+	@SuppressWarnings("resource")
 	@Test
 	public void test() throws Exception {
 		TCPServer server = new TCPServer();
@@ -84,9 +87,21 @@ public class TestWebSocket extends AbstractHTTPTest {
 				System.out.println("WebSocket text message received from client: "+message);
 				WebSocketServerProtocol.sendTextMessage(client, "Hello " + message + "!");
 			}
+			@SuppressWarnings("resource")
 			@Override
 			public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, Seekable message) {
 				System.out.println("WebSocket binary message received from client");
+				byte[] buf = new byte[1024];
+				int nb;
+				try { nb = IOUtil.readFully(message, ByteBuffer.wrap(buf)); }
+				catch (IOException e) {
+					e.printStackTrace(System.err);
+					return;
+				}
+				byte[] resp = new byte[nb];
+				for (int i = 0; i < nb; ++i)
+					resp[i] = buf[nb-1-i];
+				WebSocketServerProtocol.sendBinaryMessage(client, new ByteArrayIO(resp, "binary message"));
 			}
 		});
 		protocol.enableWebSocket(wsProtocol);
@@ -137,6 +152,35 @@ public class TestWebSocket extends AbstractHTTPTest {
 		client.sendTextMessage("World").blockThrow(0);
 		sp.get().blockThrow(5000);
 		Assert.assertEquals("Hello World!", received.get());
+		client.close();
+		
+		// try binary message
+		client = new WebSocketClient();
+		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(4, connected.get());
+		Assert.assertEquals("test2", selected);
+		Mutable<ByteBuffer> binary = new Mutable<>(null);
+		sp.set(new SynchronizationPoint<>());
+		client.onMessage((frame) -> {
+			try {
+				IOInMemoryOrFile msg = frame.getMessage();
+				msg.seekSync(SeekType.FROM_BEGINNING, 0);
+				ByteBuffer buf = ByteBuffer.allocate(1024);
+				IOUtil.readFully(msg, buf);
+				binary.set(buf);
+				sp.get().unblock();
+			} catch (Exception e) {
+				sp.get().error(e);
+			}
+		});
+		client.sendBinaryMessage(new ByteArrayIO(new byte[] { 0, 1, 2, 3 }, "Test")).blockThrow(0);
+		sp.get().blockThrow(5000);
+		ByteBuffer buf = binary.get();
+		buf.flip();
+		byte[] resp = new byte[buf.remaining()];
+		buf.get(resp);
+		Assert.assertArrayEquals(new byte[] { 3, 2, 1, 0 }, resp);
 		client.close();
 		
 		server.close();
