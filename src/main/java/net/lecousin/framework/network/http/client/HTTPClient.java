@@ -467,6 +467,10 @@ public class HTTPClient implements Closeable {
 	private void receiveBody(TransferReceiver transfer, SynchronizationPoint<IOException> result, int bufferSize) {
 		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(
 		(data) -> {
+			if (data == null) {
+				result.error(new IOException("Unexpected end of data"));
+				return;
+			}
 			AsyncWork<Boolean,IOException> t = transfer.consume(data);
 			t.listenInline((end) -> {
 				if (end.booleanValue()) {
