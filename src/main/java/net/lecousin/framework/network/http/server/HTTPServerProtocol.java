@@ -231,7 +231,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 							(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
 						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
 						processRequest(client, request, responseSent, previousResponseSent);
-						if (request.isConnectionPersistent())
+						if (request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE))
 							try { client.waitForData(receiveDataTimeout); }
 							catch (ClosedChannelException e) { client.closed(); }
 						return;
