@@ -709,7 +709,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 				response.setStatus(416, "Invalid range");
 				return;
 			}
-			SubIO.Readable subIO;
+			SubIO.Readable.Seekable subIO;
 			if (io instanceof IO.Readable.Buffered)
 				subIO = new SubIO.Readable.Seekable.Buffered(
 					(IO.Readable.Seekable & IO.Readable.Buffered)io,
@@ -737,7 +737,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 				response.setStatus(416, "Invalid range");
 				return;
 			}
-			SubIO.Readable subIO;
+			SubIO.Readable.Seekable subIO;
 			if (io instanceof IO.Readable.Buffered)
 				subIO = new SubIO.Readable.Seekable.Buffered(
 					(IO.Readable.Seekable & IO.Readable.Buffered)io,
