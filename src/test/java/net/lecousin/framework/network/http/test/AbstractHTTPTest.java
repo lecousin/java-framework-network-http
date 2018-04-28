@@ -22,4 +22,10 @@ public class AbstractHTTPTest extends AbstractNetworkTest {
 		lf.getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
 	}
 	
+	public static final String HTTP_GOOGLE = "http://www.google.com/";
+	public static final String HTTPS_GOOGLE = "https://www.google.com/";
+	public static final String HTTP_BIN_DOMAIN = "eu.httpbin.org";
+	public static final String HTTP_BIN = "http://"+HTTP_BIN_DOMAIN+"/";
+	public static final String HTTPS_BIN = "https://eu.httpbin.org/";
+	
 }

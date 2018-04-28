@@ -52,14 +52,14 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=120000)
 	public void testHttpGetGoogle() throws Exception {
-		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet("http://www.google.com/", 3);
+		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet(HTTP_GOOGLE, 3);
 		result.blockThrow(0);
 		checkGetGoogle(result);
 	}
 
 	@Test(timeout=120000)
 	public void testHttpsGetGoogle() throws Exception {
-		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet("https://www.google.com/", 3);
+		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet(HTTPS_GOOGLE, 3);
 		result.blockThrow(0);
 		checkGetGoogle(result);
 	}
@@ -80,11 +80,11 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=240000)
 	public void testHttpBinGet() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/get", new MimeHeader("X-Test", "a test"));
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "http://httpbin.org/get");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTP_BIN+"get");
 		
-		HTTPClient client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		HTTPClient client = HTTPClient.create(new URL(HTTP_BIN+"get"));
 		HTTPRequest req = new HTTPRequest(Method.GET, "/get");
 		req.getMIME().addHeaderRaw("X-Test", "a test");
 		System.out.println("Sending request");
@@ -99,12 +99,12 @@ public class TestHttpClient extends AbstractHTTPTest {
 		System.out.println("Waiting for body");
 		outputListener.blockThrow(0);
 		System.out.println("Response received");
-		checkHttpBin(req, outputListener.getResult(), headerListener.getResult().getValue2(), "http://httpbin.org/get");
+		checkHttpBin(req, outputListener.getResult(), headerListener.getResult().getValue2(), HTTP_BIN+"get");
 		io.close();
 		client.close();
 
 		
-		client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		client = HTTPClient.create(new URL(HTTP_BIN+"get"));
 		req = new HTTPRequest(Method.GET, "/get");
 		req.getMIME().addHeaderRaw("X-Test", "a test");
 		System.out.println("Sending request");
@@ -117,11 +117,11 @@ public class TestHttpClient extends AbstractHTTPTest {
 		result.blockThrow(0);
 		System.out.println("Response received");
 		io.seekSync(SeekType.FROM_BEGINNING, 0);
-		checkHttpBin(req, headersListener.getResult(), io, "http://httpbin.org/get");
+		checkHttpBin(req, headersListener.getResult(), io, HTTP_BIN+"get");
 		io.close();
 		client.close();
 
-		client = HTTPClient.create(new URL("http://httpbin.org/get"));
+		client = HTTPClient.create(new URL(HTTP_BIN+"get"));
 		req = new HTTPRequest(Method.GET, "/get");
 		req.getMIME().addHeaderRaw("X-Test", "a test");
 		System.out.println("Sending request");
@@ -139,36 +139,36 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Pair<HTTPResponse, MemoryIO> p = bodyReceived.blockResult(0);
 		System.out.println("Response received");
 		p.getValue2().seekSync(SeekType.FROM_BEGINNING, 0);
-		checkHttpBin(req, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		checkHttpBin(req, p.getValue1(), p.getValue2(), HTTP_BIN+"get");
 		io.close();
 		client.close();
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpsBinGet() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("https://httpbin.org/get", new MimeHeader("X-Test", "a test"));
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTPS_BIN+"get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "https://httpbin.org/get");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTPS_BIN+"get");
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpBinRedirect() throws Exception {
 		File file = File.createTempFile("test", "http");
 		file.deleteOnExit();
-		Pair<HTTPResponse, FileIO.ReadWrite> p1 = HTTPClientUtil.GET("http://httpbin.org/redirect/2", file, 3).blockResult(0);
-		checkHttpBin(null, p1.getValue1(), p1.getValue2(), "http://httpbin.org/get");
+		Pair<HTTPResponse, FileIO.ReadWrite> p1 = HTTPClientUtil.GET(HTTP_BIN+"redirect/2", file, 3).blockResult(0);
+		checkHttpBin(null, p1.getValue1(), p1.getValue2(), HTTP_BIN+"get");
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpBinGetGzip() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/gzip", new MimeHeader("X-Test", "a test"));
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"gzip", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), "http://httpbin.org/gzip");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTP_BIN+"gzip");
 	}
 	
 	@Test(timeout=120000)
 	public void testHttpBinGetBytes() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/bytes/15000");
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"bytes/15000");
 		get.blockThrow(0);
 		IO.Readable.Seekable data = get.getResult().getValue3();
 		byte[] buf = new byte[20000];
@@ -179,7 +179,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=120000)
 	public void testHttpBinGetBytesChunked() throws Exception {
-		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest("http://httpbin.org/stream-bytes/15000");
+		AsyncWork<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"stream-bytes/15000");
 		get.blockThrow(0);
 		IO.Readable.Seekable data = get.getResult().getValue3();
 		byte[] buf = new byte[20000];
@@ -201,7 +201,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		form3.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> send;
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form1);
+		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form1);
 		send.blockThrow(0);
 		JSONParser parser = new JSONParser();
 		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
@@ -216,7 +216,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Assert.assertTrue(o instanceof String);
 		Assert.assertEquals("valueofmyfield", o);
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form2);
+		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form2);
 		send.blockThrow(0);
 		parser = new JSONParser();
 		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
@@ -235,7 +235,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Assert.assertTrue(o instanceof String);
 		Assert.assertEquals("a value with a = and spaces", o);
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form3);
+		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form3);
 		send.blockThrow(0);
 		parser = new JSONParser();
 		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
@@ -258,26 +258,26 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test(timeout=120000)
 	public void testSendAndReceiveHeaders() throws Exception {
-		Pair<HTTPClient, HTTPResponse> p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", (IO.Readable)null).blockResult(0);
+		Pair<HTTPClient, HTTPResponse> p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, HTTP_BIN+"get", (IO.Readable)null).blockResult(0);
 		p.getValue1().close();
-		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, "http://httpbin.org/get", new MimeMessage()).blockResult(0);
+		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, HTTP_BIN+"get", new MimeMessage()).blockResult(0);
 		p.getValue1().close();
 	}
 	
 	@Test(timeout=120000)
 	public void testSendAndReceive() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
-		p = HTTPClientUtil.sendAndReceive(Method.GET, "http://httpbin.org/get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, HTTP_BIN+"get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTP_BIN+"get");
+		p = HTTPClientUtil.sendAndReceive(Method.GET, HTTP_BIN+"get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTP_BIN+"get");
 	}
 	
 	@Test(timeout=120000)
 	public void testSendAndReceiveFully() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://httpbin.org/get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), "http://httpbin.org/get");
+		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, HTTP_BIN+"get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTP_BIN+"get");
+		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, HTTP_BIN+"get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
+		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTP_BIN+"get");
 	}
 	
 	@Test(timeout=120000)
@@ -292,7 +292,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		
 		System.out.println("Test with proxy " + ip + ":" + port);
 		*/
-		String ip = "httpbin.org";
+		String ip = HTTP_BIN_DOMAIN;
 		String port = "80";
 		
 		HTTPClientConfiguration cfg = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
