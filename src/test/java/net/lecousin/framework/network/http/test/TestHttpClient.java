@@ -204,7 +204,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form1);
 		send.blockThrow(0);
 		JSONParser parser = new JSONParser();
-		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2())));
+		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		JSONObject json = (JSONObject)o;
 		o = json.get("form");
@@ -219,7 +219,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form2);
 		send.blockThrow(0);
 		parser = new JSONParser();
-		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2())));
+		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		json = (JSONObject)o;
 		o = json.get("form");
@@ -238,7 +238,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://httpbin.org/post", form3);
 		send.blockThrow(0);
 		parser = new JSONParser();
-		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2())));
+		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		json = (JSONObject)o;
 		o = json.get("form");
@@ -318,7 +318,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 	@SuppressWarnings("unused")
 	private static void checkHttpBin(HTTPRequest request, HTTPResponse response, IO.Readable.Seekable content, String url) throws Exception {
 		JSONParser parser = new JSONParser();
-		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(content)));
+		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(content, false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		JSONObject json = (JSONObject)o;
 		if (json.containsKey("url"))

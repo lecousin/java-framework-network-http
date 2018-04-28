@@ -128,7 +128,7 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.10.1</version>
+  		<version>0.11.0</version>
   	</dependency>
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
@@ -156,14 +156,14 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-		<version>0.10.1</version>
+		<version>0.11.0</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>
   	<dependency>
   		<groupId>net.lecousin.framework</groupId>
   		<artifactId>log.bridges.commons-logging</artifactId>
-		<version>0.10.0</version>
+		<version>0.11.0</version>
   		<scope>test</scope>
   	</dependency>
   	<!-- TODO replace by our own library once released -->
