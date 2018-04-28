@@ -145,7 +145,7 @@
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
   		<artifactId>mime</artifactId>
-  		<version>0.3.0</version>
+  		<version>0.3.1</version>
   	</dependency>
   	<dependency>
 		<groupId>junit</groupId>
