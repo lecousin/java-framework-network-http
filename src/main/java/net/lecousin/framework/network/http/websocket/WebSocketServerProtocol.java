@@ -118,34 +118,27 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	}
 	
 	@Override
-	public boolean dataReceivedFromClient(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
-		new Task.Cpu<Void,NoException>("Receiving WebSocket data from client", Task.PRIORITY_NORMAL) {
-			@Override
-			public Void run() {
-				do {
-					WebSocketDataFrame frame = (WebSocketDataFrame)client.getAttribute(DATA_FRAME_ATTRIBUTE);
-					if (frame == null) {
-						frame = new WebSocketDataFrame();
-						client.setAttribute(DATA_FRAME_ATTRIBUTE, frame);
-					}
-					try {
-						if (frame.read(data)) {
-							processMessage(client, frame.getMessage(), frame.getMessageType());
-							client.removeAttribute(DATA_FRAME_ATTRIBUTE);
-						}
-					} catch (IOException e) {
-						logger.error("Error storing WebSocket data frame", e);
-						client.close();
-						return null;
-					}
-				} while (data.hasRemaining());
-				onbufferavailable.run();
-				try { client.waitForData(0); }
-				catch (Exception e) { /* ignore */ }
-				return null;
+	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
+		do {
+			WebSocketDataFrame frame = (WebSocketDataFrame)client.getAttribute(DATA_FRAME_ATTRIBUTE);
+			if (frame == null) {
+				frame = new WebSocketDataFrame();
+				client.setAttribute(DATA_FRAME_ATTRIBUTE, frame);
 			}
-		}.start();
-		return false;
+			try {
+				if (frame.read(data)) {
+					processMessage(client, frame.getMessage(), frame.getMessageType());
+					client.removeAttribute(DATA_FRAME_ATTRIBUTE);
+				}
+			} catch (IOException e) {
+				logger.error("Error storing WebSocket data frame", e);
+				client.close();
+				return;
+			}
+		} while (data.hasRemaining());
+		onbufferavailable.run();
+		try { client.waitForData(0); }
+		catch (Exception e) { /* ignore */ }
 	}
 	
 	@Override

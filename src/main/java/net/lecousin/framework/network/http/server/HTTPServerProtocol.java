@@ -121,26 +121,19 @@ public class HTTPServerProtocol implements ServerProtocol {
 	}
 	
 	@Override
-	public boolean dataReceivedFromClient(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
+	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
 		if (client.getAttribute(REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE) == null)
 			client.setAttribute(REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 		ServerProtocol proto = (ServerProtocol)client.getAttribute(UPGRADED_PROTOCOL_ATTRIBUTE);
-		if (proto != null)
-			return proto.dataReceivedFromClient(client, data, onbufferavailable);
-		Task<Void,NoException> task = new Task.Cpu<Void,NoException>("Processing HTTP request from client", Task.PRIORITY_NORMAL) {
-			@Override
-			public Void run() {
-				ReceiveStatus status = (ReceiveStatus)client.getAttribute(RECEIVE_STATUS_ATTRIBUTE);
-				if (status.equals(ReceiveStatus.RECEIVING_BODY))
-					receiveBody(client, data, onbufferavailable);
-				else
-					receiveHeader(client, data, onbufferavailable);
-				return null;
-			}
-		};
-		client.addPending(task.getOutput());
-		task.start();
-		return false;
+		if (proto != null) {
+			proto.dataReceivedFromClient(client, data, onbufferavailable);
+			return;
+		}
+		ReceiveStatus status = (ReceiveStatus)client.getAttribute(RECEIVE_STATUS_ATTRIBUTE);
+		if (status.equals(ReceiveStatus.RECEIVING_BODY))
+			receiveBody(client, data, onbufferavailable);
+		else
+			receiveHeader(client, data, onbufferavailable);
 	}
 	
 	@SuppressWarnings("resource")
@@ -219,7 +212,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 					if (!request.isExpectingBody()) {
 						client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 						client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
-						onbufferavailable.run();
+						if (!data.hasRemaining())
+							onbufferavailable.run();
 						client.removeAttribute(REQUEST_ATTRIBUTE);
 						client.removeAttribute(CURRENT_LINE_ATTRIBUTE);
 						if (logger.isTraceEnabled())
@@ -231,6 +225,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 							(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
 						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
 						processRequest(client, request, responseSent, previousResponseSent);
+						if (data.hasRemaining()) {
+							dataReceivedFromClient(client, data, onbufferavailable);
+							return;
+						}
 						if (request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE))
 							try { client.waitForData(receiveDataTimeout); }
 							catch (ClosedChannelException e) { client.closed(); }
@@ -295,7 +293,6 @@ public class HTTPServerProtocol implements ServerProtocol {
 		sp.listenInline(new AsyncWorkListener<Boolean, IOException>() {
 			@Override
 			public void ready(Boolean result) {
-				onbufferavailable.run();
 				if (result.booleanValue()) {
 					// end of body reached
 					@SuppressWarnings("resource")
@@ -320,6 +317,12 @@ public class HTTPServerProtocol implements ServerProtocol {
 							return null;
 						}
 					}.start().getOutput());
+				}
+				if (!data.hasRemaining())
+					onbufferavailable.run();
+				else {
+					dataReceivedFromClient(client, data, onbufferavailable);
+					return;
 				}
 				if (!result.booleanValue() || request.isConnectionPersistent())
 					try { client.waitForData(receiveDataTimeout); }
