@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
@@ -22,6 +23,7 @@ import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.SubIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.SimpleBufferedReadable;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.math.RangeLong;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableLong;
@@ -43,14 +45,9 @@ import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.util.UnprotectedString;
 import net.lecousin.framework.util.UnprotectedStringBuffer;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 /** Implements the HTTP protocol on server side. */
 public class HTTPServerProtocol implements ServerProtocol {
 
-	public static final Log logger = LogFactory.getLog(HTTPServerProtocol.class);
-	
 	public static final String REQUEST_ATTRIBUTE = "protocol.http.request";
 	private static final String CURRENT_LINE_ATTRIBUTE = "protocol.http.current_line";
 	private static final String HEADERS_RECEIVER_ATTRIBUTE = "protocol.http.headers_receiver";
@@ -76,8 +73,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 	public HTTPServerProtocol(HTTPRequestProcessor processor, Map<String,ServerProtocol> upgradableProtocols) {
 		this.processor = processor;
 		this.upgradableProtocols = upgradableProtocols;
+		this.logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class);
 	}
 	
+	private Logger logger;
 	private HTTPRequestProcessor processor;
 	private Map<String,ServerProtocol> upgradableProtocols;
 	private int receiveDataTimeout = 0;
@@ -173,10 +172,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 						onbufferavailable.run();
 						return;
 					}
-					if (logger.isTraceEnabled()) {
+					if (logger.trace()) {
 						logger.trace("End of headers received");
 					}
-					if (logger.isDebugEnabled()) {
+					if (logger.debug()) {
 						logger.debug("HTTP Request: " + request.generateCommandLine());
 					}
 					// Analyze headers to check if an upgrade of the protocol is requested
@@ -216,7 +215,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 							onbufferavailable.run();
 						client.removeAttribute(REQUEST_ATTRIBUTE);
 						client.removeAttribute(CURRENT_LINE_ATTRIBUTE);
-						if (logger.isTraceEnabled())
+						if (logger.trace())
 							logger.trace("Start processing the request");
 						// we are already in a CPU Thread, we can stay here
 						SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
@@ -234,7 +233,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 							catch (ClosedChannelException e) { client.closed(); }
 						return;
 					}
-					if (logger.isTraceEnabled())
+					if (logger.trace())
 						logger.trace("Start receiving the body");
 					// maximum 1MB in memory
 					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, "HTTP Body");
@@ -254,7 +253,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 					receiveBody(client, data, onbufferavailable);
 					return;
 				}
-				if (logger.isTraceEnabled())
+				if (logger.trace())
 					logger.trace("Request header line received: " + line.toString().trim());
 				if (request.isCommandSet())
 					try { linesReceiver.newLine(s); }
@@ -483,9 +482,12 @@ public class HTTPServerProtocol implements ServerProtocol {
 			response.getMIME().setContentLength(bodySize);
 		else
 			response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
-		endOfProcessing(client);
 		
-		if (logger.isDebugEnabled())
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class);
+		
+		endOfProcessing(client, logger);
+		
+		if (logger.debug())
 			logger.debug("Response code " + response.getStatusCode() + " for request " + request.generateCommandLine());
 
 		Protocol protocol = response.getProtocol();
@@ -506,7 +508,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		response.getMIME().appendHeadersTo(s);
 		s.append("\r\n");
 		byte[] headers = s.toUsAsciiBytes();
-		if (logger.isTraceEnabled())
+		if (logger.trace())
 			logger.trace("Sending response with headers:\n" + s);
 		SynchronizationPoint<IOException> sendHeaders;
 		try {
@@ -666,14 +668,14 @@ public class HTTPServerProtocol implements ServerProtocol {
 		});
 	}
 	
-	private static void endOfProcessing(TCPServerClient client) {
+	private static void endOfProcessing(TCPServerClient client, Logger logger) {
 		long now = System.nanoTime();
 		long connTime = ((Long)client.getAttribute(ServerProtocol.ATTRIBUTE_CONNECTION_ESTABLISHED_NANOTIME)).longValue();
 		long startReceive = ((Long)client.getAttribute(HTTPServerProtocol.REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE)).longValue();
 		Long l = (Long)client.getAttribute(HTTPServerProtocol.REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE);
 		long endReceive = l != null ? l.longValue() : now;
 		client.setAttribute(HTTPServerProtocol.REQUEST_END_PROCESS_NANOTIME_ATTRIBUTE, Long.valueOf(now));
-		if (logger.isDebugEnabled())
+		if (logger.debug())
 			logger.debug("HTTP request processed: start receive "
 				+ String.format("%.5f", new Double((startReceive - connTime) * 1.d / 1000000000))
 				+ "s. after connection, request received in "

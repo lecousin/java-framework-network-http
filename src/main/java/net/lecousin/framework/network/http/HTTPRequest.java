@@ -17,14 +17,9 @@ import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.IString;
 import net.lecousin.framework.util.Pair;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 /** HTTP request. */
 public class HTTPRequest implements AttributesContainer {
 	
-	public static Log logger = LogFactory.getLog(HTTPRequest.class);
-
 	/** HTTP method. */
 	public static enum Method {
 		OPTIONS,

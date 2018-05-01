@@ -31,9 +31,11 @@ public class HTTPClientConfiguration {
 		defaultConfiguration.setProxySelector(ProxySelector.getDefault());
 	}
 	
+	/** Constructor. */
 	public HTTPClientConfiguration() {
 	}
 	
+	/** Copy constructor. */
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public HTTPClientConfiguration(HTTPClientConfiguration copy) {
 		this.connectionTimeout = copy.connectionTimeout;

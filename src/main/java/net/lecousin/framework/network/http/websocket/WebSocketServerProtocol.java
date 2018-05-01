@@ -10,6 +10,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
@@ -20,6 +21,7 @@ import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.encoding.Base64;
 import net.lecousin.framework.io.util.DataUtil;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
@@ -27,13 +29,8 @@ import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 /** Implements the WebSocket protocol on server side. */
 public class WebSocketServerProtocol implements ServerProtocol {
-	
-	public static final Log logger = LogFactory.getLog(WebSocketServerProtocol.class);
 	
 	private static final String DATA_FRAME_ATTRIBUTE = "protocol.http.websocket.dataframe";
 	
@@ -58,8 +55,10 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	/** Constructor. */
 	public WebSocketServerProtocol(WebSocketMessageListener listener) {
 		this.listener = listener;
+		this.logger = LCCore.getApplication().getLoggerFactory().getLogger(WebSocketServerProtocol.class);
 	}
 	
+	private Logger logger;
 	private WebSocketMessageListener listener;
 	
 	@Override

@@ -7,20 +7,17 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 /** HTTP Response. */
 public class HTTPResponse {
-	
-	public static final Log logger = LogFactory.getLog(HTTPResponse.class);
 	
 	public static final String SERVER_HEADER = "Server";
 	
@@ -143,13 +140,14 @@ public class HTTPResponse {
 	/** Receive a response from a server, by using the given TCPClient. */
 	public static AsyncWork<HTTPResponse, IOException> receive(TCPClient client, int timeout) {
 		AsyncWork<HTTPResponse, IOException> result = new AsyncWork<HTTPResponse, IOException>();
-		if (logger.isTraceEnabled())
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPResponse.class);
+		if (logger.trace())
 			logger.trace("Receiving status line...");
 		AsyncWork<ByteArrayIO,IOException> statusLine = client.getReceiver().readUntil((byte)'\n', 1024, timeout);
 		statusLine.listenInline(
 			(line) -> {
 				String s = line.getAsString(StandardCharsets.US_ASCII);
-				if (logger.isTraceEnabled())
+				if (logger.trace())
 					logger.trace("Status line received: " + s);
 				int i = s.indexOf(' ');
 				if (i < 0) {
