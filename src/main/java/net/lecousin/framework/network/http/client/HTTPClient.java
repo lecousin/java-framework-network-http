@@ -160,7 +160,7 @@ public class HTTPClient implements Closeable {
 				}
 				if (proxy != null) {
 					InetSocketAddress inet = (InetSocketAddress)proxy.address();
-					inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
+					//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 					if (client instanceof SSLClient) {
 						// we have to create a HTTP tunnel with the proxy
 						TCPClient tunnelClient = new TCPClient();

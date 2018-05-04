@@ -38,7 +38,7 @@ public class HTTPRequestForwarder {
 
 	protected Logger logger;
 	protected HTTPClientConfiguration clientConfig;
-	protected Map<Pair<String,Integer>, LinkedList<HTTPClient>> openClients = new HashMap<>();
+	//protected Map<Pair<String,Integer>, LinkedList<HTTPClient>> openClients = new HashMap<>();
 	
 	public void setClientConfiguration(HTTPClientConfiguration config) {
 		clientConfig = config;
@@ -47,11 +47,14 @@ public class HTTPRequestForwarder {
 	/** Forward the request to the given host and port. */
 	@SuppressWarnings("resource")
 	public ISynchronizationPoint<IOException> forward(HTTPRequest request, HTTPResponse response, String host, int port) {
+		if (logger.debug())
+			logger.debug("Forward request " + request.getPath() + " to " + host + ":" + port);
 		prepareRequest(request, host, port, false);
 		
 		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
 		Pair<String, Integer> address = new Pair<>(host, Integer.valueOf(port));
 		HTTPClient client;
+		/*
 		synchronized (openClients) {
 			LinkedList<HTTPClient> clients = openClients.get(address);
 			if (clients == null)
@@ -69,10 +72,10 @@ public class HTTPRequestForwarder {
 					openClients.remove(address);
 			}
 		}
-		if (client == null)
+		if (client == null)*/
 			client = new HTTPClient(new TCPClient(), host, port, clientConfig);
-		else
-			logger.debug("Reuse client to " + address);
+		/*else
+			logger.debug("Reuse client to " + address);*/
 		
 		doForward(client, request, response, result, address);
 		return result;
@@ -93,7 +96,7 @@ public class HTTPRequestForwarder {
 		request.getMIME().setBodyToSend(request.getMIME().getBodyReceivedAsInput());
 		StringBuilder s = new StringBuilder(128);
 		for (String encoding : ContentDecoderFactory.getSupportedEncoding()) {
-			if (s.length() == 0) s.append(", ");
+			if (s.length() > 0) s.append(", ");
 			s.append(encoding);
 		}
 		request.getMIME().setHeaderRaw("Accept-Encoding", s.toString());
@@ -125,17 +128,17 @@ public class HTTPRequestForwarder {
 				response.getMIME().setBodyToSend(o2i);
 				client.receiveBody(resp, o2i, 65536).listenInline(() -> {
 					o2i.endOfData();
-					if (reuseClientAddress == null || client.getTCPClient().isClosed() ||
-						"close".equalsIgnoreCase(request.getMIME().getFirstHeaderRawValue(HTTPRequest.HEADER_CONNECTION)))
+					/*if (reuseClientAddress == null || client.getTCPClient().isClosed() ||
+						"close".equalsIgnoreCase(request.getMIME().getFirstHeaderRawValue(HTTPRequest.HEADER_CONNECTION)))*/
 						client.close();
-					else synchronized (openClients) {
+					/*else synchronized (openClients) {
 						LinkedList<HTTPClient> clients = openClients.get(reuseClientAddress);
 						if (clients == null) {
 							clients = new LinkedList<>();
 							openClients.put(reuseClientAddress, clients);
 						}
 						clients.addLast(client);
-					}
+					}*/
 				}, (error) -> {
 					logger.error("Error receiving body", error);
 					o2i.signalErrorBeforeEndOfData(error);
@@ -156,7 +159,7 @@ public class HTTPRequestForwarder {
 		
 		@Override
 		public Void run() {
-			synchronized (openClients) {
+			/*synchronized (openClients) {
 				for (Iterator<Map.Entry<Pair<String, Integer>, LinkedList<HTTPClient>>> itEntry =
 					openClients.entrySet().iterator(); itEntry.hasNext(); ) {
 					Map.Entry<Pair<String, Integer>, LinkedList<HTTPClient>> e = itEntry.next();
@@ -167,7 +170,7 @@ public class HTTPRequestForwarder {
 					if (e.getValue().isEmpty())
 						itEntry.remove();
 				}
-			}
+			}*/
 			return null;
 		}
 	}
