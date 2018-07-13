@@ -1,16 +1,14 @@
 package net.lecousin.framework.network.http.server.processor;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.HttpURLConnection;
 
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.Threading;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO;
-import net.lecousin.framework.io.IOFromInputStream;
-import net.lecousin.framework.io.provider.IOProviderFromName;
+import net.lecousin.framework.io.provider.IOProvider;
+import net.lecousin.framework.io.provider.IOProviderFromPathUsingClassloader;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -24,26 +22,21 @@ public class StaticProcessor implements HTTPRequestProcessor {
 		if (!resourcePath.endsWith("/"))
 			resourcePath += "/";
 		this.resourcePath = resourcePath;
+		this.provider = new IOProviderFromPathUsingClassloader(getClass().getClassLoader());
 	}
 	
 	private String resourcePath;
+	private IOProviderFromPathUsingClassloader provider;
 	
 	@SuppressWarnings("resource")
 	@Override
 	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
 		String path = request.getPath();
-		ClassLoader cl = getClass().getClassLoader();
+		IOProvider.Readable p = provider.get(resourcePath + path);
 		IO.Readable input;
-		if (cl instanceof IOProviderFromName.Readable) {
-			try {
-				input = ((IOProviderFromName.Readable)cl).provideReadableIO(resourcePath + path, Task.PRIORITY_NORMAL);
-			} catch (IOException e) {
-				input = null;
-			}
-		} else {
-			InputStream in = getClass().getClassLoader().getResourceAsStream(resourcePath + path);
-			if (in == null) input = null;
-			else input = new IOFromInputStream(in, resourcePath, Threading.getUnmanagedTaskManager(), Task.PRIORITY_NORMAL);
+		try { input = p != null ? p.provideIOReadable(Task.PRIORITY_NORMAL) : null; }
+		catch (IOException e) {
+			input = null;
 		}
 		if (input == null) {
 			response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Resource not found: " + resourcePath);

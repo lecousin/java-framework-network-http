@@ -464,4 +464,41 @@ public final class HTTPClientUtil {
 		return result;
 	}
 
+	/** Download from a URL, and return immediately a IO.Readable. */
+	@SuppressWarnings("resource")
+	public static IO.Readable download(String url, int maxRedirects, int maxInMemory, MimeHeader... headers)
+	throws UnsupportedHTTPProtocolException, URISyntaxException, GeneralSecurityException {
+		IOInMemoryOrFile io = new IOInMemoryOrFile(maxInMemory, Task.PRIORITY_NORMAL, url);
+		OutputToInput output = new OutputToInput(io, url);
+		AsyncWork<Pair<HTTPClient, HTTPResponse>, IOException> send = sendGET(url, maxRedirects, headers);
+		send.listenInline((p) -> {
+			if (send.hasError()) {
+				output.signalErrorBeforeEndOfData(send.getError());
+				return;
+			}
+			HTTPClient client = p.getValue1();
+			HTTPResponse response = p.getValue2();
+			if ((response.getStatusCode() / 100) != 2) {
+				output.signalErrorBeforeEndOfData(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
+				client.close();
+				return;
+			}
+			client.receiveBody(response, output, 64 * 1024).listenInline(
+				() -> {
+					output.endOfData();
+					client.close();
+				},
+				(error) -> {
+					output.signalErrorBeforeEndOfData(error);
+					client.close();
+				},
+				(cancel) -> {
+					output.signalErrorBeforeEndOfData(new IOException("Cancelled", cancel));
+					client.close();
+				}
+			);
+		});
+		return output;
+	}
+
 }
