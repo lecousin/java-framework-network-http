@@ -120,7 +120,7 @@ public class HTTPRequestForwarder {
 					if (MimeMessage.CONTENT_ENCODING.equalsIgnoreCase(name)) continue;
 					response.getMIME().addHeader(new MimeHeader(h.getName(), h.getRawValue()));
 				}
-				OutputToInputBuffers o2i = new OutputToInputBuffers(false, 8, Task.PRIORITY_NORMAL);
+				OutputToInputBuffers o2i = new OutputToInputBuffers(true, 8, Task.PRIORITY_NORMAL);
 				response.getMIME().setBodyToSend(o2i);
 				client.receiveBody(resp, o2i, 65536).listenInline(() -> {
 					o2i.endOfData();
