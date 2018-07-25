@@ -272,7 +272,7 @@ public class WebSocketClient implements Closeable {
 				LCCore.getApplication().getDefaultLogger().error("Error reading web-socket frame", t);
 				return;
 			}
-		});
+		}, true);
 	}
 	
 	/** Send a text message to a list of clients. */
