@@ -8,13 +8,17 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
+import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.MemoryIO;
+import net.lecousin.framework.io.buffering.PreBufferedReadable;
 import net.lecousin.framework.io.buffering.ReadableToSeekable;
+import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
@@ -262,6 +266,34 @@ public class TestServer extends AbstractHTTPTest {
 		server.close();
 	}
 	
+	@Test(timeout=60000)
+	public void testInvalidRequestes() throws Exception {
+		// launch server
+		TCPServer server = new TCPServer();
+		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+
+		testInvalidRequest("TOTO /titi\r\n\r\n", serverPort, 400);
+		testInvalidRequest("GET /titi\r\n\r\n", serverPort, 400);
+		testInvalidRequest("GET\r\n\r\n", serverPort, 400);
+		testInvalidRequest("GET tutu FTP/10.51\r\n\r\n", serverPort, 400);
+		server.close();
+	}
+	
+	private static void testInvalidRequest(String request, int serverPort, int expectedStatus) throws Exception {
+		TCPClient client = new TCPClient();
+		client.connect(new InetSocketAddress("localhost", serverPort), 10000).blockThrow(0);
+		client.send(ByteBuffer.wrap(request.getBytes(StandardCharsets.US_ASCII)));
+		HTTPClient httpClient = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
+		MemoryIO io = new MemoryIO(1024, "test1");
+		AsyncWork<HTTPResponse, IOException> headers = new AsyncWork<>();
+		httpClient.receiveResponse(headers, io, 1024).blockThrow(0);
+		httpClient.close();
+		client.close();
+		Assert.assertEquals(expectedStatus, headers.getResult().getStatusCode());
+	}
+	
 	public static class RangeProcessor extends StaticProcessor {
 		public RangeProcessor(String path) {
 			super(path);
@@ -337,6 +369,29 @@ public class TestServer extends AbstractHTTPTest {
 		Assert.assertEquals("This is my resource", s);
 		
 		server.close();
+	}
+	
+	@Test(timeout=60000)
+	public void testPostLargeBody() throws Exception {
+		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.INFO);
+		TCPServer server = new TCPServer();
+		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+
+		byte[] buf = new byte[10 * 1024 * 1024];
+		for (int i = 0; i < buf.length; ++i)
+			buf[i] = (byte)(i * 7 % 621);
+		Pair<HTTPResponse, IO.Readable.Seekable> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", new ByteArrayIO(buf, "test")).blockResult(0);
+		PreBufferedReadable bio = new PreBufferedReadable(res.getValue2(), 8192, Task.PRIORITY_NORMAL, 16384, Task.PRIORITY_NORMAL, 10);
+		for (int i = 0; i < buf.length; ++i)
+			Assert.assertEquals(buf[i] & 0xFF, bio.read());
+		Assert.assertEquals(-1, bio.read());
+		bio.close();
+		server.close();
+		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
 	}
 	
 }

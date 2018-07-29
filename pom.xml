@@ -133,12 +133,12 @@
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.3.3</version>
+  		<version>0.3.4</version>
   	</dependency>
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.3.3</version>
+  		<version>0.3.4</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>

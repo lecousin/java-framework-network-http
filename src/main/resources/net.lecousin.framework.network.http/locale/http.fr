@@ -1,3 +1,3 @@
-invalid HTTP method=Méthode HTTP invalide
-invalid HTTP command line=Ligne de commande HTTP invalide
-invalid HTTP protocol=Protocol HTTP invalide
+invalid http method=Méthode HTTP invalide
+invalid http command line=Ligne de commande HTTP invalide
+invalid http protocol=Protocol HTTP invalide

@@ -220,7 +220,7 @@ public class HTTPRequest implements AttributesContainer {
 		else
 			s.append(method.toString()).append(' ');
 		generateFullPath(s);
-		s.append(' ').append(protocol.getName());
+		s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
 	}
 	
 	/** Generate the command line. */
@@ -230,7 +230,7 @@ public class HTTPRequest implements AttributesContainer {
 		else
 			s.append(method.toString()).append(' ');
 		generateFullPath(s);
-		s.append(' ').append(protocol.getName());
+		s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
 	}
 	
 	/** Generate the command line. */
@@ -265,6 +265,7 @@ public class HTTPRequest implements AttributesContainer {
 	
 	/** Return true if the connection should be persistent. */
 	public boolean isConnectionPersistent() {
+		if (protocol == null) return false;
 		switch (protocol) {
 		case HTTP_1_1: {
 			String s = mime.getFirstHeaderRawValue(MimeMessage.CONNECTION);

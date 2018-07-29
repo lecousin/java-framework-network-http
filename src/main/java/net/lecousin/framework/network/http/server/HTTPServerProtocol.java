@@ -492,6 +492,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 
 		Protocol protocol = response.getProtocol();
 		if (protocol == null) protocol = request.getProtocol();
+		if (protocol == null) protocol = Protocol.HTTP_1_1;
 		byte[] status = (protocol.getName() + ' ' + Integer.toString(response.getStatusCode()) + ' ' + response.getStatusMessage() + "\r\n")
 			.getBytes(StandardCharsets.US_ASCII);
 		try {
@@ -515,6 +516,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 			sendHeaders = client.send(
 				ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
 		} catch (Exception e) {
+			if (logger.error())
+				logger.error("Error sending HTTP headers", e);
 			if (body != null) body.closeAsync();
 			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			client.close();
