@@ -113,19 +113,13 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 			return openTunnel(client, request, response);
 		}
 		
-		String path = request.getPath();
-		if (path.length() == 0) {
-			response.setStatus(404, "No URL specified");
-			return new SynchronizationPoint<>(true);
-		}
-		
 		for (HTTPRequestFilter filter : requestFilters) {
 			ISynchronizationPoint<?> filtered = filter.filter(client, request, response);
 			if (filtered != null)
 				return filtered;
 		}
 		
-		path = request.getPath();
+		String path = request.getPath();
 
 		if (path.charAt(0) == '/')
 			return localPath(request, response);

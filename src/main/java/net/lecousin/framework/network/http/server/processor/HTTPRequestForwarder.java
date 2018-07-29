@@ -81,7 +81,9 @@ public class HTTPRequestForwarder {
 	@SuppressWarnings("resource")
 	public ISynchronizationPoint<IOException> forwardSSL(HTTPRequest request, HTTPResponse response, String host, int port) {
 		prepareRequest(request, host, port, true);
-		HTTPClient client = new HTTPClient(new SSLClient(clientConfig.getSSLContext()), host, port, clientConfig);
+		SSLClient ssl = new SSLClient(clientConfig.getSSLContext());
+		ssl.setHostNames(host);
+		HTTPClient client = new HTTPClient(ssl, host, port, clientConfig);
 		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
 		doForward(client, request, response, result, null);
 		return result;
