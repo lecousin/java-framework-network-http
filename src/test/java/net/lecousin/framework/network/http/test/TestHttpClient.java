@@ -7,6 +7,7 @@ import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
+import java.net.StandardSocketOptions;
 import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -27,13 +28,16 @@ import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.io.out2in.OutputToInput;
+import net.lecousin.framework.network.SocketOptionValue;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
+import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
@@ -49,6 +53,49 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TestHttpClient extends AbstractHTTPTest {
+	
+	@Test(timeout=3000)
+	public void testBasics() throws Exception {
+		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config.setSocketOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
+		config.setSocketOption(StandardSocketOptions.TCP_NODELAY, Boolean.FALSE);
+		config.setSocketOption(StandardSocketOptions.SO_KEEPALIVE, Boolean.TRUE);
+		config.setSocketOption(new SocketOptionValue<>(StandardSocketOptions.SO_BROADCAST, Boolean.TRUE));
+		config.setSocketOption(new SocketOptionValue<>(StandardSocketOptions.SO_BROADCAST, Boolean.FALSE));
+		config.setSocketOption(new SocketOptionValue<>(StandardSocketOptions.SO_RCVBUF, Integer.valueOf(1234)));
+		config = new HTTPClientConfiguration(config);
+		Assert.assertEquals(Boolean.FALSE, config.getSocketOption(StandardSocketOptions.TCP_NODELAY));
+		Assert.assertEquals(Boolean.FALSE, config.getSocketOption(StandardSocketOptions.SO_BROADCAST));
+		Assert.assertEquals(Boolean.TRUE, config.getSocketOption(StandardSocketOptions.SO_KEEPALIVE));
+		Assert.assertEquals(Integer.valueOf(1234), config.getSocketOption(StandardSocketOptions.SO_RCVBUF));
+		Assert.assertNull(config.getSocketOption(StandardSocketOptions.IP_MULTICAST_LOOP));
+		config.getSocketOptions();
+		config.setSSLContext(sslTest);
+		config.insertInterceptorFirst(new UserAgentInterceptor("test", true));
+		
+		try {
+			HTTPClient.create(new URI("ftp://localhost"));
+			throw new AssertionError("HTTPClient must reject non-http protocols");
+		} catch (UnsupportedHTTPProtocolException e) {}
+		try {
+			HTTPClient.create(new URI("localhost"));
+			throw new AssertionError("HTTPClient must reject non-http protocols");
+		} catch (UnsupportedHTTPProtocolException e) {}
+		
+		HTTPClient client = HTTPClient.create(new URI("http://localhost"));
+		Assert.assertEquals(80, client.getRequestedPort());
+		Assert.assertEquals("localhost", client.getRequestedHostname());
+		Assert.assertNotNull(client.getTCPClient());;
+		client = HTTPClient.create(new URI("https://localhost"));
+		Assert.assertEquals(443, client.getRequestedPort());
+		Assert.assertEquals("localhost", client.getRequestedHostname());
+		client = HTTPClient.create(new URI("http://localhost:123"));
+		Assert.assertEquals(123, client.getRequestedPort());
+		Assert.assertEquals("localhost", client.getRequestedHostname());
+		client = HTTPClient.create(new URI("https://localhost:123"), config);
+		Assert.assertEquals(123, client.getRequestedPort());
+		Assert.assertEquals("localhost", client.getRequestedHostname());
+	}
 	
 	@Test(timeout=120000)
 	public void testHttpGetGoogle() throws Exception {

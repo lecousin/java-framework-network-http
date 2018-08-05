@@ -7,6 +7,7 @@ import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -15,14 +16,21 @@ import java.util.List;
 
 import javax.net.ssl.SSLContext;
 
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
 import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.application.Version;
+import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
@@ -30,8 +38,11 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
@@ -39,14 +50,12 @@ import net.lecousin.framework.network.http.websocket.WebSocketClient;
 import net.lecousin.framework.network.http.websocket.WebSocketDataFrame;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol.WebSocketMessageListener;
+import net.lecousin.framework.network.mime.MimeHeader;
+import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
-
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import net.lecousin.framework.util.Pair;
 
 public class TestWebSocket extends AbstractHTTPTest {
 
@@ -159,6 +168,18 @@ public class TestWebSocket extends AbstractHTTPTest {
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
 		client.close();
+	}
+	
+	@Test(timeout=60000)
+	public void testNoProtocol() throws Exception {
+		// try a correct protocol
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration);
+		try {
+			conn.blockResult(0);
+			throw new AssertionError("No protocol must raise an error");
+		} catch (Exception e) {}
+		finally { client.close(); }
 	}
 	
 	@Test(timeout=60000)
@@ -389,5 +410,60 @@ public class TestWebSocket extends AbstractHTTPTest {
 		}
 		Assert.assertEquals(3, connected.get());
 		client.close();
+	}
+	
+	@Test(timeout=60000)
+	public void testErrors() throws Exception {
+		try {
+			HTTPClientUtil.GET("http://localhost:1111/", 0,
+				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+				new MimeHeader("Upgrade", "websocket")
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(400, e.getStatusCode());
+		}
+		try {
+			HTTPClientUtil.GET("http://localhost:1111/", 0,
+				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+				new MimeHeader("Upgrade", "websocket"),
+				new MimeHeader("Sec-WebSocket-Key", "hello")
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(400, e.getStatusCode());
+		}
+		try {
+			HTTPClientUtil.GET("http://localhost:1111/", 0,
+				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+				new MimeHeader("Upgrade", "websocket"),
+				new MimeHeader("Sec-WebSocket-Key", "")
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(400, e.getStatusCode());
+		}
+		try {
+			HTTPClientUtil.GET("http://localhost:1111/", 0,
+				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+				new MimeHeader("Upgrade", "websocket"),
+				new MimeHeader("Sec-WebSocket-Key", "hello"),
+				new MimeHeader("Sec-WebSocket-Version", "51")
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(400, e.getStatusCode());
+		}
+		try {
+			HTTPClientUtil.GET("http://localhost:1111/", 0,
+				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+				new MimeHeader("Upgrade", "websocket"),
+				new MimeHeader("Sec-WebSocket-Key", "hello"),
+				new MimeHeader("Sec-WebSocket-Version", "")
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(400, e.getStatusCode());
+		}
 	}
 }

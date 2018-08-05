@@ -106,6 +106,16 @@ public class HTTPClient implements Closeable {
 		return client;
 	}
 	
+	/** Return the hostname given before connection occurs. */
+	public String getRequestedHostname() {
+		return hostname;
+	}
+	
+	/** Return the port given before connection occurs. */
+	public int getRequestedPort() {
+		return port;
+	}
+	
 	/**
 	 * Send an HTTP request, with an optional body.<br/>
 	 * If the client is not yet connected, first a connection is established to the server or the
@@ -302,8 +312,7 @@ public class HTTPClient implements Closeable {
 			@Override
 			public void ready(HTTPResponse response) {
 				if (!response.isBodyExpected()) {
-					if (responseHeaderListener != null)
-						responseHeaderListener.unblockSuccess(new Pair<>(response, null));
+					if (responseHeaderListener != null) responseHeaderListener.unblockSuccess(new Pair<>(response, null));
 					outputReceived.unblockSuccess(response);
 					return;
 				}
@@ -334,15 +343,13 @@ public class HTTPClient implements Closeable {
 			
 			@Override
 			public void error(IOException error) {
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockError(error);
+				if (responseHeaderListener != null) responseHeaderListener.unblockError(error);
 				outputReceived.error(error);
 			}
 			
 			@Override
 			public void cancelled(CancelException event) {
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockCancel(event);
+				if (responseHeaderListener != null) responseHeaderListener.unblockCancel(event);
 				outputReceived.cancel(event);
 			}
 		});
