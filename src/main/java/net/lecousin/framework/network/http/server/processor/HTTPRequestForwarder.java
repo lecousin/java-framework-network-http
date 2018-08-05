@@ -5,7 +5,6 @@ import java.io.IOException;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
-import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.out2in.OutputToInputBuffers;
 import net.lecousin.framework.log.Logger;
@@ -29,7 +28,8 @@ public class HTTPRequestForwarder {
 	public HTTPRequestForwarder(Logger logger, HTTPClientConfiguration clientConfig) {
 		this.logger = logger;
 		this.clientConfig = clientConfig;
-		new CleanOpenClients().executeEvery(90000, 120000).start();
+		// TODO review how to reuse clients
+		//new CleanOpenClients().executeEvery(90000, 120000).start();
 	}
 
 	protected Logger logger;
@@ -50,7 +50,7 @@ public class HTTPRequestForwarder {
 		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
 		Pair<String, Integer> address = new Pair<>(host, Integer.valueOf(port));
 		HTTPClient client;
-		/*
+			/*
 		synchronized (openClients) {
 			LinkedList<HTTPClient> clients = openClients.get(address);
 			if (clients == null)
@@ -103,7 +103,7 @@ public class HTTPRequestForwarder {
 	@SuppressWarnings("resource")
 	protected void doForward(
 		HTTPClient client, HTTPRequest request, HTTPResponse response,
-		SynchronizationPoint<IOException> result, Pair<String, Integer> reuseClientAddress
+		SynchronizationPoint<IOException> result, @SuppressWarnings("unused") Pair<String, Integer> reuseClientAddress
 	) {
 		client.sendRequest(request).listenInline(() -> {
 			client.receiveResponseHeader().listenInline((resp) -> {
@@ -126,10 +126,10 @@ public class HTTPRequestForwarder {
 				response.getMIME().setBodyToSend(o2i);
 				client.receiveBody(resp, o2i, 65536).listenInline(() -> {
 					o2i.endOfData();
-					/*if (reuseClientAddress == null || client.getTCPClient().isClosed() ||
+						/*if (reuseClientAddress == null || client.getTCPClient().isClosed() ||
 						"close".equalsIgnoreCase(request.getMIME().getFirstHeaderRawValue(HTTPRequest.HEADER_CONNECTION)))*/
 						client.close();
-					/*else synchronized (openClients) {
+						/*else synchronized (openClients) {
 						LinkedList<HTTPClient> clients = openClients.get(reuseClientAddress);
 						if (clients == null) {
 							clients = new LinkedList<>();
@@ -150,6 +150,7 @@ public class HTTPRequestForwarder {
 		}, result);
 	}
 
+	/*
 	private class CleanOpenClients extends Task.Cpu<Void, NoException> {
 		private CleanOpenClients() {
 			super("Clean waiting HTTP clients", Task.PRIORITY_LOW);
@@ -157,7 +158,7 @@ public class HTTPRequestForwarder {
 		
 		@Override
 		public Void run() {
-			/*synchronized (openClients) {
+			synchronized (openClients) {
 				for (Iterator<Map.Entry<Pair<String, Integer>, LinkedList<HTTPClient>>> itEntry =
 					openClients.entrySet().iterator(); itEntry.hasNext(); ) {
 					Map.Entry<Pair<String, Integer>, LinkedList<HTTPClient>> e = itEntry.next();
@@ -168,9 +169,9 @@ public class HTTPRequestForwarder {
 					if (e.getValue().isEmpty())
 						itEntry.remove();
 				}
-			}*/
+			}
 			return null;
 		}
-	}
+	}*/
 
 }

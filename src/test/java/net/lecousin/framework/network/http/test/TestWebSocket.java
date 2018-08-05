@@ -3,9 +3,17 @@ package net.lecousin.framework.network.http.test;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.util.Collections;
+import java.util.List;
+
+import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
@@ -18,10 +26,14 @@ import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.log.Logger;
+import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
 import net.lecousin.framework.network.http.websocket.WebSocketClient;
 import net.lecousin.framework.network.http.websocket.WebSocketDataFrame;
@@ -29,8 +41,11 @@ import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol.WebSocketMessageListener;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class TestWebSocket extends AbstractHTTPTest {
@@ -67,12 +82,15 @@ public class TestWebSocket extends AbstractHTTPTest {
 		}
 	}
 	
-	@SuppressWarnings("resource")
-	@Test
-	public void test() throws Exception {
-		TCPServer server = new TCPServer();
+	private MutableInteger connected;
+	private TCPServer server;
+	private TCPServer sslServer;
+	
+	@Before
+	public void startServer() throws IOException, GeneralSecurityException {
+		server = new TCPServer();
 		HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
-		MutableInteger connected = new MutableInteger(0);
+		connected = new MutableInteger(0);
 		WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketMessageListener() {
 			@Override
 			public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) {
@@ -108,31 +126,61 @@ public class TestWebSocket extends AbstractHTTPTest {
 		protocol.enableWebSocket(wsProtocol);
 		server.setProtocol(protocol);
 		server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10);
-
-		WebSocketClient client;
-
+		
+		sslServer = new TCPServer();
+		sslServer.setProtocol(new SSLServerProtocol(sslTest, protocol));
+		sslServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1112), 10);
+	}
+	
+	@After
+	public void stopServer() {
+		server.close();
+		sslServer.close();
+	}
+	
+	@Test(timeout=60000)
+	public void testWrongProtocol() throws Exception {
 		// try a wrong protocol
 		Assert.assertEquals(0, connected.get());
-		client = new WebSocketClient();
+		WebSocketClient client = new WebSocketClient();
 		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "hello", "world");
 		conn.block(0);
 		client.close();
 		Assert.assertEquals(1, connected.get());
 		Assert.assertFalse(conn.isSuccessful());
-
+	}
+	
+	@Test(timeout=60000)
+	public void testCorrectProtocol() throws Exception {
 		// try a correct protocol
-		client = new WebSocketClient();
-		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
-		Assert.assertEquals(2, connected.get());
+		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
 		client.close();
+	}
+	
+	@Test(timeout=60000)
+	public void testSSL() throws Exception {
+		// try a correct protocol
+		WebSocketClient client = new WebSocketClient();
+		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config.setSSLContext(sslTest);
+		AsyncWork<String, IOException> conn = client.connect(new URI("wss://localhost:1112/"), config, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
+		Assert.assertEquals("test2", selected);
+		client.close();
+	}
 		
+	@Test(timeout=60000)
+	public void testTextMessages() throws Exception {
 		// try text messages
-		client = new WebSocketClient();
-		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(3, connected.get());
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
 		Mutable<String> received = new Mutable<>(null);
 		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
@@ -154,15 +202,18 @@ public class TestWebSocket extends AbstractHTTPTest {
 		sp.get().blockThrow(5000);
 		Assert.assertEquals("Hello World!", received.get());
 		client.close();
-		
+	}
+	
+	@Test(timeout=60000)
+	public void testBinaryMessages() throws Exception {
 		// try binary message
-		client = new WebSocketClient();
-		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(4, connected.get());
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
 		Mutable<ByteBuffer> binary = new Mutable<>(null);
-		sp.set(new SynchronizationPoint<>());
+		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
 		client.onMessage((frame) -> {
 			try {
 				IOInMemoryOrFile msg = frame.getMessage();
@@ -183,14 +234,54 @@ public class TestWebSocket extends AbstractHTTPTest {
 		buf.get(resp);
 		Assert.assertArrayEquals(new byte[] { 3, 2, 1, 0 }, resp);
 		client.close();
+	}
 		
-		// test ping
-		client = new WebSocketClient();
-		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(5, connected.get());
+	@Test(timeout=60000)
+	public void testBigBinaryMessages() throws Exception {
+		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
+		// try binary message
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
-		sp.set(new SynchronizationPoint<>());
+		Mutable<ByteBuffer> binary = new Mutable<>(null);
+		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
+		client.onMessage((frame) -> {
+			try {
+				IOInMemoryOrFile msg = frame.getMessage();
+				msg.seekSync(SeekType.FROM_BEGINNING, 0);
+				ByteBuffer buf = ByteBuffer.allocate(1024);
+				IOUtil.readFully(msg, buf);
+				binary.set(buf);
+				sp.get().unblock();
+			} catch (Exception e) {
+				sp.get().error(e);
+			}
+		});
+		byte[] big = new byte[1024 * 1024];
+		for (int i = 0; i < big.length; ++i) big[i] = (byte)((i + 11) % 67);
+		client.sendBinaryMessage(new ByteArrayIO(big, "Test")).blockThrow(0);
+		sp.get().blockThrow(5000);
+		ByteBuffer buf = binary.get();
+		buf.flip();
+		byte[] resp = new byte[buf.remaining()];
+		buf.get(resp);
+		for (int i = 0; i < 1024; ++i)
+			Assert.assertEquals(big[1024 - i - 1], resp[i]);
+		client.close();
+		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
+	}
+		
+	@Test(timeout=60000)
+	public void testPing() throws Exception {
+		// test ping
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
+		Assert.assertEquals("test2", selected);
+		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
 		client.onMessage((frame) -> {
 			if (frame.getMessageType() != WebSocketDataFrame.TYPE_PONG)
 				sp.get().error(new Exception("Unexpected message: " + frame.getMessageType()));
@@ -200,14 +291,17 @@ public class TestWebSocket extends AbstractHTTPTest {
 		client.sendPing().blockThrow(0);
 		sp.get().blockThrow(5000);
 		client.close();
+	}
 		
+	@Test(timeout=60000)
+	public void testClose() throws Exception {
 		// test close
-		client = new WebSocketClient();
-		conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(6, connected.get());
+		WebSocketClient client = new WebSocketClient();
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
-		sp.set(new SynchronizationPoint<>());
+		Mutable<SynchronizationPoint<Exception>> sp = new Mutable<>(new SynchronizationPoint<>());
 		client.onMessage((frame) -> {
 			if (frame.getMessageType() != WebSocketDataFrame.TYPE_CLOSE)
 				sp.get().error(new Exception("Unexpected message: " + frame.getMessageType()));
@@ -216,9 +310,84 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		client.sendClose().blockThrow(0);
 		sp.get().blockThrow(5000);
-		client.close();
-		
-		server.close();
+		client.close();		
 	}
 	
+	
+	@Test(timeout=60000)
+	public void testProxyConfigurations() throws Exception {
+		WebSocketClient client = new WebSocketClient();
+		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config.setProxySelector(null);
+		AsyncWork<String, IOException> conn = client.connect(new URI("ws://localhost:1111/"), config, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
+		Assert.assertEquals("test2", selected);
+		client.close();
+		
+		// start proxy server
+		TCPServer proxyServer = new TCPServer();
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
+		logger.setLevel(Level.TRACE);
+		ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(8192, logger);
+		HTTPServerProtocol protocol = new HTTPServerProtocol(processor);
+		proxyServer.setProtocol(protocol);
+		SocketAddress serverAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		int serverPort = ((InetSocketAddress)serverAddress).getPort();
+		config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config.setSSLContext(SSLContext.getDefault());
+		processor.setHTTPForwardClientConfiguration(config);
+		
+		// test websocket through proxy
+		config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config.setProxySelector(new ProxySelector() {
+			private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", serverPort));
+			@Override
+			public List<Proxy> select(URI uri) {
+				return Collections.singletonList(proxy);
+			}
+			
+			@Override
+			public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+			}
+		});
+		conn = client.connect(new URI("ws://localhost:1111/"), config, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(2, connected.get());
+		Assert.assertEquals("test2", selected);
+		client.close();
+		
+		// test with HTTPS
+		config.setSSLContext(sslTest);
+		conn = client.connect(new URI("wss://localhost:1112/"), config, "test1", "test2", "test3");
+		selected = conn.blockResult(0);
+		Assert.assertEquals(3, connected.get());
+		Assert.assertEquals("test2", selected);
+		client.close();
+
+		// stop proxy
+		proxyServer.close();
+		
+		// test wrong proxy
+		config.setProxySelector(new ProxySelector() {
+			private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", 1111));
+			@Override
+			public List<Proxy> select(URI uri) {
+				return Collections.singletonList(proxy);
+			}
+			
+			@Override
+			public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+			}
+		});
+		conn = client.connect(new URI("ws://localhost:1111/"), config, "test1", "test2", "test3");
+		try {
+			conn.blockResult(0);
+			throw new AssertionError("Using wrong proxy address should throw an error");
+		} catch (HTTPResponseError e) {
+			// ok
+		}
+		Assert.assertEquals(3, connected.get());
+		client.close();
+	}
 }
