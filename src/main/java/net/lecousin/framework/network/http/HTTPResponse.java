@@ -15,6 +15,8 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
+import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
+import net.lecousin.framework.network.mime.header.ParameterizedHeaderValues;
 
 /** HTTP Response. */
 public class HTTPResponse {
@@ -94,6 +96,21 @@ public class HTTPResponse {
 		if (httpOnly)
 			s.append("; HttpOnly");
 		addHeaderRaw("Set-Cookie", s.toString());
+	}
+	
+	/** Search for a value in Set-Cookie header.
+	 * @param name name of the cookie to search
+	 * @throws Exception in case the Set-Cookie header cannot be parsed
+	 */
+	public String getCookie(String name) throws Exception {
+		for (ParameterizedHeaderValues v : mime.getHeadersValues("Set-Cookie", ParameterizedHeaderValues.class)) {
+			for (ParameterizedHeaderValue value : v.getValues()) {
+				String s = value.getParameter(name);
+				if (s != null)
+					return s;
+			}
+		}
+		return null;
 	}
 	
 	/** Set headers to indicate that the response must not be cached. */

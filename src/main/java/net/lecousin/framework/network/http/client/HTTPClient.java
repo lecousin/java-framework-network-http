@@ -80,7 +80,7 @@ public class HTTPClient implements Closeable {
 		if ("http".equals(protocol))
 			client = new TCPClient();
 		else {
-			client = new SSLClient();
+			client = config.getSSLContext() != null ? new SSLClient(config.getSSLContext()) : new SSLClient();
 			((SSLClient)client).setHostNames(hostname);
 		}
 		
