@@ -32,6 +32,7 @@ public class StaticProcessor implements HTTPRequestProcessor {
 	@Override
 	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
 		String path = request.getPath();
+		if (path.length() > 0) path = path.substring(1); // remove leading slash
 		IOProvider.Readable p = provider.get(resourcePath + path);
 		IO.Readable input;
 		try { input = p != null ? p.provideIOReadable(Task.PRIORITY_NORMAL) : null; }

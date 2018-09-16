@@ -255,6 +255,7 @@ public class HTTPClient implements Closeable {
 		ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
 		connect.listenInline(() -> {
 			ISynchronizationPoint<IOException> send = client.send(data);
+			// TODO if the connection has been closed while preparing the request, try to reconnect, but only once
 			if (body == null || (size != null && size.longValue() == 0)) {
 				send.listenInline(result);
 				return;
