@@ -27,7 +27,6 @@ public class HTTPResponse {
 	private String statusMessage = null;
 	private HTTPRequest.Protocol protocol = null;
 	private MimeMessage mime = new MimeMessage();
-	private boolean forceClose = false;
 	
 	public void setProtocol(HTTPRequest.Protocol protocol) {
 		this.protocol = protocol;
@@ -143,15 +142,6 @@ public class HTTPResponse {
 	public void redirectPerm(String location) {
 		setStatus(HttpURLConnection.HTTP_MOVED_PERM);
 		setHeaderRaw("Location", location);
-	}
-	
-	public void setForceClose(boolean forceClose) {
-		this.forceClose = forceClose;
-	}
-	
-	/** Return true if it is requested to close the connection once the response is sent. */
-	public boolean forceClose() {
-		return forceClose;
 	}
 	
 	/** Receive a response from a server, by using the given TCPClient. */

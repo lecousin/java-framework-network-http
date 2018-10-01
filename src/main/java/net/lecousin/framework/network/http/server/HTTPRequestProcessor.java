@@ -2,7 +2,6 @@ package net.lecousin.framework.network.http.server;
 
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 
 /** Process requests received by the server. */
@@ -30,6 +29,6 @@ public interface HTTPRequestProcessor {
 	 * @param response the response to fill
 	 * @return a blocking point which is unblock once the request has been processed, and the response can be sent to the client.
 	 */
-	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response);
+	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response);
 	
 }

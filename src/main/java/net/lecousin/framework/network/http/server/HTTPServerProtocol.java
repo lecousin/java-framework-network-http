@@ -167,8 +167,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 					try { linesReceiver.newLine(s); }
 					catch (Exception e) {
 						logger.error("Error parsing HTTP headers", e);
+						HTTPServerResponse response = new HTTPServerResponse();
+						response.forceClose = true;
 						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
-							"Error parsing HTTP headers: " + e.getMessage(), request, true);
+							"Error parsing HTTP headers: " + e.getMessage(), request, response);
 						onbufferavailable.run();
 						return;
 					}
@@ -218,12 +220,12 @@ public class HTTPServerProtocol implements ServerProtocol {
 						if (logger.trace())
 							logger.trace("Start processing the request");
 						// we are already in a CPU Thread, we can stay here
-						SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
+						HTTPServerResponse response = new HTTPServerResponse();
 						@SuppressWarnings("unchecked")
 						SynchronizationPoint<Exception> previousResponseSent =
 							(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
-						processRequest(client, request, responseSent, previousResponseSent);
+						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.sent);
+						processRequest(client, request, response, previousResponseSent);
 						if (data.hasRemaining()) {
 							dataReceivedFromClient(client, data, onbufferavailable);
 							return;
@@ -244,7 +246,9 @@ public class HTTPServerProtocol implements ServerProtocol {
 						client.setAttribute(BODY_TRANSFER_ATTRIBUTE, transfer);
 					} catch (IOException e) {
 						logger.error("Error initializing body transfer", e);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, true);
+						HTTPServerResponse response = new HTTPServerResponse();
+						response.forceClose = true;
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, response);
 						onbufferavailable.run();
 						client.close();
 						return;
@@ -259,8 +263,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 					try { linesReceiver.newLine(s); }
 					catch (Exception e) {
 						logger.error("Error parsing HTTP headers", e);
+						HTTPServerResponse response = new HTTPServerResponse();
+						response.forceClose = true;
 						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
-							"Error parsing HTTP headers: " + e.getMessage(), request, true);
+							"Error parsing HTTP headers: " + e.getMessage(), request, response);
 						line.setLength(0);
 						onbufferavailable.run();
 						return;
@@ -269,7 +275,9 @@ public class HTTPServerProtocol implements ServerProtocol {
 					try { request.setCommand(s); }
 					catch (Exception e) {
 						logger.error("Invalid HTTP command: " + s, e);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, true);
+						HTTPServerResponse response = new HTTPServerResponse();
+						response.forceClose = true;
+						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, response);
 						line.setLength(0);
 						onbufferavailable.run();
 						return;
@@ -304,15 +312,15 @@ public class HTTPServerProtocol implements ServerProtocol {
 					client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 					client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
 					// process it in a new task as we are in an inline listener
-					SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
+					HTTPServerResponse response = new HTTPServerResponse();
 					@SuppressWarnings("unchecked")
 					SynchronizationPoint<Exception> previousResponseSent =
 						(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-					client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
+					client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.sent);
 					client.addPending(new Task.Cpu<Void,NoException>("Processing HTTP request", Task.PRIORITY_NORMAL) {
 						@Override
 						public Void run() {
-							processRequest(client, request, responseSent, previousResponseSent);
+							processRequest(client, request, response, previousResponseSent);
 							return null;
 						}
 					}.start().getOutput());
@@ -349,10 +357,9 @@ public class HTTPServerProtocol implements ServerProtocol {
 	}
 	
 	private void processRequest(
-		TCPServerClient client, HTTPRequest request,
-		SynchronizationPoint<Exception> responseSent, SynchronizationPoint<Exception> previousResponseSent
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response,
+		SynchronizationPoint<Exception> previousResponseSent
 	) {
-		HTTPResponse response = new HTTPResponse();
 		ISynchronizationPoint<?> processing = processor.process(client, request, response);
 		client.addPending(processing);
 		processing.listenAsync(new Task.Cpu<Void, NoException>("Start sending HTTP response", Task.PRIORITY_NORMAL) {
@@ -363,7 +370,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 					client.close();
 					IO.Readable responseBody = response.getMIME().getBodyToSend();
 					if (responseBody != null) responseBody.closeAsync();
-					responseSent.cancel(processing.getCancelEvent());
+					response.sent.cancel(processing.getCancelEvent());
 					return null;
 				}
 				if (processing.hasError()) {
@@ -380,7 +387,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 				if (enableRangeRequests)
 					handleRangeRequest(request, response);
 
-				sendResponse(client, request, response, previousResponseSent, responseSent);
+				sendResponse(client, request, response, previousResponseSent);
 				return null;
 			}
 		}, true);
@@ -388,92 +395,102 @@ public class HTTPServerProtocol implements ServerProtocol {
 	
 	/** Send an error response to the client. */
 	public static void sendError(
-		TCPServerClient client, int status, String message, HTTPRequest request, boolean forceClose
+		TCPServerClient client, int status, String message, HTTPRequest request, HTTPServerResponse response
 	) {
-		HTTPResponse response = new HTTPResponse();
-		response.setForceClose(forceClose);
-		sendError(client, status, message, request, response);
-	}
-	
-	/** Send an error response to the client. */
-	public static void sendError(
-		TCPServerClient client, int status, String message, HTTPRequest request, HTTPResponse response
-	) {
-		SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
 		@SuppressWarnings("unchecked")
 		SynchronizationPoint<Exception> previousResponseSent =
 			(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-		client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
+		client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.sent);
 		response.setStatus(status, message);
-		sendResponse(client, request, response, previousResponseSent, responseSent);
+		sendResponse(client, request, response, previousResponseSent);
 	}
 	
 	/** Send a response to the client. */
-	public static void sendResponse(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
-		SynchronizationPoint<Exception> responseSent = new SynchronizationPoint<>();
+	public static void sendResponse(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 		@SuppressWarnings("unchecked")
 		SynchronizationPoint<Exception> previousResponseSent =
 			(SynchronizationPoint<Exception>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-		client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, responseSent);
-		sendResponse(client, request, response, previousResponseSent, responseSent);
+		client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.sent);
+		sendResponse(client, request, response, previousResponseSent);
 	}
 	
 	@SuppressWarnings("resource")
 	private static void sendResponse(
-		TCPServerClient client, HTTPRequest request, HTTPResponse response,
-		SynchronizationPoint<Exception> previousResponseSent, SynchronizationPoint<Exception> responseSent
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response,
+		SynchronizationPoint<Exception> previousResponseSent
 	) {
 		if (previousResponseSent == null) {
-			sendResponse(client, request, response, responseSent);
+			sendResponseReady(client, request, response);
 			return;
 		}
 		if (previousResponseSent.isCancelled()) {
 			client.close();
 			IO.Readable responseBody = response.getMIME().getBodyToSend();
 			if (responseBody != null) responseBody.closeAsync();
-			responseSent.cancel(previousResponseSent.getCancelEvent());
+			response.sent.cancel(previousResponseSent.getCancelEvent());
 			return;
 		}
 		if (previousResponseSent.hasError()) {
 			client.close();
 			IO.Readable responseBody = response.getMIME().getBodyToSend();
 			if (responseBody != null) responseBody.closeAsync();
-			responseSent.error(previousResponseSent.getError());
+			response.sent.error(previousResponseSent.getError());
 			return;
 		}
 		if (previousResponseSent.isUnblocked()) {
-			sendResponse(client, request, response, responseSent);
+			sendResponseReady(client, request, response);
 			return;
 		}
 		previousResponseSent.listenAsync(new Task.Cpu<Void, NoException>("Start sending HTTP response", Task.PRIORITY_NORMAL) {
 			@Override
 			public Void run() {
-				sendResponse(client, request, response, previousResponseSent, responseSent);
+				sendResponseReady(client, request, response);
 				return null;
 			}
 		}, true);
 	}
 	
-	private static void sendResponse(
-		TCPServerClient client, HTTPRequest request, HTTPResponse response, SynchronizationPoint<Exception> responseSent
+	private static void sendResponseReady(
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response
 	) {
 		@SuppressWarnings("resource")
 		IO.Readable body = response.getMIME().getBodyToSend();
-		if (body == null)
-			sendResponse(client, request, response, null, 0, responseSent);
-		else if (body instanceof IO.KnownSize) {
+		if (body == null) {
+			sendResponse(client, request, response, null, 0);
+			return;
+		}
+		if (body instanceof IO.KnownSize) {
 			((IO.KnownSize)body).getSizeAsync().listenInline(
-				(size) -> { sendResponse(client, request, response, body, size.longValue(), responseSent); },
-				(error) -> { responseSent.error(error); },
-				(cancel) -> { responseSent.cancel(cancel); }
+				(size) -> { sendResponse(client, request, response, body, size.longValue()); },
+				(error) -> { response.sent.error(error); },
+				(cancel) -> { response.sent.cancel(cancel); }
 			);
-		} else
-			sendResponse(client, request, response, body, -1, responseSent);
+			return;
+		}
+		if (body instanceof IO.OutputToInput) {
+			IO.OutputToInput out2in = (IO.OutputToInput)body;
+			// delay the check when some data is ready, so short response won't be chunked
+			ISynchronizationPoint<IOException> ready = body.canStartReading();
+			if (ready.isUnblocked()) {
+				if (out2in.isFullDataAvailable())
+					sendResponse(client, request, response, body, out2in.getAvailableDataSize());
+				else
+					sendResponse(client, request, response, body, -1);
+
+			} else
+				ready.listenAsync(new Task.Cpu.FromRunnable("Start sending HTTP response", Task.PRIORITY_NORMAL, () -> {
+					if (out2in.isFullDataAvailable())
+						sendResponse(client, request, response, body, out2in.getAvailableDataSize());
+					else
+						sendResponse(client, request, response, body, -1);
+				}), true);
+			return;
+		}
+		sendResponse(client, request, response, body, -1);
 	}
 
 	private static void sendResponse(
-		TCPServerClient client, HTTPRequest request, HTTPResponse response, IO.Readable body, long bodySize,
-		SynchronizationPoint<Exception> responseSent
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response, IO.Readable body, long bodySize
 	) {
 		if (!response.getMIME().hasHeader(HTTPResponse.SERVER_HEADER))
 			response.getMIME().setHeaderRaw(HTTPResponse.SERVER_HEADER,
@@ -488,7 +505,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 		endOfProcessing(client, logger);
 		
 		if (logger.debug())
-			logger.debug("Response code " + response.getStatusCode() + " for request " + request.generateCommandLine());
+			logger.debug("Response code " + response.getStatusCode() + " for request "
+				+ request.generateCommandLine() + " to send " + (bodySize >= 0 ? "with Content-Length=" + bodySize : "chunked"));
 
 		Protocol protocol = response.getProtocol();
 		if (protocol == null) protocol = request.getProtocol();
@@ -501,7 +519,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			if (body != null) body.closeAsync();
 			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			client.close();
-			responseSent.error(e);
+			response.sent.error(e);
 			return;
 		}
 
@@ -514,29 +532,29 @@ public class HTTPServerProtocol implements ServerProtocol {
 		SynchronizationPoint<IOException> sendHeaders;
 		try {
 			sendHeaders = client.send(
-				ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose()));
+				ByteBuffer.wrap(headers), bodySize == 0 && (!request.isConnectionPersistent() || response.forceClose));
 		} catch (Exception e) {
 			if (logger.error())
 				logger.error("Error sending HTTP headers", e);
 			if (body != null) body.closeAsync();
 			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
 			client.close();
-			responseSent.error(e);
+			response.sent.error(e);
 			return;
 		}
 		if (bodySize == 0) {
 			// empty answer
 			if (body != null) body.closeAsync();
 			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
-			sendHeaders.listenInlineSP(responseSent);
+			sendHeaders.listenInlineSP(response.sent);
 			return;
 		}
 		if (bodySize < 0) {
-			sendResponseChunked(client, request, body, responseSent);
+			sendResponseChunked(client, request, body, response.sent);
 			return;
 		}
 		if (body instanceof IO.Readable.Buffered) {
-			sendResponseBuffered(client, request, response, (IO.Readable.Buffered)body, sendHeaders, responseSent);
+			sendResponseBuffered(client, request, response, (IO.Readable.Buffered)body, sendHeaders);
 			return;
 		}
 		MutableLong size = new MutableLong(bodySize);
@@ -553,8 +571,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 				if (jp.hasError() || jp.isCancelled()) {
 					body.closeAsync();
 					client.close();
-					if (jp.hasError()) responseSent.error(jp.getError());
-					else responseSent.cancel(jp.getCancelEvent());
+					if (jp.hasError()) response.sent.error(jp.getError());
+					else response.sent.cancel(jp.getCancelEvent());
 					return;
 				}
 				buf.get().flip();
@@ -562,11 +580,11 @@ public class HTTPServerProtocol implements ServerProtocol {
 				SynchronizationPoint<IOException> send;
 				try {
 					send = client.send(buf.get(),
-						size.get() > 0 ? false : !request.isConnectionPersistent() || response.forceClose());
+						size.get() > 0 ? false : !request.isConnectionPersistent() || response.forceClose);
 				} catch (IOException e) {
 					body.closeAsync();
 					client.close();
-					responseSent.error(e);
+					response.sent.error(e);
 					return;
 				}
 				if (size.get() > 0) {
@@ -578,7 +596,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 					jp.start();
 					jp.listenInline(this);
 				} else {
-					responseSent.unblock();
+					response.sent.unblock();
 					body.closeAsync();
 					if (request.getMIME().getBodyReceivedAsOutput() != null)
 						request.getMIME().getBodyReceivedAsOutput().closeAsync();
@@ -588,8 +606,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 	}
 	
 	private static void sendResponseBuffered(
-		TCPServerClient client, HTTPRequest request, HTTPResponse response, IO.Readable.Buffered body,
-		ISynchronizationPoint<? extends Exception> previousSend, SynchronizationPoint<Exception> responseSent
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response, IO.Readable.Buffered body,
+		ISynchronizationPoint<? extends Exception> previousSend
 	) {
 		body.readNextBufferAsync().listenInline(
 			(buffer) -> {
@@ -597,34 +615,33 @@ public class HTTPServerProtocol implements ServerProtocol {
 					if (previousSend.isCancelled()) {
 						body.closeAsync();
 						client.close();
-						responseSent.cancel(previousSend.getCancelEvent());
+						response.sent.cancel(previousSend.getCancelEvent());
 						return;
 					}
 					if (previousSend.hasError()) {
 						body.closeAsync();
 						client.close();
-						responseSent.error(previousSend.getError());
+						response.sent.error(previousSend.getError());
 						return;
 					}
 					if (buffer == null) {
 						body.closeAsync();
-						if (!request.isConnectionPersistent() || response.forceClose())
+						if (!request.isConnectionPersistent() || response.forceClose)
 							client.close();
 						else if (request.getMIME().getBodyReceivedAsOutput() != null)
 							request.getMIME().getBodyReceivedAsOutput().closeAsync();
-						responseSent.unblock();
+						response.sent.unblock();
 						return;
 					}
 					new Task.Cpu<Void, NoException>("Sending next HTTP response buffer", Task.PRIORITY_NORMAL) {
 						@Override
 						public Void run() {
 							try {
-								sendResponseBuffered(
-									client, request, response, body, client.send(buffer, false), responseSent);
+								sendResponseBuffered(client, request, response, body, client.send(buffer, false));
 							} catch (ClosedChannelException e) {
 								body.closeAsync();
 								client.close();
-								responseSent.cancel(new CancelException("Client closed"));
+								response.sent.cancel(new CancelException("Client closed"));
 							}
 							return null;
 						}
@@ -634,13 +651,13 @@ public class HTTPServerProtocol implements ServerProtocol {
 			(error) -> {
 				body.closeAsync();
 				client.close();
-				responseSent.error(error);
+				response.sent.error(error);
 				return;
 			},
 			(cancel) -> {
 				body.closeAsync();
 				client.close();
-				responseSent.error(cancel);
+				response.sent.error(cancel);
 				return;
 			}
 		);

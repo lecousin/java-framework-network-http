@@ -18,6 +18,7 @@ import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.TunnelProtocol;
 
@@ -101,7 +102,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 	}
 	
 	@Override
-	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 		if (logger.trace())
 			logger.trace("Request: " + request.generateCommandLine());
 

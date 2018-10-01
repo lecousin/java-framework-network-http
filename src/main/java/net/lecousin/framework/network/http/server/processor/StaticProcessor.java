@@ -10,8 +10,8 @@ import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFromPathUsingClassloader;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
+import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 
 /** Basic processor to return static resources. */
@@ -30,7 +30,7 @@ public class StaticProcessor implements HTTPRequestProcessor {
 	
 	@SuppressWarnings("resource")
 	@Override
-	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 		String path = request.getPath();
 		if (path.length() > 0) path = path.substring(1); // remove leading slash
 		IOProvider.Readable p = provider.get(resourcePath + path);

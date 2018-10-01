@@ -8,6 +8,9 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
+import org.junit.Assert;
+import org.junit.Test;
+
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
@@ -29,6 +32,7 @@ import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
@@ -37,14 +41,11 @@ import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.util.Pair;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 public class TestServer extends AbstractHTTPTest {
 
 	private static class TestProcessor implements HTTPRequestProcessor {
 		@Override
-		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 			Task<Void, HTTPResponseError> task = new Task.Cpu<Void, HTTPResponseError>("Processing test request", Task.PRIORITY_NORMAL) {
 				@SuppressWarnings("resource")
 				@Override
@@ -300,7 +301,7 @@ public class TestServer extends AbstractHTTPTest {
 		}
 		
 		@Override
-		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 			ISynchronizationPoint<?> res = super.process(client, request, response);
 			IO.Readable io = response.getMIME().getBodyToSend();
 			if (io != null)

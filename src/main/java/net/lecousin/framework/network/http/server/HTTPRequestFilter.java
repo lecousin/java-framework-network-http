@@ -2,7 +2,6 @@ package net.lecousin.framework.network.http.server;
 
 import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 
 /**
@@ -16,6 +15,6 @@ public interface HTTPRequestFilter {
 	 * If null is returned, the next filters are called, and the request finally processed.
 	 * Even null is returned, the request may have been modified by a filter.
 	 */
-	ISynchronizationPoint<?> filter(TCPServerClient client, HTTPRequest request, HTTPResponse response);
+	ISynchronizationPoint<?> filter(TCPServerClient client, HTTPRequest request, HTTPServerResponse response);
 	
 }

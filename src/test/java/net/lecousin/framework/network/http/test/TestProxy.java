@@ -31,6 +31,7 @@ import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor.Filter;
 import net.lecousin.framework.network.server.TCPServer;
@@ -202,7 +203,7 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.mapLocalPath("/tutu", HTTP_BIN_DOMAIN, 443, "/get", true);
 		processor.addFilter(new HTTPRequestFilter() {
 			@Override
-			public ISynchronizationPoint<?> filter(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+			public ISynchronizationPoint<?> filter(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 				request.getMIME().addHeaderRaw("X-Test", "test");
 				return null;
 			}

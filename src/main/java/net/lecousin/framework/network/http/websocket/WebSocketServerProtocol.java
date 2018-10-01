@@ -23,9 +23,9 @@ import net.lecousin.framework.io.encoding.Base64;
 import net.lecousin.framework.io.util.DataUtil;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 
@@ -67,17 +67,21 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		String key = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Key");
 		String version = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Version");
 		if (key == null || key.trim().length() == 0) {
-			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Key header", request, true);
+			HTTPServerResponse response = new HTTPServerResponse();
+			response.forceClose = true;
+			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Key header", request, response);
 			return;
 		}
 		if (version == null || version.trim().length() == 0) {
-			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Version header", request, true);
+			HTTPServerResponse response = new HTTPServerResponse();
+			response.forceClose = true;
+			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Version header", request, response);
 			return;
 		}
 		if (!version.trim().equals("13")) {
-			HTTPResponse resp = new HTTPResponse();
+			HTTPServerResponse resp = new HTTPServerResponse();
 			resp.addHeaderRaw("Sec-WebSocket-Version", "13");
-			resp.setForceClose(true);
+			resp.forceClose = true;
 			HTTPServerProtocol.sendError(client, 400, "Unsupported WebSocket version", request, resp);
 			return;
 		}
@@ -91,11 +95,13 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		try {
 			protocol = listener.onClientConnected(this, client, requestedProtocols);
 		} catch (HTTPResponseError e) {
-			HTTPServerProtocol.sendError(client, e.getStatusCode(), e.getMessage(), request, true);
+			HTTPServerResponse response = new HTTPServerResponse();
+			response.forceClose = true;
+			HTTPServerProtocol.sendError(client, e.getStatusCode(), e.getMessage(), request, response);
 			return;
 		}
 		
-		HTTPResponse resp = new HTTPResponse();
+		HTTPServerResponse resp = new HTTPServerResponse();
 		resp.setStatus(101, "Switching Protocols");
 		resp.addHeaderRaw("Upgrade", "websocket");
 		resp.addHeaderRaw("Connection", "Upgrade");
@@ -104,7 +110,8 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		try {
 			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes()));
 		} catch (Exception e) {
-			HTTPServerProtocol.sendError(client, 500, e.getMessage(), request, true);
+			resp.forceClose = true;
+			HTTPServerProtocol.sendError(client, 500, e.getMessage(), request, resp);
 			return;
 		}
 		acceptKey = new String(buf);

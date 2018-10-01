@@ -128,17 +128,17 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.13.3</version>
+  		<version>0.14.1</version>
   	</dependency>
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.3.4</version>
+  		<version>0.4.0</version>
   	</dependency>
   	<dependency>
   		<groupId>net.lecousin.framework.network</groupId>
   		<artifactId>core</artifactId>
-  		<version>0.3.4</version>
+  		<version>0.4.0</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>
@@ -156,7 +156,7 @@
   	<dependency>
   		<groupId>net.lecousin</groupId>
   		<artifactId>core</artifactId>
-		<version>0.13.3</version>
+		<version>0.14.1</version>
   		<type>test-jar</type>
   		<scope>test</scope>
   	</dependency>
