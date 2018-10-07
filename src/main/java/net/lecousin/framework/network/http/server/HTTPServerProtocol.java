@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
@@ -489,16 +488,19 @@ public class HTTPServerProtocol implements ServerProtocol {
 		sendResponse(client, request, response, body, -1);
 	}
 
+	// skip checkstyle: OverloadMethodsDeclarationOrder
 	private static void sendResponse(
 		TCPServerClient client, HTTPRequest request, HTTPServerResponse response, IO.Readable body, long bodySize
 	) {
 		if (!response.getMIME().hasHeader(HTTPResponse.SERVER_HEADER))
 			response.getMIME().setHeaderRaw(HTTPResponse.SERVER_HEADER,
 				"net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
-		if (bodySize >= 0)
-			response.getMIME().setContentLength(bodySize);
-		else
-			response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
+		if (!response.forceNoContent) {
+			if (bodySize >= 0)
+				response.getMIME().setContentLength(bodySize);
+			else
+				response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
+		}
 		
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class);
 		
@@ -511,21 +513,11 @@ public class HTTPServerProtocol implements ServerProtocol {
 		Protocol protocol = response.getProtocol();
 		if (protocol == null) protocol = request.getProtocol();
 		if (protocol == null) protocol = Protocol.HTTP_1_1;
-		byte[] status = (protocol.getName() + ' ' + Integer.toString(response.getStatusCode()) + ' ' + response.getStatusMessage() + "\r\n")
-			.getBytes(StandardCharsets.US_ASCII);
-		try {
-			client.send(ByteBuffer.wrap(status), false);
-		} catch (Exception e) {
-			if (body != null) body.closeAsync();
-			if (request.getMIME().getBodyReceivedAsOutput() != null) request.getMIME().getBodyReceivedAsOutput().closeAsync();
-			client.close();
-			response.sent.error(e);
-			return;
-		}
-
-		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(2048));
+		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
+		s.append(protocol.getName()).append(' ').append(Integer.toString(response.getStatusCode()))
+			.append(' ').append(response.getStatusMessage()).append(MimeMessage.CRLF);
 		response.getMIME().appendHeadersTo(s);
-		s.append("\r\n");
+		s.append(MimeMessage.CRLF);
 		byte[] headers = s.toUsAsciiBytes();
 		if (logger.trace())
 			logger.trace("Sending response with headers:\n" + s);
