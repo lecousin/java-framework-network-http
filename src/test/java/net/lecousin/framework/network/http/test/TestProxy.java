@@ -51,7 +51,7 @@ public class TestProxy extends AbstractHTTPTest {
 		processor = new ProxyHTTPRequestProcessor(8192, logger);
 		HTTPServerProtocol protocol = new HTTPServerProtocol(processor);
 		server.setProtocol(protocol);
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		serverPort = ((InetSocketAddress)serverAddress).getPort();
 		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
 		config.setSSLContext(SSLContext.getDefault());

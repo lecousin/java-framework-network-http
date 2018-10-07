@@ -353,7 +353,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(8192, logger);
 		HTTPServerProtocol protocol = new HTTPServerProtocol(processor);
 		proxyServer.setProtocol(protocol);
-		SocketAddress serverAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
 		config.setSSLContext(SSLContext.getDefault());

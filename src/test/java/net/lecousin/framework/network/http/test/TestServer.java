@@ -90,7 +90,7 @@ public class TestServer extends AbstractHTTPTest {
 		Assert.assertEquals(10000, protocol.getReceiveDataTimeout());
 		protocol.getProcessor();
 		server.setProtocol(protocol);
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		// tests
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
@@ -145,7 +145,7 @@ public class TestServer extends AbstractHTTPTest {
 		// launch server
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		// tests
 		HTTPClient client = HTTPClient.create(new URI("http://localhost:" + serverPort + "/test/get?status=200&test=hello"));
@@ -237,7 +237,7 @@ public class TestServer extends AbstractHTTPTest {
 		// launch server
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 
 		TCPClient client = new TCPClient();
@@ -272,7 +272,7 @@ public class TestServer extends AbstractHTTPTest {
 		// launch server
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 
 		testInvalidRequest("TOTO /titi\r\n\r\n", serverPort, 400);
@@ -319,7 +319,7 @@ public class TestServer extends AbstractHTTPTest {
 		HTTPServerProtocol protocol = new HTTPServerProtocol(new RangeProcessor("net/lecousin/framework/network/http/test"));
 		protocol.enableRangeRequests();
 		server.setProtocol(protocol);
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		
 		MimeMessage message = new MimeMessage();
@@ -361,7 +361,7 @@ public class TestServer extends AbstractHTTPTest {
 	public void testStaticProcessor() throws Exception {
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test")));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 
 		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
@@ -378,7 +378,7 @@ public class TestServer extends AbstractHTTPTest {
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.INFO);
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 
 		byte[] buf = new byte[10 * 1024 * 1024];
