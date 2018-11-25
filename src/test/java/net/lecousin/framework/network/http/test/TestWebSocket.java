@@ -7,10 +7,8 @@ import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.util.Collections;
 import java.util.List;
 
@@ -25,12 +23,10 @@ import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.application.Version;
-import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.synch.AsyncWork;
 import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
-import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
@@ -38,11 +34,9 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
@@ -55,7 +49,6 @@ import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
-import net.lecousin.framework.util.Pair;
 
 public class TestWebSocket extends AbstractHTTPTest {
 
@@ -83,7 +76,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 			});
 			protocol.enableWebSocket(wsProtocol);
 			http_server.setProtocol(protocol);
-			http_server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10);
+			http_server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10).blockThrow(0);
 			Thread.sleep(5*60*1000);
 			LCCore.stop(true);
 		} catch (Throwable t) {
@@ -96,7 +89,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	private TCPServer sslServer;
 	
 	@Before
-	public void startServer() throws IOException, GeneralSecurityException {
+	public void startServer() throws Exception {
 		server = new TCPServer();
 		HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
 		connected = new MutableInteger(0);
@@ -134,11 +127,11 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		protocol.enableWebSocket(wsProtocol);
 		server.setProtocol(protocol);
-		server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10);
+		server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10).blockThrow(0);
 		
 		sslServer = new TCPServer();
 		sslServer.setProtocol(new SSLServerProtocol(sslTest, protocol));
-		sslServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1112), 10);
+		sslServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1112), 10).blockThrow(0);
 	}
 	
 	@After
