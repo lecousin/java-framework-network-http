@@ -3,8 +3,8 @@ package net.lecousin.framework.network.http.server.processor;
 import java.io.IOException;
 
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.out2in.OutputToInputBuffers;
 import net.lecousin.framework.log.Logger;
@@ -41,13 +41,12 @@ public class HTTPRequestForwarder {
 	}
 	
 	/** Forward the request to the given host and port. */
-	@SuppressWarnings("resource")
-	public ISynchronizationPoint<IOException> forward(HTTPRequest request, HTTPResponse response, String host, int port) {
+	public IAsync<IOException> forward(HTTPRequest request, HTTPResponse response, String host, int port) {
 		if (logger.debug())
 			logger.debug("Forward request " + request.getPath() + " to " + host + ":" + port);
 		prepareRequest(request, host, port, false);
 		
-		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+		Async<IOException> result = new Async<>();
 		Pair<String, Integer> address = new Pair<>(host, Integer.valueOf(port));
 		HTTPClient client;
 			/*
@@ -78,13 +77,12 @@ public class HTTPRequestForwarder {
 	}
 	
 	/** Forward the request to the given host and port. */
-	@SuppressWarnings("resource")
-	public ISynchronizationPoint<IOException> forwardSSL(HTTPRequest request, HTTPResponse response, String host, int port) {
+	public IAsync<IOException> forwardSSL(HTTPRequest request, HTTPResponse response, String host, int port) {
 		prepareRequest(request, host, port, true);
 		SSLClient ssl = new SSLClient(clientConfig.getSSLContext());
 		ssl.setHostNames(host);
 		HTTPClient client = new HTTPClient(ssl, host, port, clientConfig);
-		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+		Async<IOException> result = new Async<>();
 		doForward(client, request, response, result, null);
 		return result;
 	}
@@ -100,13 +98,12 @@ public class HTTPRequestForwarder {
 		request.getMIME().setHeaderRaw("Accept-Encoding", s.toString());
 	}
 	
-	@SuppressWarnings("resource")
 	protected void doForward(
 		HTTPClient client, HTTPRequest request, HTTPResponse response,
-		SynchronizationPoint<IOException> result, @SuppressWarnings("unused") Pair<String, Integer> reuseClientAddress
+		Async<IOException> result, @SuppressWarnings({"unused","squid:S1172"}) Pair<String, Integer> reuseClientAddress
 	) {
-		client.sendRequest(request).listenInline(() -> {
-			client.receiveResponseHeader().listenInline((resp) -> {
+		client.sendRequest(request).onDone(() -> client.receiveResponseHeader().onDone(
+			resp -> {
 				response.setStatus(resp.getStatusCode());
 				if (logger.trace()) {
 					StringBuilder log = new StringBuilder(1024);
@@ -124,7 +121,7 @@ public class HTTPRequestForwarder {
 				}
 				OutputToInputBuffers o2i = new OutputToInputBuffers(true, 8, Task.PRIORITY_NORMAL);
 				response.getMIME().setBodyToSend(o2i);
-				client.receiveBody(resp, o2i, 65536).listenInline(() -> {
+				client.receiveBody(resp, o2i, 65536).onDone(() -> {
 					o2i.endOfData();
 						/*if (reuseClientAddress == null || client.getTCPClient().isClosed() ||
 						"close".equalsIgnoreCase(request.getMIME().getFirstHeaderRawValue(HTTPRequest.HEADER_CONNECTION)))*/
@@ -137,17 +134,16 @@ public class HTTPRequestForwarder {
 						}
 						clients.addLast(client);
 					}*/
-				}, (error) -> {
+				}, error -> {
 					logger.error("Error receiving body", error);
 					o2i.signalErrorBeforeEndOfData(error);
 					client.close();
-				}, (cancel) -> {
+				}, cancel -> {
 					o2i.signalErrorBeforeEndOfData(IO.error(cancel));
 					client.close();
 				});
 				result.unblock();
-			}, result);
-		}, result);
+			}, result), result);
 	}
 
 	/*

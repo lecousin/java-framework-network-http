@@ -8,7 +8,7 @@ import net.lecousin.framework.network.http.server.HTTPServerResponse;
 
 public class TestHTTPResponse extends LCCoreAbstractTest {
 
-	@Test(timeout=30000)
+	@Test
 	public void test() {
 		HTTPServerResponse r = new HTTPServerResponse();
 		r.setStatus(200);

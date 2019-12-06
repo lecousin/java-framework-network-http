@@ -6,13 +6,19 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
@@ -144,15 +150,47 @@ public class HTTPResponse {
 		setHeaderRaw("Location", location);
 	}
 	
+	
+	// Trailer headers
+	
+	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
+	
+	/** Add a trailer MIME header. */
+	public void addTrailerHeader(String headerName, Supplier<String> supplier) {
+		if (trailerHeaderSuppliers == null)
+			trailerHeaderSuppliers = new HashMap<>(5);
+		trailerHeaderSuppliers.put(headerName, supplier);
+	}
+	
+	/** Get the trailer header supplier. */
+	public Supplier<List<MimeHeader>> getTrailerHeadersSuppliers() {
+		if (trailerHeaderSuppliers == null)
+			return null;
+		StringBuilder s = new StringBuilder();
+		for (String h : trailerHeaderSuppliers.keySet()) {
+			if (s.length() > 0)
+				s.append(", ");
+			s.append(h);
+		}
+		mime.setHeaderRaw("Trailer", s.toString());
+		return () -> {
+			List<MimeHeader> headers = new ArrayList<>(trailerHeaderSuppliers.size());
+			for (Map.Entry<String, Supplier<String>> entry : trailerHeaderSuppliers.entrySet()) {
+				headers.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
+			}
+			return headers;
+		};
+	}
+	
 	/** Receive a response from a server, by using the given TCPClient. */
-	public static AsyncWork<HTTPResponse, IOException> receive(TCPClient client, int timeout) {
-		AsyncWork<HTTPResponse, IOException> result = new AsyncWork<HTTPResponse, IOException>();
+	public static AsyncSupplier<HTTPResponse, IOException> receive(TCPClient client, int timeout) {
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPResponse.class);
 		if (logger.trace())
 			logger.trace("Receiving status line...");
-		AsyncWork<ByteArrayIO,IOException> statusLine = client.getReceiver().readUntil((byte)'\n', 1024, timeout);
-		statusLine.listenInline(
-			(line) -> {
+		AsyncSupplier<ByteArrayIO,IOException> statusLine = client.getReceiver().readUntil((byte)'\n', 1024, timeout);
+		statusLine.onDone(
+			line -> {
 				String s = line.getAsString(StandardCharsets.US_ASCII);
 				if (logger.trace())
 					logger.trace("Status line received: " + s);
@@ -177,11 +215,8 @@ public class HTTPResponse {
 				i = s.indexOf('\n');
 				if (i >= 0) s = s.substring(0,i);
 				response.setStatus(code, s);
-				SynchronizationPoint<IOException> header = response.mime.readHeader(client, timeout);
-				header.listenInline(
-					() -> { result.unblockSuccess(response); },
-					result
-				);
+				Async<IOException> header = response.mime.readHeader(client, timeout);
+				header.onDone(() -> result.unblockSuccess(response), result);
 			},
 			result
 		);

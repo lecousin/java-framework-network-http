@@ -13,7 +13,7 @@ public class HTTPResponseError extends IOException {
 		this.statusCode = statusCode;
 	}
 	
-	protected int statusCode;
+	private final int statusCode;
 	
 	public int getStatusCode() {
 		return statusCode;

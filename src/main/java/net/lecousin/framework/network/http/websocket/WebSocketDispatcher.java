@@ -60,7 +60,7 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 	/** Router of messages based on the path and requested protocols. */
 	public static interface WebSocketRouter {
 		/** Return the handler for the given path and protocols. */
-		public WebSocketHandler getWebSocketHandler(TCPServerClient client, HTTPRequest request, String path, String[] protocols);
+		WebSocketHandler getWebSocketHandler(TCPServerClient client, HTTPRequest request, String path, String[] protocols);
 	}
 	
 	/** Basic implementation of WebSocketRouter that always return the same handler. */
@@ -101,7 +101,7 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 		if (handler == null)
 			throw new HTTPResponseError(404, "WebSocket not found");
 		handler.newClient(client);
-		client.onclosed(() -> { handler.clientClosed(client); });
+		client.onclosed(() -> handler.clientClosed(client));
 		client.setAttribute(WEB_SOCKET_HANDLER_ATTRIBUTE, handler);
 		return handler.getProtocol();
 	}

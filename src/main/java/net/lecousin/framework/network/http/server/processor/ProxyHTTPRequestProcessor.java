@@ -7,8 +7,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.collections.LinkedArrayList;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
@@ -44,7 +44,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		/** Return null if the request is not filtered, else the synchronization point should be unblocked
 		 * when the server can start sending the response (same as HTTPRequestProcessor).
 		 */
-		ISynchronizationPoint<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port);
+		IAsync<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port);
 	}
 	
 	protected Logger logger;
@@ -93,29 +93,29 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 	}
 	
 	/** Local path mapping. */
-	protected static class LocalMapping {
-		public String localPath;
-		public String hostname;
-		public int port;
-		public String path;
-		public boolean secure;
+	private static class LocalMapping {
+		private String localPath;
+		private String hostname;
+		private int port;
+		private String path;
+		private boolean secure;
 	}
 	
 	@Override
-	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+	public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 		if (logger.trace())
 			logger.trace("Request: " + request.generateCommandLine());
 
 		if (Method.CONNECT.equals(request.getMethod())) {
 			if (!allowConnect) {
 				response.setStatus(405, "CONNECT method is not allowed on this server");
-				return new SynchronizationPoint<>(true);
+				return new Async<>(true);
 			}
 			return openTunnel(client, request, response);
 		}
 		
 		for (HTTPRequestFilter filter : requestFilters) {
-			ISynchronizationPoint<?> filtered = filter.filter(client, request, response);
+			IAsync<?> filtered = filter.filter(client, request, response);
 			if (filtered != null)
 				return filtered;
 		}
@@ -128,7 +128,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		int i = path.indexOf(':');
 		if (i < 0) {
 			response.setStatus(404, "Invalid URL");
-			return new SynchronizationPoint<>(true);
+			return new Async<>(true);
 		}
 		
 		String protocol = path.substring(0, i).toLowerCase();
@@ -139,10 +139,10 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 			return forwardHttpsRequest(request, response);
 		
 		response.setStatus(404, "Invalid protocol");
-		return new SynchronizationPoint<>(true);
+		return new Async<>(true);
 	}
 	
-	protected ISynchronizationPoint<?> localPath(HTTPRequest request, HTTPResponse response) {
+	protected IAsync<?> localPath(HTTPRequest request, HTTPResponse response) {
 		String path = request.getPath();
 		for (LocalMapping m : localPathMapping) {
 			if (path.startsWith(m.localPath)) {
@@ -154,17 +154,17 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 			}
 		}
 		response.setStatus(404);
-		return new SynchronizationPoint<>(true);
+		return new Async<>(true);
 	}
 	
-	protected ISynchronizationPoint<?> forwardRequest(HTTPRequest request, HTTPResponse response) {
+	protected IAsync<?> forwardRequest(HTTPRequest request, HTTPResponse response) {
 		String path = request.getPath();
 		URI uri;
 		try { uri = new URI(path); }
-		catch (Throwable t) {
+		catch (Exception t) {
 			logger.error("Invalid requested URL: " + path, t);
 			response.setStatus(500, "Unable to connect");
-			return new SynchronizationPoint<>(true);
+			return new Async<>(true);
 		}
 		
 		String host = uri.getHost();
@@ -175,7 +175,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		request.setPath(path);
 		
 		for (Filter filter : proxyFilters) {
-			ISynchronizationPoint<Exception> filtered = filter.filter(request, response, host, port);
+			IAsync<Exception> filtered = filter.filter(request, response, host, port);
 			if (filtered != null)
 				return filtered;
 		}
@@ -183,14 +183,14 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		return forwarder.forward(request, response, host, port);
 	}
 
-	protected ISynchronizationPoint<?> forwardHttpsRequest(HTTPRequest request, HTTPResponse response) {
+	protected IAsync<?> forwardHttpsRequest(HTTPRequest request, HTTPResponse response) {
 		String path = request.getPath();
 		URI uri;
 		try { uri = new URI(path); }
-		catch (Throwable t) {
+		catch (Exception t) {
 			logger.error("Invalid requested URL: " + path, t);
 			response.setStatus(500, "Unable to connect");
-			return new SynchronizationPoint<>(true);
+			return new Async<>(true);
 		}
 		
 		String host = uri.getHost();
@@ -201,7 +201,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		request.setPath(path);
 		
 		for (Filter filter : proxyFilters) {
-			ISynchronizationPoint<Exception> filtered = filter.filter(request, response, host, port);
+			IAsync<Exception> filtered = filter.filter(request, response, host, port);
 			if (filtered != null)
 				return filtered;
 		}
@@ -213,23 +213,22 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 	private static final byte[] okResponse = "HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
 	private static final byte[] koResponse = "HTTP/1.1 500 Error\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
 	
-	@SuppressWarnings("resource")
-	protected ISynchronizationPoint<?> openTunnel(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
+	protected IAsync<?> openTunnel(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
 		String host = request.getPath();
 		int i = host.indexOf(':');
 		int port = 80;
 		if (i > 0)
 			try {
-				port = Integer.valueOf(host.substring(i + 1)).intValue();
+				port = Integer.parseInt(host.substring(i + 1));
 				host = host.substring(0, i);
-			} catch (Throwable t) {
+			} catch (Exception t) {
 				logger.error("Invalid address " + host, t);
 				response.setStatus(500, "Unable to connect");
-				return new SynchronizationPoint<>(true);
+				return new Async<>(true);
 			}
 
 		for (Filter filter : proxyFilters) {
-			ISynchronizationPoint<Exception> filtered = filter.filter(request, response, host, port);
+			IAsync<Exception> filtered = filter.filter(request, response, host, port);
 			if (filtered != null)
 				return filtered;
 		}
@@ -237,23 +236,21 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		TCPClient tunnel = new TCPClient();
 		// take client out of normal protocol
 		client.setAttribute(HTTPServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE, tunnelProtocol);
-		SynchronizationPoint<IOException> connect = tunnel.connect(new InetSocketAddress(host, port), 30000);
-		connect.listenInline(
+		Async<IOException> connect = tunnel.connect(new InetSocketAddress(host, port), 30000);
+		connect.onDone(
 			() -> {
 				tunnelProtocol.registerClient(client, tunnel);
 				client.send(ByteBuffer.wrap(okResponse));
-			},
-			(error) -> {
+			}, error -> {
 				logger.error("Error connecting to remote site", error);
 				client.send(ByteBuffer.wrap(koResponse));
-			},
-			(cancel) -> {
+			}, cancel -> {
 				client.close();
 				tunnel.close();
 			}
 		);
 		// never unblock, because we don't want to send a response
-		return new SynchronizationPoint<>();
+		return new Async<>();
 	}
 
 }

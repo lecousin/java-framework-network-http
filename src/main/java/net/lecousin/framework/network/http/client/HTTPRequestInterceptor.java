@@ -6,6 +6,6 @@ import net.lecousin.framework.network.http.HTTPRequest;
 public interface HTTPRequestInterceptor {
 
 	/** Intercept and optionally modify the request. */
-	public void intercept(HTTPRequest request, String hostname, int port);
+	void intercept(HTTPRequest request, String hostname, int port);
 	
 }

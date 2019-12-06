@@ -7,21 +7,23 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
-import net.lecousin.framework.network.AttributesContainer;
+import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineException;
 import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
+import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.IString;
 import net.lecousin.framework.util.Pair;
 
 /** HTTP request. */
-public class HTTPRequest implements AttributesContainer {
+public class HTTPRequest extends AbstractAttributesContainer {
 	
 	/** HTTP method. */
-	public static enum Method {
+	public enum Method {
 		OPTIONS,
 		GET,
 		HEAD,
@@ -33,10 +35,11 @@ public class HTTPRequest implements AttributesContainer {
 	}
 	
 	/** HTTP protocol version. */
-	public static enum Protocol {
+	public enum Protocol {
 		HTTP_1_1("HTTP/1.1"),
 		HTTP_1_0("HTTP/1.0");
-		private Protocol(String name) {
+		
+		Protocol(String name) {
 			this.name = name;
 		}
 		
@@ -67,30 +70,6 @@ public class HTTPRequest implements AttributesContainer {
 	public HTTPRequest(Method method, String path) {
 		this.method = method;
 		this.path = path;
-	}
-	
-	// Attributes
-	
-	private Map<String,Object> attributes = new HashMap<>();
-	
-	@Override
-	public void setAttribute(String name, Object value) {
-		attributes.put(name, value);
-	}
-	
-	@Override
-	public Object getAttribute(String name) {
-		return attributes.get(name);
-	}
-	
-	@Override
-	public Object removeAttribute(String name) {
-		return attributes.remove(name);
-	}
-
-	@Override
-	public boolean hasAttribute(String name) {
-		return attributes.containsKey(name);
 	}
 	
 	// Command line
@@ -245,6 +224,37 @@ public class HTTPRequest implements AttributesContainer {
 	private MimeMessage mime = new MimeMessage();
 	
 	public MimeMessage getMIME() { return mime; }
+	
+	// Trailer headers
+	
+	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
+	
+	/** Add a trailer MIME header. */
+	public void addTrailerHeader(String headerName, Supplier<String> supplier) {
+		if (trailerHeaderSuppliers == null)
+			trailerHeaderSuppliers = new HashMap<>(5);
+		trailerHeaderSuppliers.put(headerName, supplier);
+	}
+	
+	/** Get the trailer header supplier. */
+	public Supplier<List<MimeHeader>> getTrailerHeadersSuppliers() {
+		if (trailerHeaderSuppliers == null)
+			return null;
+		StringBuilder s = new StringBuilder();
+		for (String h : trailerHeaderSuppliers.keySet()) {
+			if (s.length() > 0)
+				s.append(", ");
+			s.append(h);
+		}
+		mime.setHeaderRaw("Trailer", s.toString());
+		return () -> {
+			List<MimeHeader> headers = new ArrayList<>(trailerHeaderSuppliers.size());
+			for (Map.Entry<String, Supplier<String>> entry : trailerHeaderSuppliers.entrySet()) {
+				headers.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
+			}
+			return headers;
+		};
+	}
 	
 	// Utilities
 	

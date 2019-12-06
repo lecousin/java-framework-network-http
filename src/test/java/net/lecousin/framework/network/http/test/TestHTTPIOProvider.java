@@ -1,6 +1,6 @@
 package net.lecousin.framework.network.http.test;
 
-import java.net.URL;
+import java.net.URI;
 import java.nio.ByteBuffer;
 
 import org.junit.Assert;
@@ -9,13 +9,13 @@ import org.junit.Test;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
-import net.lecousin.framework.io.provider.IOProviderFromURL;
+import net.lecousin.framework.io.provider.IOProviderFromURI;
 
 public class TestHTTPIOProvider extends AbstractHTTPTest {
 
-	@Test(timeout=60000)
+	@Test
 	public void test() throws Exception {
-		IOProvider p = IOProviderFromURL.getInstance().get(new URL(HTTP_BIN + "get"));
+		IOProvider p = IOProviderFromURI.getInstance().get(new URI(HTTP_BIN + "get"));
 		Assert.assertTrue(p instanceof IOProvider.Readable);
 		p.getDescription();
 		IO.Readable io = ((IOProvider.Readable)p).provideIOReadable(Task.PRIORITY_NORMAL);
@@ -24,7 +24,7 @@ public class TestHTTPIOProvider extends AbstractHTTPTest {
 		io.readFullySync(buffer);
 		io.close();
 		
-		p = IOProviderFromURL.getInstance().get(new URL("http://doesnotexists.com/hello_world"));
+		p = IOProviderFromURI.getInstance().get(new URI("http://doesnotexists.com/hello_world"));
 		try {
 			((IOProvider.Readable)p).provideIOReadable(Task.PRIORITY_NORMAL);
 			throw new AssertionError("error");

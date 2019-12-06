@@ -13,8 +13,8 @@ import org.junit.Test;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
@@ -45,9 +45,8 @@ public class TestServer extends AbstractHTTPTest {
 
 	private static class TestProcessor implements HTTPRequestProcessor {
 		@Override
-		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+		public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 			Task<Void, HTTPResponseError> task = new Task.Cpu<Void, HTTPResponseError>("Processing test request", Task.PRIORITY_NORMAL) {
-				@SuppressWarnings("resource")
 				@Override
 				public Void run() throws HTTPResponseError {
 					String path = request.getPath();
@@ -81,7 +80,7 @@ public class TestServer extends AbstractHTTPTest {
 		}
 	}
 	
-	@Test(timeout=120000)
+	@Test
 	public void testHttpSimpleRequests() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
@@ -93,7 +92,7 @@ public class TestServer extends AbstractHTTPTest {
 		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 		// tests
-		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
+		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
 		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/test/get?status=200&test=hello", 0);
 		check(get, Method.GET, 200, "hello");
 		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/test/get?status=678", 0);
@@ -103,7 +102,7 @@ public class TestServer extends AbstractHTTPTest {
 		entity.add("Hello", "World!");
 		entity.add("test", "this is a test");
 		entity.add("test2", "this\nis\tanother+test");
-		AsyncWork<Pair<HTTPResponse,IO.Readable.Seekable>, IOException> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", entity);
+		AsyncSupplier<Pair<HTTPResponse,IO.Readable.Seekable>, IOException> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", entity);
 		res.blockThrow(0);
 		FormUrlEncodedEntity entity2 = new FormUrlEncodedEntity();
 		entity2.parse(res.getResult().getValue2(), StandardCharsets.UTF_8).blockThrow(0);
@@ -123,7 +122,7 @@ public class TestServer extends AbstractHTTPTest {
 		server.close();
 	}
 	
-	private static void check(AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> req, Method method, int status, String expectedXTest) throws Exception {
+	private static void check(AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> req, Method method, int status, String expectedXTest) throws Exception {
 		req.block(0);
 		if (req.hasError()) {
 			if ((status / 100) == 2 || !(req.getError() instanceof HTTPResponseError))
@@ -140,7 +139,7 @@ public class TestServer extends AbstractHTTPTest {
 			Assert.assertFalse(response.getMIME().hasHeader("X-Test"));
 	}
 	
-	@Test(timeout=120000)
+	@Test
 	public void testConcurrentRequests() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
@@ -176,47 +175,47 @@ public class TestServer extends AbstractHTTPTest {
 			"GET /test/get?status=610 HTTP/1.1\r\nHost: localhost\r\n\r\n";
 		client.getTCPClient().send(ByteBuffer.wrap(multiRequest.getBytes(StandardCharsets.US_ASCII)));
 		MemoryIO io1 = new MemoryIO(1024, "test1");
-		AsyncWork<HTTPResponse, IOException> headers1 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers1 = new AsyncSupplier<>();
 		client.receiveResponse(headers1, io1, 1024).blockThrow(0);
 		MemoryIO io2 = new MemoryIO(1024, "test2");
-		AsyncWork<HTTPResponse, IOException> headers2 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers2 = new AsyncSupplier<>();
 		client.receiveResponse(headers2, io2, 1024).blockThrow(0);
 		MemoryIO io3 = new MemoryIO(1024, "test3");
-		AsyncWork<HTTPResponse, IOException> headers3 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers3 = new AsyncSupplier<>();
 		client.receiveResponse(headers3, io3, 1024).blockThrow(0);
 		MemoryIO io4 = new MemoryIO(1024, "test4");
-		AsyncWork<HTTPResponse, IOException> headers4 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers4 = new AsyncSupplier<>();
 		client.receiveResponse(headers4, io4, 1024).blockThrow(0);
 		MemoryIO io5 = new MemoryIO(1024, "test5");
-		AsyncWork<HTTPResponse, IOException> headers5 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers5 = new AsyncSupplier<>();
 		client.receiveResponse(headers5, io5, 1024).blockThrow(0);
 		MemoryIO io6 = new MemoryIO(1024, "test6");
-		AsyncWork<HTTPResponse, IOException> headers6 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers6 = new AsyncSupplier<>();
 		client.receiveResponse(headers6, io6, 1024).blockThrow(0);
 		MemoryIO io7 = new MemoryIO(1024, "test7");
-		AsyncWork<HTTPResponse, IOException> headers7 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers7 = new AsyncSupplier<>();
 		client.receiveResponse(headers7, io7, 1024).blockThrow(0);
 		MemoryIO io8 = new MemoryIO(1024, "test8");
-		AsyncWork<HTTPResponse, IOException> headers8 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers8 = new AsyncSupplier<>();
 		client.receiveResponse(headers8, io8, 1024).blockThrow(0);
 		MemoryIO io9 = new MemoryIO(1024, "test9");
-		AsyncWork<HTTPResponse, IOException> headers9 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers9 = new AsyncSupplier<>();
 		client.receiveResponse(headers9, io9, 1024).blockThrow(0);
 		MemoryIO io10 = new MemoryIO(1024, "test10");
-		AsyncWork<HTTPResponse, IOException> headers10 = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers10 = new AsyncSupplier<>();
 		client.receiveResponse(headers10, io10, 1024).blockThrow(0);
 		client.close();
 		
-		check(new AsyncWork<>(new Pair<>(headers1.getResult(), io1), null), Method.GET, 200, "hello");
-		check(new AsyncWork<>(new Pair<>(headers2.getResult(), io2), null), Method.GET, 602, null);
-		check(new AsyncWork<>(new Pair<>(headers3.getResult(), io3), null), Method.GET, 603, null);
-		check(new AsyncWork<>(new Pair<>(headers4.getResult(), io4), null), Method.GET, 604, null);
-		check(new AsyncWork<>(new Pair<>(headers5.getResult(), io5), null), Method.GET, 605, null);
-		check(new AsyncWork<>(new Pair<>(headers6.getResult(), io6), null), Method.GET, 606, null);
-		check(new AsyncWork<>(new Pair<>(headers7.getResult(), io7), null), Method.GET, 607, null);
-		check(new AsyncWork<>(new Pair<>(headers8.getResult(), io8), null), Method.GET, 608, null);
-		check(new AsyncWork<>(new Pair<>(headers9.getResult(), io9), null), Method.GET, 609, null);
-		check(new AsyncWork<>(new Pair<>(headers10.getResult(), io10), null), Method.GET, 610, null);
+		check(new AsyncSupplier<>(new Pair<>(headers1.getResult(), io1), null), Method.GET, 200, "hello");
+		check(new AsyncSupplier<>(new Pair<>(headers2.getResult(), io2), null), Method.GET, 602, null);
+		check(new AsyncSupplier<>(new Pair<>(headers3.getResult(), io3), null), Method.GET, 603, null);
+		check(new AsyncSupplier<>(new Pair<>(headers4.getResult(), io4), null), Method.GET, 604, null);
+		check(new AsyncSupplier<>(new Pair<>(headers5.getResult(), io5), null), Method.GET, 605, null);
+		check(new AsyncSupplier<>(new Pair<>(headers6.getResult(), io6), null), Method.GET, 606, null);
+		check(new AsyncSupplier<>(new Pair<>(headers7.getResult(), io7), null), Method.GET, 607, null);
+		check(new AsyncSupplier<>(new Pair<>(headers8.getResult(), io8), null), Method.GET, 608, null);
+		check(new AsyncSupplier<>(new Pair<>(headers9.getResult(), io9), null), Method.GET, 609, null);
+		check(new AsyncSupplier<>(new Pair<>(headers10.getResult(), io10), null), Method.GET, 610, null);
 
 		io1.close();
 		io2.close();
@@ -232,7 +231,7 @@ public class TestServer extends AbstractHTTPTest {
 	}
 
 	
-	@Test(timeout=120000)
+	@Test
 	public void testSendRequestBySmallPackets() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
@@ -256,18 +255,18 @@ public class TestServer extends AbstractHTTPTest {
 		}
 		HTTPClient httpClient = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
 		MemoryIO io = new MemoryIO(1024, "test1");
-		AsyncWork<HTTPResponse, IOException> headers = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers = new AsyncSupplier<>();
 		httpClient.receiveResponse(headers, io, 1024).blockThrow(0);
 		httpClient.close();
 		client.close();
 		
-		check(new AsyncWork<>(new Pair<>(headers.getResult(), io), null), Method.GET, 200, "world");
+		check(new AsyncSupplier<>(new Pair<>(headers.getResult(), io), null), Method.GET, 200, "world");
 
 		io.close();
 		server.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testInvalidRequestes() throws Exception {
 		// launch server
 		TCPServer server = new TCPServer();
@@ -288,7 +287,7 @@ public class TestServer extends AbstractHTTPTest {
 		client.send(ByteBuffer.wrap(request.getBytes(StandardCharsets.US_ASCII)));
 		HTTPClient httpClient = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
 		MemoryIO io = new MemoryIO(1024, "test1");
-		AsyncWork<HTTPResponse, IOException> headers = new AsyncWork<>();
+		AsyncSupplier<HTTPResponse, IOException> headers = new AsyncSupplier<>();
 		httpClient.receiveResponse(headers, io, 1024).blockThrow(0);
 		httpClient.close();
 		client.close();
@@ -301,8 +300,8 @@ public class TestServer extends AbstractHTTPTest {
 		}
 		
 		@Override
-		public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
-			ISynchronizationPoint<?> res = super.process(client, request, response);
+		public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+			IAsync<?> res = super.process(client, request, response);
 			IO.Readable io = response.getMIME().getBodyToSend();
 			if (io != null)
 				try { response.getMIME().setBodyToSend(new ReadableToSeekable(io, 256)); }
@@ -313,7 +312,7 @@ public class TestServer extends AbstractHTTPTest {
 		}
 	}
 	
-	@Test(timeout=120000)
+	@Test
 	public void testRangeRequests() throws Exception {
 		TCPServer server = new TCPServer();
 		HTTPServerProtocol protocol = new HTTPServerProtocol(new RangeProcessor("net/lecousin/framework/network/http/test"));
@@ -357,14 +356,14 @@ public class TestServer extends AbstractHTTPTest {
 		server.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testStaticProcessor() throws Exception {
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test")));
 		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int serverPort = ((InetSocketAddress)serverAddress).getPort();
 
-		AsyncWork<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
+		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
 		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/myresource.txt", 0);
 		String s = IOUtil.readFullyAsStringSync(get.blockResult(0).getValue2(), StandardCharsets.US_ASCII);
 		Assert.assertEquals("This is my resource", s);
@@ -372,7 +371,7 @@ public class TestServer extends AbstractHTTPTest {
 		server.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testPostLargeBody() throws Exception {
 		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.INFO);

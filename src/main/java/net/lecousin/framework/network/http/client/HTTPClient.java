@@ -11,12 +11,13 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.util.List;
+import java.util.function.Function;
 
-import net.lecousin.framework.concurrent.CancelException;
-import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
+import net.lecousin.framework.concurrent.async.CancelException;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.client.SSLClient;
@@ -33,7 +34,6 @@ import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.network.mime.transfer.TransferReceiver;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.Provider;
 import net.lecousin.framework.util.UnprotectedString;
 import net.lecousin.framework.util.UnprotectedStringBuffer;
 
@@ -59,7 +59,6 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Create a client for the given URI. */
-	@SuppressWarnings("resource")
 	public static HTTPClient create(URI uri, HTTPClientConfiguration config) throws UnsupportedHTTPProtocolException, GeneralSecurityException {
 		String protocol = uri.getScheme();
 		if (protocol == null) throw new UnsupportedHTTPProtocolException(null);
@@ -132,12 +131,11 @@ public class HTTPClient implements Closeable {
 	 *  for a size less than 32KB.
 	 * </ul>
 	 */
-	@SuppressWarnings("resource")
-	public SynchronizationPoint<IOException> sendRequest(HTTPRequest request) {
+	public Async<IOException> sendRequest(HTTPRequest request) {
 		// connection
-		SynchronizationPoint<IOException> connect = null;
+		Async<IOException> connect = null;
 		if (!client.isClosed())
-			connect = new SynchronizationPoint<>(true);
+			connect = new Async<>(true);
 		else {
 			// get proxy if any
 			ProxySelector proxySelector = config.getProxySelector();
@@ -152,8 +150,9 @@ public class HTTPClient implements Closeable {
 				if (client instanceof SSLClient) {
 					if (port != 443)
 						url.append(':').append(port);
-				} else if (port != 80)
+				} else if (port != 80) {
 					url.append(':').append(port);
+				}
 				url.append(request.getPath());
 				URI uri = null;
 				try {
@@ -174,10 +173,10 @@ public class HTTPClient implements Closeable {
 					if (client instanceof SSLClient) {
 						// we have to create a HTTP tunnel with the proxy
 						TCPClient tunnelClient = new TCPClient();
-						SynchronizationPoint<IOException> tunnelConnect =
+						Async<IOException> tunnelConnect =
 							tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-						connect = new SynchronizationPoint<>();
-						SynchronizationPoint<IOException> result = connect;
+						connect = new Async<>();
+						Async<IOException> result = connect;
 						// prepare the CONNECT request
 						HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
 						connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
@@ -187,12 +186,12 @@ public class HTTPClient implements Closeable {
 						connectRequest.getMIME().appendHeadersTo(s);
 						s.append("\r\n");
 						ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
-						tunnelConnect.listenInline(() -> {
-							ISynchronizationPoint<IOException> send = tunnelClient.send(data);
-							send.listenInline(() -> {
-								AsyncWork<HTTPResponse, IOException> response =
+						tunnelConnect.onDone(() -> {
+							IAsync<IOException> send = tunnelClient.send(data);
+							send.onDone(() -> {
+								AsyncSupplier<HTTPResponse, IOException> response =
 									HTTPResponse.receive(tunnelClient, config.getReceiveTimeout());
-								response.listenInline(() -> {
+								response.onDone(() -> {
 									HTTPResponse resp = response.getResult();
 									if (resp.getStatusCode() != 200) {
 										tunnelClient.close();
@@ -202,7 +201,7 @@ public class HTTPClient implements Closeable {
 									}
 									// tunnel connection established
 									// replace connection of SSLClient by the tunnel
-									((SSLClient)client).tunnelConnected(tunnelClient, result);
+									((SSLClient)client).tunnelConnected(tunnelClient, result, config.getReceiveTimeout());
 								}, result);
 							}, result);
 						}, result);
@@ -218,8 +217,8 @@ public class HTTPClient implements Closeable {
 					new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
 		}
 		
-		if (connect.isUnblocked() && !connect.isSuccessful()) return connect;
-		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+		if (connect.isDone() && !connect.isSuccessful()) return connect;
+		Async<IOException> result = new Async<>();
 		
 		// prepare to send data while connecting
 
@@ -230,7 +229,7 @@ public class HTTPClient implements Closeable {
 		final Long size;
 		IO.Readable body = request.getMIME().getBodyToSend();
 		if (body != null) {
-			result.listenInline(() -> { body.closeAsync(); });
+			result.onDone(body::closeAsync);
 			if (body instanceof IO.KnownSize) {
 				try {
 					request.getMIME().setContentLength((size = Long.valueOf(((IO.KnownSize)body).getSizeSync())).longValue());
@@ -253,14 +252,14 @@ public class HTTPClient implements Closeable {
 		request.getMIME().appendHeadersTo(s);
 		s.append("\r\n");
 		ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
-		connect.listenInline(() -> {
-			ISynchronizationPoint<IOException> send = client.send(data);
+		connect.onDone(() -> {
+			IAsync<IOException> send = client.send(data);
 			// TODO if the connection has been closed while preparing the request, try to reconnect, but only once
 			if (body == null || (size != null && size.longValue() == 0)) {
-				send.listenInline(result);
+				send.onDone(result);
 				return;
 			}
-			ISynchronizationPoint<IOException> sendBody;
+			IAsync<IOException> sendBody;
 			if (body instanceof IO.KnownSize) {
 				if (body instanceof IO.Readable.Buffered)
 					sendBody = IdentityTransfer.send(client, (IO.Readable.Buffered)body);
@@ -286,17 +285,18 @@ public class HTTPClient implements Closeable {
 					}
 					sendBody = IdentityTransfer.send(client, body, bufferSize, maxBuffers);
 				}
-			} else if (body instanceof IO.Readable.Buffered)
-				sendBody = ChunkedTransfer.send(client, (IO.Readable.Buffered)body);
-			else
-				sendBody = ChunkedTransfer.send(client, body, 128 * 1024, 8);
-			sendBody.listenInline(result);
+			} else if (body instanceof IO.Readable.Buffered) {
+				sendBody = ChunkedTransfer.send(client, (IO.Readable.Buffered)body, request.getTrailerHeadersSuppliers());
+			} else {
+				sendBody = ChunkedTransfer.send(client, body, 128 * 1024, 8, request.getTrailerHeadersSuppliers());
+			}
+			sendBody.onDone(result);
 		}, result);
 		return result;
 	}
 	
 	/** Receive the response headers. */
-	public AsyncWork<HTTPResponse, IOException> receiveResponseHeader() {
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponseHeader() {
 		return HTTPResponse.receive(client, config.getReceiveTimeout());
 	}
 	
@@ -306,10 +306,10 @@ public class HTTPClient implements Closeable {
 	 */
 	public <T extends IO.Readable.Seekable & IO.Writable.Seekable> void receiveResponse(
 		String source, T io, int bufferSize,
-		AsyncWork<Pair<HTTPResponse,OutputToInput>,IOException> responseHeaderListener,
-		AsyncWork<HTTPResponse,IOException> outputReceived
+		AsyncSupplier<Pair<HTTPResponse,OutputToInput>,IOException> responseHeaderListener,
+		AsyncSupplier<HTTPResponse,IOException> outputReceived
 	) {
-		receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
+		receiveResponseHeader().listen(new Listener<HTTPResponse, IOException>() {
 			@Override
 			public void ready(HTTPResponse response) {
 				if (!response.isBodyExpected()) {
@@ -317,7 +317,6 @@ public class HTTPClient implements Closeable {
 					outputReceived.unblockSuccess(response);
 					return;
 				}
-				@SuppressWarnings("resource")
 				OutputToInput output = new OutputToInput(io, source);
 				try {
 					response.getMIME().setBodyReceived(output);
@@ -330,9 +329,9 @@ public class HTTPClient implements Closeable {
 					} else {
 						if (responseHeaderListener != null)
 							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
-						SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+						Async<IOException> result = new Async<>();
 						receiveBody(transfer, result, bufferSize);
-						result.listenInline(() -> {
+						result.onDone(() -> {
 							output.endOfData();
 							outputReceived.unblockSuccess(response);
 						}, outputReceived);
@@ -357,12 +356,12 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> SynchronizationPoint<IOException> receiveResponse(
-		AsyncWork<HTTPResponse,IOException> responseHeaderListener,
+	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveResponse(
+		AsyncSupplier<HTTPResponse,IOException> responseHeaderListener,
 		TIO output, int bufferSize
 	) {
-		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
-		receiveResponseHeader().listenInline(new AsyncWorkListener<HTTPResponse, IOException>() {
+		Async<IOException> result = new Async<>();
+		receiveResponseHeader().listen(new Listener<HTTPResponse, IOException>() {
 			@Override
 			public void ready(HTTPResponse response) {
 				if (responseHeaderListener != null)
@@ -402,7 +401,7 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> SynchronizationPoint<IOException> receiveResponse(
+	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveResponse(
 		TIO output, int bufferSize
 	) {
 		return receiveResponse(null, output, bufferSize);
@@ -415,16 +414,16 @@ public class HTTPClient implements Closeable {
 	 * If the provider provides a null pair, the body is not received.
 	 */
 	public <TIO extends IO.Writable & IO.Readable> void receiveResponse(
-		Provider.FromValue<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
-		AsyncWork<Pair<HTTPResponse, TIO>, IOException> onReceived
+		Function<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
+		AsyncSupplier<Pair<HTTPResponse, TIO>, IOException> onReceived
 	) {
-		receiveResponseHeader().listenInline(
-			(response) -> {
+		receiveResponseHeader().onDone(
+			response -> {
 				if (!response.isBodyExpected()) {
 					onReceived.unblockSuccess(new Pair<>(response, null));
 					return;
 				}
-				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.provide(response);
+				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.apply(response);
 				if (output == null)
 					onReceived.unblockSuccess(new Pair<>(response, null));
 				else {
@@ -435,11 +434,9 @@ public class HTTPClient implements Closeable {
 							onReceived.unblockSuccess(new Pair<>(response, output.getValue1()));
 							return;
 						}
-						SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+						Async<IOException> result = new Async<>();
 						receiveBody(transfer, result, output.getValue2().intValue());
-						result.listenInline(() -> {
-							onReceived.unblockSuccess(new Pair<>(response, output.getValue1()));
-						}, onReceived);
+						result.onDone(() -> onReceived.unblockSuccess(new Pair<>(response, output.getValue1())), onReceived);
 					} catch (IOException error) {
 						onReceived.error(error);
 					}
@@ -450,10 +447,10 @@ public class HTTPClient implements Closeable {
 	}
 	
 	/** Receive the body for the given response for which the headers have been already received. */
-	public <TIO extends IO.Writable & IO.Readable> SynchronizationPoint<IOException> receiveBody(
+	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveBody(
 		HTTPResponse response, TIO out, int bufferSize
 	) {
-		SynchronizationPoint<IOException> result = new SynchronizationPoint<>();
+		Async<IOException> result = new Async<>();
 		if (!response.isBodyExpected()) {
 			result.unblock();
 			return result;
@@ -472,15 +469,15 @@ public class HTTPClient implements Closeable {
 		return result;
 	}
 	
-	private void receiveBody(TransferReceiver transfer, SynchronizationPoint<IOException> result, int bufferSize) {
-		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).listenInline(
-		(data) -> {
+	private void receiveBody(TransferReceiver transfer, Async<IOException> result, int bufferSize) {
+		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).onDone(
+		data -> {
 			if (data == null) {
 				result.error(new IOException("Unexpected end of data"));
 				return;
 			}
-			AsyncWork<Boolean,IOException> t = transfer.consume(data);
-			t.listenInline((end) -> {
+			AsyncSupplier<Boolean,IOException> t = transfer.consume(data);
+			t.onDone(end -> {
 				if (end.booleanValue()) {
 					if (data.hasRemaining()) {
 						// TODO it must not happen, but we have to request to the transfer,

@@ -18,7 +18,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
@@ -63,7 +63,7 @@ public class TestProxy extends AbstractHTTPTest {
 		server.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testHttp() throws Exception {
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
@@ -76,7 +76,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testHttpsNotAllowed() throws Exception {
 		processor.allowForwardFromHttpToHttps(false);
 		TCPClient client = new TCPClient();
@@ -90,7 +90,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testHttpsAllowed() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
@@ -104,7 +104,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testInvalidProtocol() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
@@ -118,7 +118,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testInvalidURL() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		LCCore.getApplication().getLoggerFactory().getLogger("test-proxy").setLevel(Level.INFO);
@@ -133,7 +133,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 
-	@Test(timeout=60000)
+	@Test
 	public void testEmptyURL() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
@@ -147,7 +147,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testHttpClientThroughProxy() throws Exception {
 		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
 		config.setProxySelector(new ProxySelector() {
@@ -171,7 +171,7 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testHttpClientThroughProxyNotAllowed() throws Exception {
 		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
 		config.setProxySelector(new ProxySelector() {
@@ -197,20 +197,20 @@ public class TestProxy extends AbstractHTTPTest {
 		http.close();
 	}
 	
-	@Test(timeout=60000)
+	@Test
 	public void testLocalPathMapping() throws Exception {
 		processor.mapLocalPath("/titi", HTTP_BIN_DOMAIN, 80, "/get", false);
 		processor.mapLocalPath("/tutu", HTTP_BIN_DOMAIN, 443, "/get", true);
 		processor.addFilter(new HTTPRequestFilter() {
 			@Override
-			public ISynchronizationPoint<?> filter(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+			public IAsync<?> filter(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 				request.getMIME().addHeaderRaw("X-Test", "test");
 				return null;
 			}
 		});
 		processor.addFilter(new Filter() {
 			@Override
-			public ISynchronizationPoint<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port) {
+			public IAsync<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port) {
 				return null;
 			}
 		});

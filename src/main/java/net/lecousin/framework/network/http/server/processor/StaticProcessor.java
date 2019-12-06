@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFromPathUsingClassloader;
@@ -28,9 +28,8 @@ public class StaticProcessor implements HTTPRequestProcessor {
 	private String resourcePath;
 	private IOProviderFromPathUsingClassloader provider;
 	
-	@SuppressWarnings("resource")
 	@Override
-	public ISynchronizationPoint<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+	public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
 		String path = request.getPath();
 		if (path.length() > 0) path = path.substring(1); // remove leading slash
 		IOProvider.Readable p = provider.get(resourcePath + path);
@@ -45,7 +44,7 @@ public class StaticProcessor implements HTTPRequestProcessor {
 			response.setStatus(HttpURLConnection.HTTP_OK);
 			response.getMIME().setBodyToSend(input);
 		}
-		return new SynchronizationPoint<>(true);
+		return new Async<>(true);
 	}
 	
 }

@@ -2,11 +2,13 @@ language: java
 
 script: mvn test verify -B
 
-after_script:
- - echo _____________CHECKSTYLE______________
- - cat */target/checkstyle-result.xml
- - echo _____________SOPTBUGS______________
- - cat */target/findbugsXml.xml
+addons:
+  sonarcloud:
+    organization: "lecousin"
+    token:
+      secure: RP4d+E9SxJ7jvPpC4Scwf0cYxzeTtW4vyCIsawATtpKOn4jkbXxfUichMiJfWtfGMbZ7ncqHH1UCo/nkhlomK+OjvKhF596O+xZBDSZaoxEbHpGRlvffkmR7Ysq3YNzIZcLXR5jDuLAg2mQm3kN1vk+0MGZP6d9IkCCiC8xiOQgvizZcC5JQ5aUCJf/glFClQtg1rkwIEN2syXp9GH6ZG6FHVMYPTxBpt6N15/jvRwS+SO4vocBwbqFB4LDttRptItW6JmMKr/uAfP8UCxWAycz6s2dsRfXQrhM8adaszs1/4jY9r7ByJwd44qwtBP19s4HQZ5FX9hG09+SMdAh4XJ3fwhdMKFrtztUl6u94xgx73hSVg1W9WEu0UN1CLp5RDSe/4NlP/Jhkp/xgO49kJDzdRzUnEW12d+xY2SoDNKr6SHCXNxM2klM4+g7ClJbfd2x1EqcVyMOYqRoi/5EM8f2Mof7M+RAsyThby5gHPzdPW8cfUCnONluDNPrL1IVT0JqYcg9y4cBflVoqjUneapXO3xDolFRWaZ7RIvapk5i+a3tpi0c//U4o3zMhYdK8NH4qYjPXPSt9LdFvsU2ouOgLpIs2AqERKM7eBeC6Ec9xWQLzB/IB5+QAEpmirzimkWqkZjS87y2smcWJ2Ji0mQUOqxf2qeHtZQztT+CvcIU=
+
+script: mvn test verify install sonar:sonar -Dsonar.projectKey=lecousin_java-framework-network-http -Dsonar.projectName=java-framework-network-http -B
 
 after_success:
  - bash <(curl -s https://codecov.io/bash)

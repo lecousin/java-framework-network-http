@@ -11,17 +11,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Random;
+import java.util.function.Consumer;
 
 import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.synch.AsyncWork;
-import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
-import net.lecousin.framework.concurrent.synch.ISynchronizationPoint;
-import net.lecousin.framework.concurrent.synch.SynchronizationPoint;
-import net.lecousin.framework.event.Listener;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
+import net.lecousin.framework.concurrent.async.CancelException;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.encoding.Base64;
@@ -39,10 +39,6 @@ import net.lecousin.framework.network.http.exception.HTTPResponseError;
 /** Client for web socket protocol. */
 public class WebSocketClient implements Closeable {
 
-	/** Constructor. */
-	public WebSocketClient() {
-	}
-	
 	private TCPClient conn;
 	
 	@Override
@@ -52,7 +48,7 @@ public class WebSocketClient implements Closeable {
 	}
 	
 	/** Connect and return the selected protocol. */
-	public AsyncWork<String, IOException> connect(URI uri, HTTPClientConfiguration config, String... protocols) {
+	public AsyncSupplier<String, IOException> connect(URI uri, HTTPClientConfiguration config, String... protocols) {
 		String protocol = uri.getScheme();
 		if (protocol == null) protocol = "ws";
 		else protocol = protocol.toLowerCase();
@@ -63,7 +59,7 @@ public class WebSocketClient implements Closeable {
 	}
 	
 	/** Connect and return the selected protocol. */
-	public AsyncWork<String, IOException> connect(
+	public AsyncSupplier<String, IOException> connect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
 		ProxySelector proxySelector = config.getProxySelector();
@@ -92,17 +88,16 @@ public class WebSocketClient implements Closeable {
 		return directConnect(hostname, port, path, secure, config, protocols);
 	}
 	
-	@SuppressWarnings("resource")
-	private AsyncWork<String, IOException> proxyConnect(
+	private AsyncSupplier<String, IOException> proxyConnect(
 		Proxy proxy, String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String[] protocols
 	) {
 		// we have to create a HTTP tunnel with the proxy
 		InetSocketAddress inet = (InetSocketAddress)proxy.address();
 		inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 		TCPClient tunnelClient = new TCPClient();
-		SynchronizationPoint<IOException> tunnelConnect =
+		Async<IOException> tunnelConnect =
 			tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-		AsyncWork<String, IOException> result = new AsyncWork<>();
+		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		// prepare the CONNECT request
 		HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
 		connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
@@ -112,12 +107,12 @@ public class WebSocketClient implements Closeable {
 		connectRequest.getMIME().appendHeadersTo(s);
 		s.append("\r\n");
 		ByteBuffer data = ByteBuffer.wrap(s.toString().getBytes(StandardCharsets.US_ASCII));
-		tunnelConnect.listenInline(() -> {
-			ISynchronizationPoint<IOException> send = tunnelClient.send(data);
-			send.listenInline(() -> {
-				AsyncWork<HTTPResponse, IOException> response =
+		tunnelConnect.onDone(() -> {
+			IAsync<IOException> send = tunnelClient.send(data);
+			send.onDone(() -> {
+				AsyncSupplier<HTTPResponse, IOException> response =
 					HTTPResponse.receive(tunnelClient, config.getReceiveTimeout());
-				response.listenInline(() -> {
+				response.onDone(() -> {
 					HTTPResponse resp = response.getResult();
 					if (resp.getStatusCode() != 200) {
 						tunnelClient.close();
@@ -133,29 +128,26 @@ public class WebSocketClient implements Closeable {
 							ssl = new SSLClient(ctx);
 						else
 							try { ssl = new SSLClient(); }
-							catch (Throwable t) {
+							catch (Exception t) {
 								result.error(new IOException("Error initializing SSL connection", t));
 								return;
 							}
-						SynchronizationPoint<IOException> ready = new SynchronizationPoint<>();
-						ssl.tunnelConnected(tunnelClient, ready);
-						ready.listenAsync(new Task.Cpu.FromRunnable(
-							"Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL, () -> {
-							upgradeConnection(ssl, hostname, port, path, config, protocols, result);
-						}), result);
-					} else
-						new Task.Cpu.FromRunnable(
-							"Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL, () -> {
-							upgradeConnection(tunnelClient, hostname, port, path, config, protocols, result);
-						}).start();
+						Async<IOException> ready = new Async<>();
+						ssl.tunnelConnected(tunnelClient, ready, config.getReceiveTimeout());
+						ready.thenStart(new Task.Cpu.FromRunnable(
+							"Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+							() -> upgradeConnection(ssl, hostname, port, path, config, protocols, result)), result);
+					} else {
+						new Task.Cpu.FromRunnable("Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+						() -> upgradeConnection(tunnelClient, hostname, port, path, config, protocols, result)).start();
+					}
 				}, result);
 			}, result);
 		}, result);
 		return result;
 	}
 	
-	@SuppressWarnings("resource")
-	private AsyncWork<String, IOException> directConnect(
+	private AsyncSupplier<String, IOException> directConnect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String[] protocols
 	) {
 		TCPClient client;
@@ -165,22 +157,22 @@ public class WebSocketClient implements Closeable {
 				client = new SSLClient(ctx);
 			else
 				try { client = new SSLClient(); }
-				catch (Throwable t) {
-					return new AsyncWork<>(null, new IOException("Error initializing SSL connection", t));
+				catch (Exception t) {
+					return new AsyncSupplier<>(null, new IOException("Error initializing SSL connection", t));
 				}
-		} else
+		} else {
 			client = new TCPClient();
-		AsyncWork<String, IOException> result = new AsyncWork<>();
+		}
+		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray())
-			.listenAsync(new Task.Cpu.FromRunnable("Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL, () -> {
-				upgradeConnection(client, hostname, port, path, config, protocols, result);
-			}), result);
+			.thenStart(new Task.Cpu.FromRunnable("Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+				() -> upgradeConnection(client, hostname, port, path, config, protocols, result)), result);
 		return result;
 	}
 
 	private void upgradeConnection(
 		TCPClient client, String hostname, int port, String path, HTTPClientConfiguration config,
-		String[] protocols, AsyncWork<String, IOException> result
+		String[] protocols, AsyncSupplier<String, IOException> result
 	) {
 		@SuppressWarnings("resource")
 		HTTPClient httpClient = new HTTPClient(client, hostname, port, config);
@@ -209,7 +201,7 @@ public class WebSocketClient implements Closeable {
 		request.getMIME().addHeaderRaw("Sec-WebSocket-Version", "13");
 		
 		// send HTTP request
-		SynchronizationPoint<IOException> send = httpClient.sendRequest(request);
+		Async<IOException> send = httpClient.sendRequest(request);
 		
 		// calculate the expected accept key
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -223,43 +215,41 @@ public class WebSocketClient implements Closeable {
 		}
 		String expectedAcceptKey = new String(buf);
 		
-		send.listenInline(() -> {
-			httpClient.receiveResponseHeader().listenInline((response) -> {
-				new Task.Cpu.FromRunnable("WebSocket client connection", Task.PRIORITY_NORMAL, () -> {
-					if (response.getStatusCode() != 101) {
-						client.close();
-						result.error(new IOException("Server does not support websocket on this address"));
-						return;
-					}
-					String accept = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Accept");
-					if (accept == null) {
-						client.close();
-						result.error(new IOException("The server did not return the accept key"));
-						return;
-					}
-					if (!expectedAcceptKey.equals(accept)) {
-						client.close();
-						result.error(new IOException("The server returned an invalid accept key"));
-						return;
-					}
-					String protocol = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Protocol");
-					if (protocol == null) {
-						client.close();
-						result.error(new IOException("The server did not return the selected protocol"));
-						return;
-					}
-					conn = client;
-					result.unblockSuccess(protocol);
-				}).ensureUnblocked(result).start();
-			}, result);
-		}, result);
+		send.onDone(() -> httpClient.receiveResponseHeader().onDone(response ->
+			new Task.Cpu.FromRunnable("WebSocket client connection", Task.PRIORITY_NORMAL, () -> {
+				if (response.getStatusCode() != 101) {
+					client.close();
+					result.error(new IOException("Server does not support websocket on this address"));
+					return;
+				}
+				String accept = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Accept");
+				if (accept == null) {
+					client.close();
+					result.error(new IOException("The server did not return the accept key"));
+					return;
+				}
+				if (!expectedAcceptKey.equals(accept)) {
+					client.close();
+					result.error(new IOException("The server returned an invalid accept key"));
+					return;
+				}
+				String protocol = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Protocol");
+				if (protocol == null) {
+					client.close();
+					result.error(new IOException("The server did not return the selected protocol"));
+					return;
+				}
+				conn = client;
+				result.unblockSuccess(protocol);
+			})
+			.ensureUnblocked(result).start(), result), result);
 	}
 
 	private WebSocketDataFrame currentFrame = null;
 	
 	/** Start to listen to messages. This method must be called only once. */
-	public void onMessage(Listener<WebSocketDataFrame> listener) {
-		conn.getReceiver().readForEver(8192, 0, (data) -> {
+	public void onMessage(Consumer<WebSocketDataFrame> listener) {
+		conn.getReceiver().readForEver(8192, 0, data -> {
 			if (currentFrame == null)
 				currentFrame = new WebSocketDataFrame();
 			try {
@@ -267,8 +257,8 @@ public class WebSocketClient implements Closeable {
 					return;
 				WebSocketDataFrame frame = currentFrame;
 				currentFrame = null;
-				listener.fire(frame);
-			} catch (Throwable t) {
+				listener.accept(frame);
+			} catch (Exception t) {
 				LCCore.getApplication().getDefaultLogger().error("Error reading web-socket frame", t);
 				return;
 			}
@@ -276,49 +266,46 @@ public class WebSocketClient implements Closeable {
 	}
 	
 	/** Send a text message to a list of clients. */
-	@SuppressWarnings("resource")
-	public SynchronizationPoint<IOException> sendTextMessage(String message) {
+	public Async<IOException> sendTextMessage(String message) {
 		byte[] text = message.getBytes(StandardCharsets.UTF_8);
 		ByteArrayIO io = new ByteArrayIO(text, "WebSocket message to send");
 		return sendMessage(WebSocketDataFrame.TYPE_TEXT, io);
 	}
 	
 	/** Send a binary message. */
-	public SynchronizationPoint<IOException> sendBinaryMessage(IO.Readable message) {
+	public Async<IOException> sendBinaryMessage(IO.Readable message) {
 		return sendMessage(WebSocketDataFrame.TYPE_BINARY, message);
 	}
 	
 	/** Send a ping empty message. */
-	@SuppressWarnings("resource")
-	public SynchronizationPoint<IOException> sendPing() {
+	public Async<IOException> sendPing() {
 		return sendPing(new EmptyReadable("Empty", Task.PRIORITY_NORMAL));
 	}
 	
 	/** Send a ping message. */
-	public SynchronizationPoint<IOException> sendPing(IO.Readable message) {
+	public Async<IOException> sendPing(IO.Readable message) {
 		return sendMessage(WebSocketDataFrame.TYPE_PING, message);
 	}
 	
 	/** Send a close message. */
-	@SuppressWarnings("resource")
-	public SynchronizationPoint<IOException> sendClose() {
+	public Async<IOException> sendClose() {
 		return sendMessage(WebSocketDataFrame.TYPE_CLOSE, new EmptyReadable("Empty", Task.PRIORITY_NORMAL));
 	}
 	
 	/** Send a message to a client. */
-	public SynchronizationPoint<IOException> sendMessage(int type, IO.Readable content) {
+	public Async<IOException> sendMessage(int type, IO.Readable content) {
 		long size = -1;
 		if (content instanceof IO.KnownSize)
 			try { size = ((IO.KnownSize)content).getSizeSync(); }
-			catch (Throwable e) { /* ignore */ }
+			catch (Exception e) { /* ignore */ }
 		byte[] buffer = new byte[size >= 0 && size <= 128 * 1024 ? (int)size : 65536];
-		SynchronizationPoint<IOException> ondone = new SynchronizationPoint<>();
+		Async<IOException> ondone = new Async<>();
 		sendMessagePart(type, content, size, buffer, 0, ondone);
 		return ondone;
 	}
 	
-	private void sendMessagePart(int type, IO.Readable content, long size, byte[] buffer, long pos, SynchronizationPoint<IOException> ondone) {
-		AsyncWorkListener<Integer, IOException> listener = new AsyncWorkListener<Integer, IOException>() {
+	private void sendMessagePart(int type, IO.Readable content, long size, byte[] buffer, long pos, Async<IOException> ondone) {
+		Listener<Integer, IOException> listener = new Listener<Integer, IOException>() {
 			@Override
 			public void ready(Integer nbRead) {
 				boolean isLast;
@@ -338,14 +325,13 @@ public class WebSocketClient implements Closeable {
 					DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
 				}
 				conn.send(ByteBuffer.wrap(b));
-				ISynchronizationPoint<IOException> send = conn.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()));
+				IAsync<IOException> send = conn.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()));
 				if (!isLast) {
-					send.listenAsync(new Task.Cpu.FromRunnable("Sending WebSocket message", Task.PRIORITY_NORMAL, () -> {
-						sendMessagePart(type, content, size, buffer, pos + nbRead.intValue(), ondone);
-					}), ondone);
+					send.thenStart(new Task.Cpu.FromRunnable("Sending WebSocket message", Task.PRIORITY_NORMAL,
+						() -> sendMessagePart(type, content, size, buffer, pos + nbRead.intValue(), ondone)), ondone);
 				} else {
 					content.closeAsync();
-					send.listenInline(ondone);
+					send.onDone(ondone);
 				}
 			}
 			
@@ -364,7 +350,7 @@ public class WebSocketClient implements Closeable {
 		if (size == 0)
 			listener.ready(Integer.valueOf(0));
 		else
-			content.readFullyAsync(ByteBuffer.wrap(buffer)).listenInline(listener);
+			content.readFullyAsync(ByteBuffer.wrap(buffer)).listen(listener);
 	}
 	
 }

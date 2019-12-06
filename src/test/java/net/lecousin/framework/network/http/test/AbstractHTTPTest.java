@@ -11,7 +11,7 @@ import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.BeforeClass;
 
-public class AbstractHTTPTest extends AbstractNetworkTest {
+public abstract class AbstractHTTPTest extends AbstractNetworkTest {
 
 	@BeforeClass
 	public static void initHTTPTests() {

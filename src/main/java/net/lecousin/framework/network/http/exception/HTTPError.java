@@ -11,7 +11,7 @@ public class HTTPError extends Exception {
 		this.code = code;
 	}
 	
-	protected int code;
+	private final int code;
 	
 	public int getStatusCode() {
 		return code;

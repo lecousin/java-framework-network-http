@@ -1,7 +1,7 @@
 package net.lecousin.framework.network.http.client;
 
 import java.io.IOException;
-import java.net.URL;
+import java.net.URI;
 
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
@@ -11,10 +11,10 @@ import net.lecousin.framework.io.provider.IOProviderFrom;
 /**
  * IOProvider from a HTTP(S) URL.
  */
-public class HTTPIOProvider implements IOProviderFrom.Readable<URL> {
+public class HTTPIOProvider implements IOProviderFrom.Readable<URI> {
 
 	@Override
-	public IOProvider.Readable get(URL from) {
+	public IOProvider.Readable get(URI from) {
 		return new IOProvider.Readable() {
 
 			@Override

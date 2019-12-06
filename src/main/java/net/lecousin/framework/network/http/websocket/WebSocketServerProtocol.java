@@ -11,9 +11,9 @@ import java.util.LinkedList;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.synch.AsyncWork.AsyncWorkListener;
+import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
+import net.lecousin.framework.concurrent.async.CancelException;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
@@ -42,14 +42,14 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		 * @param requestedProtocols list of values found in Sec-WebSocket-Protocol, which can be empty
 		 * @return the selected protocol, null to do not send a chosen protocol
 		 */
-		public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols)
+		String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols)
 		throws HTTPResponseError;
 		
 		/** Called when a new text message is received. */
-		public void onTextMessage(WebSocketServerProtocol websocket, TCPServerClient client, String message);
+		void onTextMessage(WebSocketServerProtocol websocket, TCPServerClient client, String message);
 
 		/** Called when a new binary message is received. */
-		public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, IO.Readable.Seekable message);
+		void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, IO.Readable.Seekable message);
 	}
 	
 	/** Constructor. */
@@ -68,20 +68,20 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		String version = request.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Version");
 		if (key == null || key.trim().length() == 0) {
 			HTTPServerResponse response = new HTTPServerResponse();
-			response.forceClose = true;
+			response.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Key header", request, response);
 			return;
 		}
 		if (version == null || version.trim().length() == 0) {
 			HTTPServerResponse response = new HTTPServerResponse();
-			response.forceClose = true;
+			response.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 400, "Missing Sec-WebSocket-Version header", request, response);
 			return;
 		}
 		if (!version.trim().equals("13")) {
 			HTTPServerResponse resp = new HTTPServerResponse();
 			resp.addHeaderRaw("Sec-WebSocket-Version", "13");
-			resp.forceClose = true;
+			resp.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 400, "Unsupported WebSocket version", request, resp);
 			return;
 		}
@@ -96,7 +96,7 @@ public class WebSocketServerProtocol implements ServerProtocol {
 			protocol = listener.onClientConnected(this, client, requestedProtocols);
 		} catch (HTTPResponseError e) {
 			HTTPServerResponse response = new HTTPServerResponse();
-			response.forceClose = true;
+			response.setForceClose(true);
 			HTTPServerProtocol.sendError(client, e.getStatusCode(), e.getMessage(), request, response);
 			return;
 		}
@@ -110,7 +110,7 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		try {
 			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes()));
 		} catch (Exception e) {
-			resp.forceClose = true;
+			resp.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 500, e.getMessage(), request, resp);
 			return;
 		}
@@ -159,12 +159,11 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		return list;
 	}
 	
-	@SuppressWarnings("resource")
 	private void processMessage(TCPServerClient client, IOInMemoryOrFile message, int type) {
 		if (type == WebSocketDataFrame.TYPE_TEXT) {
 			// text message encoded with UTF-8
 			byte[] buf = new byte[(int)message.getSizeSync()];
-			message.readFullyAsync(0, ByteBuffer.wrap(buf)).listenInline(new AsyncWorkListener<Integer, IOException>() {
+			message.readFullyAsync(0, ByteBuffer.wrap(buf)).listen(new Listener<Integer, IOException>() {
 				@Override
 				public void ready(Integer result) {
 					new Task.Cpu<Void,NoException>("Processing WebSocket text message", Task.PRIORITY_NORMAL) {
@@ -226,7 +225,6 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	/** Send a text message to a list of clients. */
 	public static void sendTextMessage(List<TCPServerClient> clients, String message) {
 		byte[] text = message.getBytes(StandardCharsets.UTF_8);
-		@SuppressWarnings("resource")
 		ByteArrayIO io = new ByteArrayIO(text, "WebSocket message to send");
 		sendMessage(clients, 1, io, false);
 	}
@@ -259,7 +257,7 @@ public class WebSocketServerProtocol implements ServerProtocol {
 	private static void sendMessagePart(
 		List<TCPServerClient> clients, int type, IO.Readable content, long size, byte[] buffer, long pos, boolean closeAfter
 	) {
-		AsyncWorkListener<Integer, IOException> listener = new AsyncWorkListener<Integer, IOException>() {
+		Listener<Integer, IOException> listener = new Listener<Integer, IOException>() {
 			@Override
 			public void ready(Integer nbRead) {
 				boolean isLast;
@@ -279,7 +277,6 @@ public class WebSocketServerProtocol implements ServerProtocol {
 					DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
 				}
 				for (Iterator<TCPServerClient> it = clients.iterator(); it.hasNext(); ) {
-					@SuppressWarnings("resource")
 					TCPServerClient client = it.next();
 					try { client.send(ByteBuffer.wrap(b), false); }
 					catch (ClosedChannelException e) { it.remove(); }
@@ -289,7 +286,6 @@ public class WebSocketServerProtocol implements ServerProtocol {
 					return;
 				}
 				for (Iterator<TCPServerClient> it = clients.iterator(); it.hasNext(); ) {
-					@SuppressWarnings("resource")
 					TCPServerClient client = it.next();
 					try { client.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()), false); }
 					catch (ClosedChannelException e) { it.remove(); }
@@ -326,7 +322,7 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		if (size == 0)
 			listener.ready(Integer.valueOf(0));
 		else
-			content.readFullyAsync(ByteBuffer.wrap(buffer)).listenInline(listener);
+			content.readFullyAsync(ByteBuffer.wrap(buffer)).listen(listener);
 	}
 	
 }

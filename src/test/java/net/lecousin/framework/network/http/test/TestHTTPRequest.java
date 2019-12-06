@@ -11,7 +11,7 @@ import org.junit.Test;
 
 public class TestHTTPRequest extends LCCoreAbstractTest {
 
-	@Test(timeout=30000)
+	@Test
 	public void test() throws Exception {
 		Assert.assertEquals(Protocol.HTTP_1_0, Protocol.from("HTTP/1.0"));
 		Assert.assertEquals(Protocol.HTTP_1_1, Protocol.from("HTTP/1.1"));

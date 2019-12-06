@@ -60,8 +60,9 @@ public class WebSocketDataFrame {
 			} else if (payloadLength == 127) {
 				payloadLengthBits = 64;
 				payloadLength = 0;
-			} else
+			} else {
 				payloadLengthBits = 7;
+			}
 		}
 		while (payloadLengthBits == 16 && headerRead < 4) {
 			if (!data.hasRemaining()) return false;
@@ -94,8 +95,9 @@ public class WebSocketDataFrame {
 		if (maskPresent) {
 			for (int i = 0; i < nb; i++,messageRead++)
 				buf[i] = (byte)((buf[i] & 0xFF) ^ (maskValue[(int)(messageRead % 4)] & 0xFF));
-		} else
+		} else {
 			messageRead += nb;
+		}
 		message.writeSync(ByteBuffer.wrap(buf));
 		if (messageRead == payloadLength)
 			return endOfFrame();
