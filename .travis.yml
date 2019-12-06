@@ -1,6 +1,8 @@
 language: java
-
-script: mvn test verify -B
+jdk:
+  - oraclejdk8
+  - openjdk8
+dist: trusty
 
 addons:
   sonarcloud:
