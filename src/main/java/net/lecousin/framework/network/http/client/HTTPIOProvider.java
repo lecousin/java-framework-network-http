@@ -6,6 +6,8 @@ import java.net.URI;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFrom;
+import net.lecousin.framework.network.http.HTTPRequest;
+import net.lecousin.framework.network.http.HTTPRequest.Method;
 
 // skip checkstyle: AbbreviationAsWordInName
 /**
@@ -24,8 +26,9 @@ public class HTTPIOProvider implements IOProviderFrom.Readable<URI> {
 
 			@Override
 			public IO.Readable provideIOReadable(byte priority) throws IOException {
-				try {
-					return HTTPClientUtil.download(from.toString(), 10, 1024 * 1024);
+				try (HTTPClient client = HTTPClient.create(from)) {
+					return client.sendAndReceive(new HTTPRequest(Method.GET).setURI(from), true, false, 10)
+						.blockResult(0).getMIME().getBodyReceivedAsInput();
 				} catch (Exception e) {
 					throw IO.error(e);
 				}

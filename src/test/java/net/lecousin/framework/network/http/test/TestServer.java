@@ -8,9 +8,6 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
@@ -28,18 +25,20 @@ import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.entity.MultipartEntity;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.util.Pair;
+
+import org.junit.Assert;
+import org.junit.Test;
 
 public class TestServer extends AbstractHTTPTest {
 
@@ -89,40 +88,44 @@ public class TestServer extends AbstractHTTPTest {
 		Assert.assertEquals(10000, protocol.getReceiveDataTimeout());
 		protocol.getProcessor();
 		server.setProtocol(protocol);
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		int serverPort = ((InetSocketAddress)serverAddress).getPort();
-		// tests
-		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
-		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/test/get?status=200&test=hello", 0);
-		check(get, Method.GET, 200, "hello");
-		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/test/get?status=678", 0);
-		check(get, Method.GET, 678, null);
-		FormUrlEncodedEntity entity = new FormUrlEncodedEntity();
-		entity.add("myparam", "myvalue");
-		entity.add("Hello", "World!");
-		entity.add("test", "this is a test");
-		entity.add("test2", "this\nis\tanother+test");
-		AsyncSupplier<Pair<HTTPResponse,IO.Readable.Seekable>, IOException> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", entity);
-		res.blockThrow(0);
-		FormUrlEncodedEntity entity2 = new FormUrlEncodedEntity();
-		entity2.parse(res.getResult().getValue2(), StandardCharsets.UTF_8).blockThrow(0);
-		Assert.assertEquals(4, entity2.getParameters().size());
-		for (Pair<String, String> p : entity2.getParameters()) {
-			if ("myparam".equals(p.getValue1()))
-				Assert.assertEquals("myvalue", p.getValue2());
-			else if ("Hello".equals(p.getValue1()))
-				Assert.assertEquals("World!", p.getValue2());
-			else if ("test".equals(p.getValue1()))
-				Assert.assertEquals("this is a test", p.getValue2());
-			else if ("test2".equals(p.getValue1()))
-				Assert.assertEquals("this\nis\tanother+test", p.getValue2());
-			else
-				throw new AssertionError("Unexpected parameter " + p.getValue1());
+		InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+		
+		try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+			AsyncSupplier<HTTPResponse, IOException> get;
+			
+			get = client.sendAndReceive(new HTTPRequest(Method.GET).setPathAndQueryString("/test/get?status=200&test=hello"), true, false, 0);
+			check(get, 200, "hello");
+
+			get = client.sendAndReceive(new HTTPRequest(Method.GET).setPathAndQueryString("/test/get?status=678"), false, false, 0);
+			check(get, 678, null);
+			
+			FormUrlEncodedEntity entity = new FormUrlEncodedEntity();
+			entity.add("myparam", "myvalue");
+			entity.add("Hello", "World!");
+			entity.add("test", "this is a test");
+			entity.add("test2", "this\nis\tanother+test");
+			get = client.sendAndReceive(new HTTPRequest().setPathAndQueryString("/test/post?status=200").post(entity), true, true, 0);
+			get.blockThrow(0);
+			FormUrlEncodedEntity entity2 = new FormUrlEncodedEntity();
+			entity2.parse(get.getResult().getMIME().getBodyReceivedAsInput(), StandardCharsets.UTF_8).blockThrow(0);
+			Assert.assertEquals(4, entity2.getParameters().size());
+			for (Pair<String, String> p : entity2.getParameters()) {
+				if ("myparam".equals(p.getValue1()))
+					Assert.assertEquals("myvalue", p.getValue2());
+				else if ("Hello".equals(p.getValue1()))
+					Assert.assertEquals("World!", p.getValue2());
+				else if ("test".equals(p.getValue1()))
+					Assert.assertEquals("this is a test", p.getValue2());
+				else if ("test2".equals(p.getValue1()))
+					Assert.assertEquals("this\nis\tanother+test", p.getValue2());
+				else
+					throw new AssertionError("Unexpected parameter " + p.getValue1());
+			}
 		}
 		server.close();
 	}
 	
-	private static void check(AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> req, Method method, int status, String expectedXTest) throws Exception {
+	private static void check(AsyncSupplier<HTTPResponse, IOException> req, int status, String expectedXTest) throws Exception {
 		req.block(0);
 		if (req.hasError()) {
 			if ((status / 100) == 2 || !(req.getError() instanceof HTTPResponseError))
@@ -131,8 +134,7 @@ public class TestServer extends AbstractHTTPTest {
 			Assert.assertEquals("Status code", status, err.getStatusCode());
 			return;
 		}
-		Pair<HTTPResponse, IO.Readable.Seekable> p = req.getResult();
-		HTTPResponse response = p.getValue1();
+		HTTPResponse response = req.getResult();
 		if (expectedXTest != null)
 			Assert.assertEquals("X-Test header", expectedXTest, response.getMIME().getFirstHeaderRawValue("X-Test"));
 		else
@@ -206,16 +208,16 @@ public class TestServer extends AbstractHTTPTest {
 		client.receiveResponse(headers10, io10, 1024).blockThrow(0);
 		client.close();
 		
-		check(new AsyncSupplier<>(new Pair<>(headers1.getResult(), io1), null), Method.GET, 200, "hello");
-		check(new AsyncSupplier<>(new Pair<>(headers2.getResult(), io2), null), Method.GET, 602, null);
-		check(new AsyncSupplier<>(new Pair<>(headers3.getResult(), io3), null), Method.GET, 603, null);
-		check(new AsyncSupplier<>(new Pair<>(headers4.getResult(), io4), null), Method.GET, 604, null);
-		check(new AsyncSupplier<>(new Pair<>(headers5.getResult(), io5), null), Method.GET, 605, null);
-		check(new AsyncSupplier<>(new Pair<>(headers6.getResult(), io6), null), Method.GET, 606, null);
-		check(new AsyncSupplier<>(new Pair<>(headers7.getResult(), io7), null), Method.GET, 607, null);
-		check(new AsyncSupplier<>(new Pair<>(headers8.getResult(), io8), null), Method.GET, 608, null);
-		check(new AsyncSupplier<>(new Pair<>(headers9.getResult(), io9), null), Method.GET, 609, null);
-		check(new AsyncSupplier<>(new Pair<>(headers10.getResult(), io10), null), Method.GET, 610, null);
+		check(headers1, 200, "hello");
+		check(headers2, 602, null);
+		check(headers3, 603, null);
+		check(headers4, 604, null);
+		check(headers5, 605, null);
+		check(headers6, 606, null);
+		check(headers7, 607, null);
+		check(headers8, 608, null);
+		check(headers9, 609, null);
+		check(headers10, 610, null);
 
 		io1.close();
 		io2.close();
@@ -260,7 +262,7 @@ public class TestServer extends AbstractHTTPTest {
 		httpClient.close();
 		client.close();
 		
-		check(new AsyncSupplier<>(new Pair<>(headers.getResult(), io), null), Method.GET, 200, "world");
+		check(headers, 200, "world");
 
 		io.close();
 		server.close();
@@ -318,40 +320,35 @@ public class TestServer extends AbstractHTTPTest {
 		HTTPServerProtocol protocol = new HTTPServerProtocol(new RangeProcessor("net/lecousin/framework/network/http/test"));
 		protocol.enableRangeRequests();
 		server.setProtocol(protocol);
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		int serverPort = ((InetSocketAddress)serverAddress).getPort();
-		
-		MimeMessage message = new MimeMessage();
-		message.setHeaderRaw("Range", "bytes=-2");
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
-		Assert.assertEquals(206, p.getValue1().getStatusCode());
-		String s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("ce", s);
-		
-		message = new MimeMessage();
-		message.setHeaderRaw("Range", "bytes=3-6");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
-		Assert.assertEquals(206, p.getValue1().getStatusCode());
-		s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("s is", s);
-		
-		message = new MimeMessage();
-		message.setHeaderRaw("Range", "bytes=12-");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
-		Assert.assertEquals(206, p.getValue1().getStatusCode());
-		s = IOUtil.readFullyAsStringSync(p.getValue2(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("esource", s);
-		
-		message = new MimeMessage();
-		message.setHeaderRaw("Range", "bytes=3-6,12-");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, "http://localhost:" + serverPort + "/myresource.txt", message).blockResult(0);
-		Assert.assertEquals(206, p.getValue1().getStatusCode());
-		MultipartEntity multipart = MultipartEntity.from(p.getValue1().getMIME(), true).blockResult(0);
-		Assert.assertEquals(2, multipart.getParts().size());
-		s = IOUtil.readFullyAsStringSync(multipart.getParts().get(0).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("s is", s);
-		s = IOUtil.readFullyAsStringSync(multipart.getParts().get(1).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("esource", s);
+		InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+
+		try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+			HTTPResponse response;
+
+			response = client.sendAndReceive(new HTTPRequest(Method.GET).setPath("/myresource.txt").setHeaders(new MimeHeader("Range", "bytes=-2")), true, true, 0).blockResult(0);
+			Assert.assertEquals(206, response.getStatusCode());
+			String s = IOUtil.readFullyAsStringSync(response.getMIME().getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("ce", s);
+			
+			response = client.sendAndReceive(new HTTPRequest(Method.GET).setPath("/myresource.txt").setHeaders(new MimeHeader("Range", "bytes=3-6")), true, true, 0).blockResult(0);
+			Assert.assertEquals(206, response.getStatusCode());
+			s = IOUtil.readFullyAsStringSync(response.getMIME().getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("s is", s);
+			
+			response = client.sendAndReceive(new HTTPRequest(Method.GET).setPath("/myresource.txt").setHeaders(new MimeHeader("Range", "bytes=12-")), true, true, 0).blockResult(0);
+			Assert.assertEquals(206, response.getStatusCode());
+			s = IOUtil.readFullyAsStringSync(response.getMIME().getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("esource", s);
+			
+			response = client.sendAndReceive(new HTTPRequest(Method.GET).setPath("/myresource.txt").setHeaders(new MimeHeader("Range", "bytes=3-6,12-")), true, true, 0).blockResult(0);
+			Assert.assertEquals(206, response.getStatusCode());
+			MultipartEntity multipart = MultipartEntity.from(response.getMIME(), true).blockResult(0);
+			Assert.assertEquals(2, multipart.getParts().size());
+			s = IOUtil.readFullyAsStringSync(multipart.getParts().get(0).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("s is", s);
+			s = IOUtil.readFullyAsStringSync(multipart.getParts().get(1).getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("esource", s);
+		}
 		
 		server.close();
 	}
@@ -360,13 +357,13 @@ public class TestServer extends AbstractHTTPTest {
 	public void testStaticProcessor() throws Exception {
 		TCPServer server = new TCPServer();
 		server.setProtocol(new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test")));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		int serverPort = ((InetSocketAddress)serverAddress).getPort();
-
-		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> get;
-		get = HTTPClientUtil.GET("http://localhost:" + serverPort + "/myresource.txt", 0);
-		String s = IOUtil.readFullyAsStringSync(get.blockResult(0).getValue2(), StandardCharsets.US_ASCII);
-		Assert.assertEquals("This is my resource", s);
+		InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+		
+		try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+			HTTPResponse response = client.sendAndReceive(new HTTPRequest(Method.GET).setPath("/myresource.txt"), true, false, 0).blockResult(0);
+			String s = IOUtil.readFullyAsStringSync(response.getMIME().getBodyReceivedAsInput(), StandardCharsets.US_ASCII);
+			Assert.assertEquals("This is my resource", s);
+		}
 		
 		server.close();
 	}
@@ -375,23 +372,27 @@ public class TestServer extends AbstractHTTPTest {
 	public void testPostLargeBody() throws Exception {
 		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.INFO);
-		TCPServer server = new TCPServer();
-		server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
-		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		int serverPort = ((InetSocketAddress)serverAddress).getPort();
-
-		byte[] buf = new byte[10 * 1024 * 1024];
-		for (int i = 0; i < buf.length; ++i)
-			buf[i] = (byte)(i * 7 % 621);
-		Pair<HTTPResponse, IO.Readable.Seekable> res = HTTPClientUtil.sendAndReceiveFully(Method.POST, "http://localhost:" + serverPort + "/test/post?status=200", new ByteArrayIO(buf, "test")).blockResult(0);
-		PreBufferedReadable bio = new PreBufferedReadable(res.getValue2(), 8192, Task.PRIORITY_NORMAL, 16384, Task.PRIORITY_NORMAL, 10);
-		for (int i = 0; i < buf.length; ++i)
-			Assert.assertEquals(buf[i] & 0xFF, bio.read());
-		Assert.assertEquals(-1, bio.read());
-		bio.close();
-		server.close();
-		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
-		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
+		try {
+			TCPServer server = new TCPServer();
+			server.setProtocol(new HTTPServerProtocol(new TestProcessor()));
+			InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+	
+			byte[] buf = new byte[10 * 1024 * 1024];
+			for (int i = 0; i < buf.length; ++i)
+				buf[i] = (byte)(i * 7 % 621);
+			try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+				HTTPResponse response = client.sendAndReceive(new HTTPRequest().setPathAndQueryString("/test/post?status=200").post(new ByteArrayIO(buf, "test")), true, false, 0).blockResult(0);
+						PreBufferedReadable bio = new PreBufferedReadable(response.getMIME().getBodyReceivedAsInput(), 8192, Task.PRIORITY_NORMAL, 16384, Task.PRIORITY_NORMAL, 10);
+				for (int i = 0; i < buf.length; ++i)
+					Assert.assertEquals(buf[i] & 0xFF, bio.read());
+				Assert.assertEquals(-1, bio.read());
+				bio.close();
+			}
+			server.close();
+		} finally {
+			LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
+			LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
+		}
 	}
 	
 }

@@ -30,8 +30,10 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.http.HTTPRequest;
+import net.lecousin.framework.network.http.HTTPRequest.Method;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
@@ -422,52 +424,72 @@ public class TestWebSocket extends AbstractHTTPTest {
 	@Test
 	public void testErrors() throws Exception {
 		String url = "http://localhost:" + ((InetSocketAddress)serverAddress).getPort() + "/";
-		try {
-			HTTPClientUtil.GET(url, 0,
-				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
-				new MimeHeader("Upgrade", "websocket")
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "websocket")
+				),
+				true, false, 0
 			).blockResult(0);
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {
 			Assert.assertEquals(400, e.getStatusCode());
 		}
-		try {
-			HTTPClientUtil.GET(url, 0,
-				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
-				new MimeHeader("Upgrade", "websocket"),
-				new MimeHeader("Sec-WebSocket-Key", "hello")
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "websocket"),
+					new MimeHeader("Sec-WebSocket-Key", "hello")
+				),
+				true, false, 0
 			).blockResult(0);
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {
 			Assert.assertEquals(400, e.getStatusCode());
 		}
-		try {
-			HTTPClientUtil.GET(url, 0,
-				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
-				new MimeHeader("Upgrade", "websocket"),
-				new MimeHeader("Sec-WebSocket-Key", "")
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "websocket"),
+					new MimeHeader("Sec-WebSocket-Key", "")
+				),
+				true, false, 0
 			).blockResult(0);
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {
 			Assert.assertEquals(400, e.getStatusCode());
 		}
-		try {
-			HTTPClientUtil.GET(url, 0,
-				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
-				new MimeHeader("Upgrade", "websocket"),
-				new MimeHeader("Sec-WebSocket-Key", "hello"),
-				new MimeHeader("Sec-WebSocket-Version", "51")
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "websocket"),
+					new MimeHeader("Sec-WebSocket-Key", "hello"),
+					new MimeHeader("Sec-WebSocket-Version", "51")
+				),
+				true, false, 0
 			).blockResult(0);
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {
 			Assert.assertEquals(400, e.getStatusCode());
 		}
-		try {
-			HTTPClientUtil.GET(url, 0,
-				new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
-				new MimeHeader("Upgrade", "websocket"),
-				new MimeHeader("Sec-WebSocket-Key", "hello"),
-				new MimeHeader("Sec-WebSocket-Version", "")
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "websocket"),
+					new MimeHeader("Sec-WebSocket-Key", "hello"),
+					new MimeHeader("Sec-WebSocket-Version", "")
+				),
+				true, false, 0
 			).blockResult(0);
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {

@@ -17,39 +17,32 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-import org.junit.Assert;
-import org.junit.Test;
-
-import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.io.FileIO;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOAsInputStream;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
-import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.MemoryIO;
-import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.SocketOptionValue;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.client.HTTPClientUtil;
 import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
-import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.mime.MimeHeader;
-import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.Triple;
+
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class TestHttpClient extends AbstractHTTPTest {
 	
@@ -98,27 +91,19 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test
 	public void testHttpGetGoogle() throws Exception {
-		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet(HTTP_GOOGLE, 3);
-		result.blockThrow(0);
-		checkGetGoogle(result);
+		checkGetGoogle(testGet(HTTP_GOOGLE, 3));
 	}
 
 	@Test
 	public void testHttpsGetGoogle() throws Exception {
-		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result = testGet(HTTPS_GOOGLE, 3);
-		result.blockThrow(0);
-		checkGetGoogle(result);
+		checkGetGoogle(testGet(HTTPS_GOOGLE, 3));
 	}
 	
-	@SuppressWarnings("resource")
-	private static void checkGetGoogle(AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> result) throws IOException {
-		if (result.hasError())
-			throw result.getError();
-		Pair<HTTPResponse, IO.Readable.Seekable> p = result.getResult();
-		HTTPResponse resp = p.getValue1();
-		IO.Readable.Seekable body = p.getValue2();
+	private static void checkGetGoogle(AsyncSupplier<HTTPResponse, IOException> result) throws Exception {
+		HTTPResponse resp = result.blockResult(0);
 		if (resp.getStatusCode() != 200) // redirect to local domain
 			throw new AssertionError("Status received from Google: " + resp.getStatusCode());
+		IO.Readable body = resp.getMIME().getBodyReceivedAsInput();
 		// TODO
 		if (body.canStartReading().hasError())
 			throw body.canStartReading().getError();
@@ -126,9 +111,9 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test
 	public void testHttpBinGet() throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"get", new MimeHeader("X-Test", "a test"));
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> get = testGetWithRequest(HTTP_BIN+"get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTPS_BIN+"get");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), HTTPS_BIN+"get");
 		
 		HTTPClient client = HTTPClient.create(new URL(HTTP_BIN+"get"));
 		HTTPRequest req = new HTTPRequest(Method.GET, "/get");
@@ -137,15 +122,15 @@ public class TestHttpClient extends AbstractHTTPTest {
 		client.sendRequest(req).blockThrow(0);
 		System.out.println("Request sent");
 		MemoryIO io = new MemoryIO(2048, "test");
-		AsyncSupplier<Pair<HTTPResponse, OutputToInput>, IOException> headerListener = new AsyncSupplier<>();
-		AsyncSupplier<HTTPResponse,IOException> outputListener = new AsyncSupplier<>();
+		AsyncSupplier<HTTPResponse, IOException> headerListener = new AsyncSupplier<>();
+		AsyncSupplier<HTTPResponse, IOException> outputListener = new AsyncSupplier<>();
 		client.receiveResponse("test", io, 1024, headerListener, outputListener);
 		System.out.println("Waiting for headers");
 		headerListener.blockThrow(0);
 		System.out.println("Waiting for body");
 		outputListener.blockThrow(0);
 		System.out.println("Response received");
-		checkHttpBin(req, outputListener.getResult(), headerListener.getResult().getValue2(), HTTPS_BIN+"get");
+		checkHttpBin(req, outputListener.getResult(), HTTPS_BIN+"get");
 		io.close();
 		client.close();
 
@@ -163,7 +148,7 @@ public class TestHttpClient extends AbstractHTTPTest {
 		result.blockThrow(0);
 		System.out.println("Response received");
 		io.seekSync(SeekType.FROM_BEGINNING, 0);
-		checkHttpBin(req, headersListener.getResult(), io, HTTPS_BIN+"get");
+		checkHttpBin(req, headersListener.getResult(), HTTPS_BIN+"get");
 		io.close();
 		client.close();
 
@@ -173,44 +158,49 @@ public class TestHttpClient extends AbstractHTTPTest {
 		System.out.println("Sending request");
 		client.sendRequest(req).blockThrow(0);
 		System.out.println("Request sent");
-		AsyncSupplier<Pair<HTTPResponse, MemoryIO>, IOException> bodyReceived = new AsyncSupplier<>();
+		AsyncSupplier<HTTPResponse, IOException> bodyReceived = new AsyncSupplier<>();
 		client.receiveResponse(response -> new Pair<>(new MemoryIO(1024, "test"), Integer.valueOf(1024)), bodyReceived);
 		System.out.println("Waiting for response");
-		Pair<HTTPResponse, MemoryIO> p = bodyReceived.blockResult(0);
+		HTTPResponse resp = bodyReceived.blockResult(0);
 		System.out.println("Response received");
-		p.getValue2().seekSync(SeekType.FROM_BEGINNING, 0);
-		checkHttpBin(req, p.getValue1(), p.getValue2(), HTTPS_BIN+"get");
+		io = (MemoryIO)resp.getMIME().getBodyReceivedAsInput();
+		io.seekSync(SeekType.FROM_BEGINNING, 0);
+		checkHttpBin(req, resp, HTTPS_BIN+"get");
 		io.close();
 		client.close();
 	}
 	
 	@Test
 	public void testHttpsBinGet() throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTPS_BIN+"get", new MimeHeader("X-Test", "a test"));
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> get = testGetWithRequest(HTTPS_BIN+"get", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTPS_BIN+"get");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), HTTPS_BIN+"get");
 	}
 	
 	@Test
 	public void testHttpBinRedirect() throws Exception {
 		File file = File.createTempFile("test", "http");
 		file.deleteOnExit();
-		Pair<HTTPResponse, FileIO.ReadWrite> p1 = HTTPClientUtil.GET(HTTP_BIN+"redirect/2", file, 3).blockResult(0);
-		checkHttpBin(null, p1.getValue1(), p1.getValue2(), HTTPS_BIN+"get");
+		URI uri = new URI(HTTP_BIN + "redirect/2");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri);
+			Pair<HTTPResponse, FileIO.ReadWrite> p1 = client.download(request, file, 3).blockResult(0);
+			checkHttpBin(request, p1.getValue1(), HTTPS_BIN+"get");
+		}
 	}
 	
 	@Test
 	public void testHttpBinGetGzip() throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"gzip", new MimeHeader("X-Test", "a test"));
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> get = testGetWithRequest(HTTP_BIN+"gzip", new MimeHeader("X-Test", "a test"));
 		get.blockThrow(0);
-		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), get.getResult().getValue3(), HTTP_BIN+"gzip");
+		checkHttpBin(get.getResult().getValue1(), get.getResult().getValue2(), HTTP_BIN+"gzip");
 	}
 	
 	@Test
 	public void testHttpBinGetBytes() throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"bytes/15000");
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> get = testGetWithRequest(HTTP_BIN+"bytes/15000");
 		get.blockThrow(0);
-		IO.Readable.Seekable data = get.getResult().getValue3();
+		IO.Readable data = get.getResult().getValue2().getMIME().getBodyReceivedAsInput();
 		byte[] buf = new byte[20000];
 		int nb = data.readFullyAsync(ByteBuffer.wrap(buf)).blockResult(0).intValue();
 		Assert.assertEquals(15000, nb);
@@ -219,16 +209,15 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test
 	public void testHttpBinGetBytesChunked() throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> get = testGetWithRequest(HTTP_BIN+"stream-bytes/15000");
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> get = testGetWithRequest(HTTP_BIN+"stream-bytes/15000");
 		get.blockThrow(0);
-		IO.Readable.Seekable data = get.getResult().getValue3();
+		IO.Readable data = get.getResult().getValue2().getMIME().getBodyReceivedAsInput();
 		byte[] buf = new byte[20000];
 		int nb = data.readFullyAsync(ByteBuffer.wrap(buf)).blockResult(0).intValue();
 		Assert.assertEquals(15000, nb);
 		data.close();
 	}
 	
-	@SuppressWarnings("resource")
 	@Test
 	public void testHttpBinPost() throws Exception {
 		FormDataEntity form1 = new FormDataEntity();
@@ -239,12 +228,14 @@ public class TestHttpClient extends AbstractHTTPTest {
 		FormDataEntity form3 = new FormDataEntity();
 		form3.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
 		form3.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> send;
+		HTTPResponse response;
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form1);
-		send.blockThrow(0);
+		URI uri = new URI(HTTP_BIN+"post");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			response = client.sendAndReceive(new HTTPRequest().setURI(uri).post(form1), true, true, 0).blockResult(0);
+		}
 		JSONParser parser = new JSONParser();
-		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
+		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(response.getMIME().getBodyReceivedAsInput(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		JSONObject json = (JSONObject)o;
 		o = json.get("form");
@@ -256,10 +247,11 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Assert.assertTrue(o instanceof String);
 		Assert.assertEquals("valueofmyfield", o);
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form2);
-		send.blockThrow(0);
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			response = client.sendAndReceive(new HTTPRequest().setURI(uri).post(form2), true, true, 0).blockResult(0);
+		}
 		parser = new JSONParser();
-		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
+		o = parser.parse(new InputStreamReader(IOAsInputStream.get(response.getMIME().getBodyReceivedAsInput(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		json = (JSONObject)o;
 		o = json.get("form");
@@ -275,10 +267,11 @@ public class TestHttpClient extends AbstractHTTPTest {
 		Assert.assertTrue(o instanceof String);
 		Assert.assertEquals("a value with a = and spaces", o);
 
-		send = HTTPClientUtil.sendAndReceiveFully(Method.POST, HTTP_BIN+"post", form3);
-		send.blockThrow(0);
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			response = client.sendAndReceive(new HTTPRequest().setURI(uri).post(form3), true, true, 0).blockResult(0);
+		}
 		parser = new JSONParser();
-		o = parser.parse(new InputStreamReader(IOAsInputStream.get(send.getResult().getValue2(), false)));
+		o = parser.parse(new InputStreamReader(IOAsInputStream.get(response.getMIME().getBodyReceivedAsInput(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		json = (JSONObject)o;
 		o = json.get("form");
@@ -298,26 +291,42 @@ public class TestHttpClient extends AbstractHTTPTest {
 	
 	@Test
 	public void testSendAndReceiveHeaders() throws Exception {
-		Pair<HTTPClient, HTTPResponse> p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, HTTP_BIN+"get", (IO.Readable)null).blockResult(0);
-		p.getValue1().close();
-		p = HTTPClientUtil.sendAndReceiveHeaders(Method.GET, HTTP_BIN+"get", new MimeMessage()).blockResult(0);
-		p.getValue1().close();
+		URI uri = new URI(HTTP_BIN + "get");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			client.sendAndReceiveHeaders(new HTTPRequest(Method.GET).setURI(uri)).blockResult(0);
+		}
 	}
 	
 	@Test
 	public void testSendAndReceive() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceive(Method.GET, HTTP_BIN+"get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTPS_BIN+"get");
-		p = HTTPClientUtil.sendAndReceive(Method.GET, HTTP_BIN+"get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTPS_BIN+"get");
+		URI uri = new URI(HTTP_BIN + "get");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri).setHeaders(new MimeHeader("X-Test", "a test"));
+			HTTPResponse response = client.sendAndReceive(request).blockResult(0);
+			checkHttpBin(request, response, uri.toString());
+		}
+		uri = new URI(HTTPS_BIN + "get");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri).setHeaders(new MimeHeader("X-Test", "a test"));
+			HTTPResponse response = client.sendAndReceive(request).blockResult(0);
+			checkHttpBin(request, response, uri.toString());
+		}
 	}
 	
 	@Test
 	public void testSendAndReceiveFully() throws Exception {
-		Pair<HTTPResponse, IO.Readable.Seekable> p = HTTPClientUtil.sendAndReceiveFully(Method.GET, HTTP_BIN+"get", (IO.Readable)null, new MimeHeader("X-Test", "a test")).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTPS_BIN+"get");
-		p = HTTPClientUtil.sendAndReceiveFully(Method.GET, HTTP_BIN+"get", new MimeMessage(new MimeHeader("X-Test", "a test"))).blockResult(0);
-		checkHttpBin(null, p.getValue1(), p.getValue2(), HTTPS_BIN+"get");
+		URI uri = new URI(HTTP_BIN + "get");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri).setHeaders(new MimeHeader("X-Test", "a test"));
+			HTTPResponse response = client.sendAndReceive(request, true, true, 3).blockResult(0);
+			checkHttpBin(request, response, uri.toString());
+		}
+		uri = new URI(HTTPS_BIN + "get");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri).setHeaders(new MimeHeader("X-Test", "a test"));
+			HTTPResponse response = client.sendAndReceive(request, true, true, 3).blockResult(0);
+			checkHttpBin(request, response, uri.toString());
+		}
 	}
 	
 	@Test
@@ -355,14 +364,15 @@ public class TestHttpClient extends AbstractHTTPTest {
 		client.close();
 	}
 	
-	@SuppressWarnings("unused")
-	private static void checkHttpBin(HTTPRequest request, HTTPResponse response, IO.Readable.Seekable content, String url) throws Exception {
+	private static void checkHttpBin(HTTPRequest request, HTTPResponse response, String url) throws Exception {
 		JSONParser parser = new JSONParser();
-		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(content, false)));
+		Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(response.getMIME().getBodyReceivedAsInput(), false)));
 		Assert.assertTrue(o instanceof JSONObject);
 		JSONObject json = (JSONObject)o;
-		if (json.containsKey("url"))
-			Assert.assertEquals(url, json.get("url"));
+		if (json.containsKey("url")) {
+			String u = (String)json.get("url");
+			Assert.assertEquals(url.substring(url.indexOf(':')), u.substring(u.indexOf(':')));
+		}
 		o = json.get("headers");
 		Assert.assertTrue(o instanceof JSONObject);
 		if (request != null)
@@ -391,55 +401,24 @@ public class TestHttpClient extends AbstractHTTPTest {
 			Assert.assertTrue("Header received: " + key, request.getMIME().hasHeader(key));
 	}
 	
-	private static AsyncSupplier<Pair<HTTPResponse, IO.Readable.Seekable>, IOException> testGet(String url, int maxRedirects, MimeHeader... headers) {
-		System.out.println("Requesting HTTP server with GET method: " + url);
-		try { return HTTPClientUtil.GETfully(url, maxRedirects, headers); }
-		catch (Throwable t) {
-			return new AsyncSupplier<>(null, new IOException("Error", t));
-		}
-	}
-	
-	@SuppressWarnings("resource")
-	private static AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> testGetWithRequest(String url, MimeHeader... headers) throws Exception {
-		AsyncSupplier<Triple<HTTPRequest, HTTPResponse, IO.Readable.Seekable>, IOException> result = new AsyncSupplier<>();
+	private static AsyncSupplier<HTTPResponse, IOException> testGet(String url, int maxRedirects, MimeHeader... headers) throws Exception {
 		System.out.println("Requesting HTTP server with GET method: " + url);
 		URI uri = new URI(url);
 		HTTPClient client = HTTPClient.create(uri);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTPClientUtil.getRequestPath(uri));
-		for (int i = 0; i < headers.length; ++i)
-			request.getMIME().addHeader(headers[i]);
-		client.sendRequest(request).onDone(
-			() -> {
-				client.receiveResponseHeader().onDone(
-					(response) -> {
-						if ((response.getStatusCode() / 100) != 2) {
-							result.unblockError(new HTTPResponseError(response.getStatusCode(), response.getStatusMessage()));
-							client.close();
-							return;
-						}
-						IOInMemoryOrFile io = new IOInMemoryOrFile(1024*1024, Task.PRIORITY_NORMAL, url.toString());
-						OutputToInput output = new OutputToInput(io, url.toString());
-						client.receiveBody(response, output, 64 * 1024).onDone(
-							() -> {
-								output.endOfData();
-								result.unblockSuccess(new Triple<>(request, response, output));
-								client.close();
-							},
-							(error) -> {
-								result.error(error);
-								client.close();
-							},
-							(cancel) -> {
-								result.cancel(cancel);
-								client.close();
-							}
-						);
-					},
-					result
-				);
-			},
-			result
-		);
+		AsyncSupplier<HTTPResponse, IOException> result = client.sendAndReceive(new HTTPRequest(Method.GET).setURI(uri).setHeaders(headers), true, true, maxRedirects);
+		result.onDone(client::close);
+		return result;
+	}
+	
+	private static AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> testGetWithRequest(String url, MimeHeader... headers) throws Exception {
+		AsyncSupplier<Pair<HTTPRequest, HTTPResponse>, IOException> result = new AsyncSupplier<>();
+		System.out.println("Requesting HTTP server with GET method: " + url);
+		URI uri = new URI(url);
+		HTTPClient client = HTTPClient.create(uri);
+		HTTPRequest request = new HTTPRequest(Method.GET).setURI(uri).setHeaders(headers);
+		client.sendAndReceive(request, true, true, 0)
+			.onDone(response -> result.unblockSuccess(new Pair<>(request, response)), result);
+		result.onDone(client::close);
 		return result;
 	}
 	

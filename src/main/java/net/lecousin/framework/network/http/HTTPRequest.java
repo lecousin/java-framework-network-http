@@ -1,14 +1,18 @@
 package net.lecousin.framework.network.http;
 
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineException;
 import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
@@ -16,7 +20,6 @@ import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolExce
 import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
-import net.lecousin.framework.util.IString;
 import net.lecousin.framework.util.Pair;
 
 /** HTTP request. */
@@ -67,6 +70,11 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	}
 	
 	/** Constructor. */
+	public HTTPRequest(Method method) {
+		this.method = method;
+	}
+	
+	/** Constructor. */
 	public HTTPRequest(Method method, String path) {
 		this.method = method;
 		this.path = path;
@@ -81,33 +89,75 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	
 	// Command line getters and setters
 	
-	public Method getMethod() { return method; }
+	public Method getMethod() {
+		return method;
+	}
 	
-	public String getPath() { return path; }
+	public String getPath() {
+		return path;
+	}
 	
-	public Map<String,String> getParameters() { return parameters; }
+	public Map<String,String> getParameters() {
+		return parameters;
+	}
 	
-	public String getParameter(String name) { return parameters != null ? parameters.get(name) : null; }
+	/** Return a query parameter or null if not set. */
+	public String getParameter(String name) {
+		return parameters != null ? parameters.get(name) : null;
+	}
 	
-	public Protocol getProtocol() { return protocol; }
+	public Protocol getProtocol() {
+		return protocol;
+	}
 	
-	public boolean isCommandSet() { return method != null && path != null && protocol != null; }
+	public boolean isCommandSet() {
+		return method != null && path != null && protocol != null;
+	}
 	
-	public void setMethod(Method method) { this.method = method; }
-	
-	public void setPath(String path) { this.path = path; }
-	
-	public void setProtocol(Protocol protocol) { this.protocol = protocol; }
-	
-	/** Set the command line. */
-	public void setCommand(Method method, String path, Protocol protocol) {
+	/** Set the method to use. */
+	public HTTPRequest setMethod(Method method) {
 		this.method = method;
+		return this;
+	}
+	
+	/** Set the path. */
+	public HTTPRequest setPath(String path) {
 		this.path = path;
+		return this;
+	}
+	
+	/** Set the path. */
+	public HTTPRequest setPathAndQueryString(String pathAndQuery) {
+		path = pathAndQuery;
+		parameters = new HashMap<>();
+		int i = path.indexOf('?');
+		if (i >= 0) {
+			setQueryString(path.substring(i + 1));
+			if (i == 0)
+				path = "";
+			else
+				path = path.substring(0, i);
+		}
+
+		return this;
+	}
+	
+	/** Set the protocol version. */
+	public HTTPRequest setProtocol(Protocol protocol) {
 		this.protocol = protocol;
+		return this;
 	}
 	
 	/** Set the command line. */
-	public void setCommand(String commandLine)
+	public HTTPRequest setCommand(Method method, String path, Protocol protocol) {
+		this.method = method;
+		this.path = path;
+		this.protocol = protocol;
+		return this;
+	}
+	
+	/** Set the command line. */
+	public HTTPRequest setCommand(String commandLine)
 	throws InvalidHTTPCommandLineException, InvalidHTTPMethodException, UnsupportedHTTPProtocolException {
 		int i = commandLine.indexOf(' ');
 		if (i <= 0) throw new InvalidHTTPCommandLineException(commandLine);
@@ -118,25 +168,17 @@ public class HTTPRequest extends AbstractAttributesContainer {
 		commandLine = commandLine.substring(i + 1);
 		i = commandLine.indexOf(' ');
 		if (i <= 0) throw new InvalidHTTPCommandLineException(commandLine);
-		path = commandLine.substring(0, i);
+		setPathAndQueryString(commandLine.substring(0, i));
 		protocol = Protocol.from(commandLine.substring(i + 1).trim());
 		if (protocol == null) throw new UnsupportedHTTPProtocolException(commandLine.substring(i + 1).trim());
 		
-		parameters = new HashMap<>();
-		i = path.indexOf('?');
-		if (i >= 0) {
-			setQueryString(path.substring(i + 1));
-			if (i == 0)
-				path = "";
-			else
-				path = path.substring(0, i);
-		}
+		return this;
 	}
 	
 	/** Set the query string in the path. */
-	public void setQueryString(String s) {
+	public HTTPRequest setQueryString(String s) {
 		if (s == null || s.length() == 0)
-			return;
+			return this;
 		String[] params = s.split("&");
 		if (parameters == null)
 			parameters = new HashMap<>();
@@ -145,71 +187,63 @@ public class HTTPRequest extends AbstractAttributesContainer {
 			if (i < 0)
 				parameters.put(p, "");
 			else
-				try { parameters.put(URLDecoder.decode(p.substring(0, i), "UTF-8"), URLDecoder.decode(p.substring(i + 1), "UTF-8")); }
-				catch (UnsupportedEncodingException e) {
+				try {
+					parameters.put(
+						URLDecoder.decode(p.substring(0, i), StandardCharsets.UTF_8.name()),
+						URLDecoder.decode(p.substring(i + 1), StandardCharsets.UTF_8.name())
+					);
+				} catch (UnsupportedEncodingException e) {
 					// cannot happen... utf-8 is always supported
 				}
 		}
+		return this;
+	}
+	
+	/** Add a query parameter in the URL. */
+	public HTTPRequest addParameter(String name, String value) {
+		if (parameters == null)
+			parameters = new HashMap<>();
+		parameters.put(name, value);
+		return this;
+	}
+	
+	/** Set the path and query string from the given URI. */
+	public HTTPRequest setURI(URI uri) {
+		return setPath(uri.getRawPath()).setQueryString(uri.getRawQuery());
 	}
 	
 	/** Generate path with query string. */
-	public void generateFullPath(StringBuilder s) {
-		s.append(path);
-		if (parameters == null || parameters.isEmpty())
-			return;
-		s.append('?');
-		boolean first = true;
-		for (Map.Entry<String,String> param : parameters.entrySet()) {
-			if (first) first = false;
-			else s.append('&');
-			try {
-				s.append(URLEncoder.encode(param.getKey(), "UTF-8"));
+	public void generateFullPath(Appendable s) {
+		try {
+			s.append(path);
+			if (parameters == null || parameters.isEmpty())
+				return;
+			s.append('?');
+			boolean first = true;
+			for (Map.Entry<String,String> param : parameters.entrySet()) {
+				if (first) first = false;
+				else s.append('&');
+				s.append(URLEncoder.encode(param.getKey(), StandardCharsets.UTF_8.name()));
 				s.append('=');
-				s.append(URLEncoder.encode(param.getValue(), "UTF-8"));
-			} catch (UnsupportedEncodingException e) {
-				// cannot happen... utf-8 is always supported
+				s.append(URLEncoder.encode(param.getValue(), StandardCharsets.UTF_8.name()));
 			}
-		}
-	}
-	
-	/** Generate path with query string. */
-	public void generateFullPath(IString s) {
-		s.append(path);
-		if (parameters == null || parameters.isEmpty())
-			return;
-		s.append('?');
-		boolean first = true;
-		for (Map.Entry<String,String> param : parameters.entrySet()) {
-			if (first) first = false;
-			else s.append('&');
-			try {
-				s.append(URLEncoder.encode(param.getKey(), "UTF-8"));
-				s.append('=');
-				s.append(URLEncoder.encode(param.getValue(), "UTF-8"));
-			} catch (UnsupportedEncodingException e) {
-				// cannot happen... utf-8 is always supported
-			}
+		} catch (IOException e) {
+			// does not happen if used with StringBuilder or IString
 		}
 	}
 	
 	/** Generate the command line. */
-	public void generateCommandLine(StringBuilder s) {
-		if (method == null)
-			s.append("NULL ");
-		else
-			s.append(method.toString()).append(' ');
-		generateFullPath(s);
-		s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
-	}
-	
-	/** Generate the command line. */
-	public void generateCommandLine(IString s) {
-		if (method == null)
-			s.append("NULL ");
-		else
-			s.append(method.toString()).append(' ');
-		generateFullPath(s);
-		s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
+	public void generateCommandLine(Appendable s) {
+		try {
+			if (method == null)
+				s.append("NULL ");
+			else
+				s.append(method.toString()).append(' ');
+			generateFullPath(s);
+			s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
+		} catch (IOException e) {
+			// does not happen if used with StringBuilder or IString
+		}
 	}
 	
 	/** Generate the command line. */
@@ -225,15 +259,37 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	
 	public MimeMessage getMIME() { return mime; }
 	
+	/** Set multiple headers to the MIME message. */
+	public HTTPRequest setHeaders(MimeHeader... headers) {
+		for (MimeHeader h : headers)
+			mime.setHeader(h);
+		return this;
+	}
+	
+	/** Set headers and body from the given message. */
+	public HTTPRequest setHeadersAndContent(MimeMessage message) {
+		for (MimeHeader header : message.getHeaders())
+			mime.setHeader(header);
+		mime.setBodyToSend(message.getBodyToSend());
+		return this;
+	}
+	
+	/** Set the body to send. */
+	public HTTPRequest setBody(IO.Readable body) {
+		mime.setBodyToSend(body);
+		return this;
+	}
+	
 	// Trailer headers
 	
 	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
 	
 	/** Add a trailer MIME header. */
-	public void addTrailerHeader(String headerName, Supplier<String> supplier) {
+	public HTTPRequest addTrailerHeader(String headerName, Supplier<String> supplier) {
 		if (trailerHeaderSuppliers == null)
 			trailerHeaderSuppliers = new HashMap<>(5);
 		trailerHeaderSuppliers.put(headerName, supplier);
+		return this;
 	}
 	
 	/** Get the trailer header supplier. */
@@ -258,34 +314,37 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	
 	// Utilities
 	
+	/** Set the method to POST and body to send. */
+	public HTTPRequest post(IO.Readable body) {
+		setMethod(Method.POST);
+		mime.setBodyToSend(body);
+		return this;
+	}
+	
+	/** Set the method to POST and body to send. */
+	public HTTPRequest post(MimeMessage body) {
+		return setMethod(Method.POST).setHeadersAndContent(body);
+	}
+	
 	/** Return true if a body is expected to be sent. */
 	public boolean isExpectingBody() {
 		if (Method.GET.equals(method)) return false;
 		Long size = mime.getContentLength();
-		if (size != null) {
-			if (size.longValue() == 0) return false;
-			return true;
-		}
+		if (size != null)
+			return size.longValue() != 0;
 		String s = mime.getFirstHeaderRawValue(MimeMessage.TRANSFER_ENCODING);
 		if (s == null) s = mime.getFirstHeaderRawValue(MimeMessage.CONTENT_TRANSFER_ENCODING);
-		if (s == null || s.length() == 0)
-			return false;
-		return true;
+		return (s != null && s.length() != 0);
 	}
 	
 	/** Return true if the connection should be persistent. */
 	public boolean isConnectionPersistent() {
 		if (protocol == null) return false;
-		switch (protocol) {
-		case HTTP_1_1: {
+		if (Protocol.HTTP_1_1.equals(protocol)) {
 			String s = mime.getFirstHeaderRawValue(MimeMessage.CONNECTION);
-			if (s == null) return true;
-			if (s.equalsIgnoreCase("close")) return false;
-			return true;
+			return s == null || !s.equalsIgnoreCase("close");
 		}
-		default:
-			return false;
-		}
+		return false;
 	}
 	
 	// Convenient methods

@@ -1,6 +1,7 @@
 package net.lecousin.framework.network.http.client;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
@@ -11,14 +12,21 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
+import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
 import net.lecousin.framework.concurrent.async.CancelException;
 import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.tasks.drives.RemoveFileTask;
+import net.lecousin.framework.io.FileIO;
 import net.lecousin.framework.io.IO;
+import net.lecousin.framework.io.IO.Seekable.SeekType;
+import net.lecousin.framework.io.buffering.ByteArrayIO;
+import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
@@ -28,6 +36,7 @@ import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
+import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
@@ -96,6 +105,28 @@ public class HTTPClient implements Closeable {
 		return create(url.toURI());
 	}
 	
+	/** Create a client to the given address. If this config is null, the default is used. */
+	public static HTTPClient create(InetSocketAddress address, boolean https, HTTPClientConfiguration config) throws GeneralSecurityException {
+		String hostname = address.getHostString();
+		int port = address.getPort();
+		if (config == null) config = HTTPClientConfiguration.defaultConfiguration;
+		
+		TCPClient client;
+		if (!https)
+			client = new TCPClient();
+		else {
+			client = config.getSSLContext() != null ? new SSLClient(config.getSSLContext()) : new SSLClient();
+			((SSLClient)client).setHostNames(hostname);
+		}
+		
+		return new HTTPClient(client, hostname, port, config);
+	}
+
+	/** Create a client to the given address using the default configuration. */
+	public static HTTPClient create(InetSocketAddress address, boolean https) throws GeneralSecurityException {
+		return create(address, https, null);
+	}
+	
 	protected TCPClient client;
 	protected String hostname;
 	protected int port;
@@ -113,6 +144,50 @@ public class HTTPClient implements Closeable {
 	/** Return the port given before connection occurs. */
 	public int getRequestedPort() {
 		return port;
+	}
+	
+	/** Generate the URL (without query string) for the given request. */
+	public String generateURL(HTTPRequest request) {
+		StringBuilder url = new StringBuilder(128);
+		if (client instanceof SSLClient)
+			url.append("https://");
+		else
+			url.append("http://");
+		url.append(hostname);
+		if (client instanceof SSLClient) {
+			if (port != DEFAULT_HTTPS_PORT)
+				url.append(':').append(port);
+		} else if (port != DEFAULT_HTTP_PORT) {
+			url.append(':').append(port);
+		}
+		url.append(request.getPath());
+		return url.toString();
+	}
+	
+	/** Return true if the protocol, the hostname and the port are compatible with this client. */
+	public boolean isCompatible(URI uri) {
+		String protocol = uri.getScheme();
+		if (protocol != null) {
+			protocol = protocol.toLowerCase();
+			if (client instanceof SSLClient) {
+				if (!"https".equals(protocol))
+					return false;
+			}
+			if (!"http".equals(protocol))
+				return false;
+		}
+
+		if (!this.hostname.equals(uri.getHost()))
+			return false;
+		
+		int port = uri.getPort();
+		if (port <= 0) {
+			if (client instanceof SSLClient)
+				port = DEFAULT_HTTPS_PORT;
+			else
+				port = DEFAULT_HTTP_PORT;
+		}
+		return port == this.port;
 	}
 	
 	/**
@@ -133,90 +208,7 @@ public class HTTPClient implements Closeable {
 	 */
 	public Async<IOException> sendRequest(HTTPRequest request) {
 		// connection
-		Async<IOException> connect = null;
-		if (!client.isClosed())
-			connect = new Async<>(true);
-		else {
-			// get proxy if any
-			ProxySelector proxySelector = config.getProxySelector();
-			Proxy proxy = null;
-			if (proxySelector != null) {
-				StringBuilder url = new StringBuilder(128);
-				if (client instanceof SSLClient)
-					url.append("https://");
-				else
-					url.append("http://");
-				url.append(hostname);
-				if (client instanceof SSLClient) {
-					if (port != 443)
-						url.append(':').append(port);
-				} else if (port != 80) {
-					url.append(':').append(port);
-				}
-				url.append(request.getPath());
-				URI uri = null;
-				try {
-					uri = new URI(url.toString());
-					List<Proxy> proxies = proxySelector.select(uri);
-					for (Proxy p : proxies) {
-						if (Proxy.Type.HTTP.equals(p.type())) {
-							proxy = p;
-							break;
-						}
-					}
-				} catch (Exception e) {
-					// ignore
-				}
-				if (proxy != null) {
-					InetSocketAddress inet = (InetSocketAddress)proxy.address();
-					//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
-					if (client instanceof SSLClient) {
-						// we have to create a HTTP tunnel with the proxy
-						TCPClient tunnelClient = new TCPClient();
-						Async<IOException> tunnelConnect =
-							tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-						connect = new Async<>();
-						Async<IOException> result = connect;
-						// prepare the CONNECT request
-						HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-						connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
-						UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
-						connectRequest.generateCommandLine(s);
-						s.append("\r\n");
-						connectRequest.getMIME().appendHeadersTo(s);
-						s.append("\r\n");
-						ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
-						tunnelConnect.onDone(() -> {
-							IAsync<IOException> send = tunnelClient.send(data);
-							send.onDone(() -> {
-								AsyncSupplier<HTTPResponse, IOException> response =
-									HTTPResponse.receive(tunnelClient, config.getReceiveTimeout());
-								response.onDone(() -> {
-									HTTPResponse resp = response.getResult();
-									if (resp.getStatusCode() != 200) {
-										tunnelClient.close();
-										result.error(new HTTPResponseError(
-											resp.getStatusCode(), resp.getStatusMessage()));
-										return;
-									}
-									// tunnel connection established
-									// replace connection of SSLClient by the tunnel
-									((SSLClient)client).tunnelConnected(tunnelClient, result, config.getReceiveTimeout());
-								}, result);
-							}, result);
-						}, result);
-					} else {
-						connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-						request.setPath(url.toString());
-					}
-				}
-			}
-			// direct connection
-			if (connect == null)
-				connect = client.connect(
-					new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
-		}
-		
+		Async<IOException> connect = connect(request);
 		if (connect.isDone() && !connect.isSuccessful()) return connect;
 		Async<IOException> result = new Async<>();
 		
@@ -232,7 +224,8 @@ public class HTTPClient implements Closeable {
 			result.onDone(body::closeAsync);
 			if (body instanceof IO.KnownSize) {
 				try {
-					request.getMIME().setContentLength((size = Long.valueOf(((IO.KnownSize)body).getSizeSync())).longValue());
+					size = Long.valueOf(((IO.KnownSize)body).getSizeSync());
+					request.getMIME().setContentLength(size.longValue());
 				} catch (IOException e) {
 					result.error(e);
 					return result;
@@ -246,12 +239,8 @@ public class HTTPClient implements Closeable {
 			size = Long.valueOf(0);
 			request.getMIME().setContentLength(0);
 		}
-		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
-		request.generateCommandLine(s);
-		s.append("\r\n");
-		request.getMIME().appendHeadersTo(s);
-		s.append("\r\n");
-		ByteBuffer data = ByteBuffer.wrap(s.toUsAsciiBytes());
+		ByteBuffer data = generateCommandAndHeaders(request);
+		
 		connect.onDone(() -> {
 			IAsync<IOException> send = client.send(data);
 			// TODO if the connection has been closed while preparing the request, try to reconnect, but only once
@@ -259,40 +248,110 @@ public class HTTPClient implements Closeable {
 				send.onDone(result);
 				return;
 			}
-			IAsync<IOException> sendBody;
-			if (body instanceof IO.KnownSize) {
-				if (body instanceof IO.Readable.Buffered)
-					sendBody = IdentityTransfer.send(client, (IO.Readable.Buffered)body);
-				else {
-					int bufferSize;
-					int maxBuffers;
-					long si = size.longValue();
-					if (si >= 4 * 1024 * 1024) {
-						bufferSize = 1024 * 1024;
-						maxBuffers = 4;
-					} else if (si >= 1024 * 1024) {
-						bufferSize = 512 * 1024;
-						maxBuffers = 6;
-					} else if (si >= 128 * 1024) {
-						bufferSize = 64 * 1024;
-						maxBuffers = 10;
-					} else if (si >= 32 * 1024) {
-						bufferSize = 16 * 1024;
-						maxBuffers = 4;
-					} else {
-						bufferSize = (int)si;
-						maxBuffers = 1;
-					}
-					sendBody = IdentityTransfer.send(client, body, bufferSize, maxBuffers);
-				}
-			} else if (body instanceof IO.Readable.Buffered) {
-				sendBody = ChunkedTransfer.send(client, (IO.Readable.Buffered)body, request.getTrailerHeadersSuppliers());
-			} else {
-				sendBody = ChunkedTransfer.send(client, body, 128 * 1024, 8, request.getTrailerHeadersSuppliers());
-			}
-			sendBody.onDone(result);
+			sendBody(body, size, request).onDone(result);
 		}, result);
 		return result;
+	}
+	
+	/** Connect to the remote server before to send the given request. */
+	private Async<IOException> connect(HTTPRequest request) {
+		if (!client.isClosed())
+			return new Async<>(true);
+		// get proxy if any
+		ProxySelector proxySelector = config.getProxySelector();
+		Proxy proxy = null;
+		if (proxySelector != null) {
+			String url = generateURL(request);
+			URI uri = null;
+			try {
+				uri = new URI(url);
+				List<Proxy> proxies = proxySelector.select(uri);
+				for (Proxy p : proxies) {
+					if (Proxy.Type.HTTP.equals(p.type())) {
+						proxy = p;
+						break;
+					}
+				}
+			} catch (Exception e) {
+				// ignore
+			}
+			if (proxy != null) {
+				InetSocketAddress inet = (InetSocketAddress)proxy.address();
+				//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
+				if (client instanceof SSLClient) {
+					// we have to create a HTTP tunnel with the proxy
+					TCPClient tunnelClient = new TCPClient();
+					Async<IOException> tunnelConnect =
+						tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
+					Async<IOException> connect = new Async<>();
+					// prepare the CONNECT request
+					HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
+					connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+					ByteBuffer data = generateCommandAndHeaders(connectRequest);
+					tunnelConnect.onDone(
+						() -> tunnelClient.send(data).onDone(
+						() -> HTTPResponse.receive(tunnelClient, config.getReceiveTimeout()).onDone(
+						resp -> {
+							if (resp.getStatusCode() != 200) {
+								tunnelClient.close();
+								connect.error(new HTTPResponseError(resp.getStatusCode(), resp.getStatusMessage()));
+								return;
+							}
+							// tunnel connection established
+							// replace connection of SSLClient by the tunnel
+							((SSLClient)client).tunnelConnected(tunnelClient, connect, config.getReceiveTimeout());
+						}, connect), connect), connect);
+					return connect;
+				}
+				Async<IOException> connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
+				request.setPath(url.toString());
+				return connect;
+			}
+		}
+		// direct connection
+		return client.connect(
+			new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
+	}
+	
+	private static ByteBuffer generateCommandAndHeaders(HTTPRequest request) {
+		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
+		request.generateCommandLine(s);
+		s.append("\r\n");
+		request.getMIME().appendHeadersTo(s);
+		s.append("\r\n");
+		return ByteBuffer.wrap(s.toUsAsciiBytes());
+	}
+	
+	private IAsync<IOException> sendBody(IO.Readable body, Long size, HTTPRequest request) {
+		if (body instanceof IO.KnownSize) {
+			if (body instanceof IO.Readable.Buffered)
+				return IdentityTransfer.send(client, (IO.Readable.Buffered)body);
+			int bufferSize;
+			int maxBuffers;
+			long si = size.longValue();
+			if (si >= 4 * 1024 * 1024) {
+				bufferSize = 1024 * 1024;
+				maxBuffers = 4;
+			} else if (si >= 1024 * 1024) {
+				bufferSize = 512 * 1024;
+				maxBuffers = 6;
+			} else if (si >= 128 * 1024) {
+				bufferSize = 64 * 1024;
+				maxBuffers = 10;
+			} else if (si >= 32 * 1024) {
+				bufferSize = 16 * 1024;
+				maxBuffers = 4;
+			} else {
+				bufferSize = (int)si;
+				maxBuffers = 1;
+			}
+			return IdentityTransfer.send(client, body, bufferSize, maxBuffers);
+		}
+		
+		if (body instanceof IO.Readable.Buffered)
+			return ChunkedTransfer.send(client, (IO.Readable.Buffered)body, request.getTrailerHeadersSuppliers());
+
+		return ChunkedTransfer.send(client, body, 128 * 1024, 8, request.getTrailerHeadersSuppliers());
 	}
 	
 	/** Receive the response headers. */
@@ -306,14 +365,14 @@ public class HTTPClient implements Closeable {
 	 */
 	public <T extends IO.Readable.Seekable & IO.Writable.Seekable> void receiveResponse(
 		String source, T io, int bufferSize,
-		AsyncSupplier<Pair<HTTPResponse,OutputToInput>,IOException> responseHeaderListener,
-		AsyncSupplier<HTTPResponse,IOException> outputReceived
+		AsyncSupplier<HTTPResponse, IOException> responseHeaderListener,
+		AsyncSupplier<HTTPResponse, IOException> outputReceived
 	) {
 		receiveResponseHeader().listen(new Listener<HTTPResponse, IOException>() {
 			@Override
 			public void ready(HTTPResponse response) {
 				if (!response.isBodyExpected()) {
-					if (responseHeaderListener != null) responseHeaderListener.unblockSuccess(new Pair<>(response, null));
+					if (responseHeaderListener != null) responseHeaderListener.unblockSuccess(response);
 					outputReceived.unblockSuccess(response);
 					return;
 				}
@@ -324,11 +383,11 @@ public class HTTPClient implements Closeable {
 					if (!transfer.isExpectingData()) {
 						output.endOfData();
 						if (responseHeaderListener != null)
-							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
+							responseHeaderListener.unblockSuccess(response);
 						outputReceived.unblockSuccess(response);
 					} else {
 						if (responseHeaderListener != null)
-							responseHeaderListener.unblockSuccess(new Pair<>(response, output));
+							responseHeaderListener.unblockSuccess(response);
 						Async<IOException> result = new Async<>();
 						receiveBody(transfer, result, bufferSize);
 						result.onDone(() -> {
@@ -415,28 +474,28 @@ public class HTTPClient implements Closeable {
 	 */
 	public <TIO extends IO.Writable & IO.Readable> void receiveResponse(
 		Function<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
-		AsyncSupplier<Pair<HTTPResponse, TIO>, IOException> onReceived
+		AsyncSupplier<HTTPResponse, IOException> onReceived
 	) {
 		receiveResponseHeader().onDone(
 			response -> {
 				if (!response.isBodyExpected()) {
-					onReceived.unblockSuccess(new Pair<>(response, null));
+					onReceived.unblockSuccess(response);
 					return;
 				}
 				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.apply(response);
 				if (output == null)
-					onReceived.unblockSuccess(new Pair<>(response, null));
+					onReceived.unblockSuccess(response);
 				else {
 					try {
 						response.getMIME().setBodyReceived(output.getValue1());
 						TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output.getValue1());
 						if (!transfer.isExpectingData()) {
-							onReceived.unblockSuccess(new Pair<>(response, output.getValue1()));
+							onReceived.unblockSuccess(response);
 							return;
 						}
 						Async<IOException> result = new Async<>();
 						receiveBody(transfer, result, output.getValue2().intValue());
-						result.onDone(() -> onReceived.unblockSuccess(new Pair<>(response, output.getValue1())), onReceived);
+						result.onDone(() -> onReceived.unblockSuccess(response), onReceived);
 					} catch (IOException error) {
 						onReceived.error(error);
 					}
@@ -491,9 +550,221 @@ public class HTTPClient implements Closeable {
 		}, result);
 	}
 	
+	/** Send the given request and receive response headers.
+	 * If a body is expected the receiveBody method should be used.
+	 * 
+	 * @param request the request to send
+	 * @return the HTTPResponse with status code and headers, but without body.
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceiveHeaders(HTTPRequest request) {
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		sendRequest(request).onDone(() -> receiveResponseHeader().forward(result), result);
+		return result;
+	}
+
+	/**
+	 * Send the request and start receiving the response.<br/>
+	 * If the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
+	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
+	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
+	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
+	 * This method is equivalent to sendAndReceive(request, true, false, 0).
+	 * 
+	 * @param request the request to send
+	 * @return the response
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request) {
+		return sendAndReceive(request, true, false, 0);
+	}
+
+	/**
+	 * Send the request and start receiving the response.<br/>
+	 * If the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
+	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
+	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
+	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
+	 * This method is equivalent to sendAndReceive(request, true, false, maxRedirect).
+	 * 
+	 * @param request the request to send
+	 * @param maxRedirect maximum number of redirection to follow
+	 * @return the response
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request, int maxRedirect) {
+		return sendAndReceive(request, true, false, maxRedirect);
+	}
+
+	/**
+	 * Send the request and start receiving the response.<br/>
+	 * If stopOnError is true and the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
+	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
+	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
+	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
+	 * This method is equivalent to sendAndReceive(request, stopOnError, false, 0).
+	 * 
+	 * @param request the request to send
+	 * @param stopOnError true to do not receive the body and return an HTTPResponseError if the response status code is not 2xx.
+	 * @return the response
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request, boolean stopOnError) {
+		return sendAndReceive(request, stopOnError, false, 0);
+	}
+	
+	/**
+	 * Send the request and start receiving the response.<br/>
+	 * If stopOnError is true and the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
+	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
+	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
+	 * a IOInMemoryOrFile is used with 64K in memory.
+	 * 
+	 * @param request the request to send
+	 * @param stopOnError true to do not receive the body and return an HTTPResponseError if the response status code is not 2xx.
+	 * @param waitFullBody if true the response is unblocked only once the body has been fully received.
+	 * @param maxRedirect maximum number of redirection to follow
+	 * @return the response
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(
+		HTTPRequest request, boolean stopOnError, boolean waitFullBody, int maxRedirect
+	) {
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		Async<IOException> send = sendRequest(request);
+		String description = generateURL(request);
+		send.onDone(() -> receiveResponseHeader().onDone(response -> {
+			if (handleRedirection(request, response, maxRedirect, result,
+				newClient -> newClient.sendAndReceive(request, stopOnError, waitFullBody, maxRedirect - 1).forward(result)))
+				return;
+			if (stopOnError && (response.getStatusCode() / 100) != 2) {
+				result.unblockError(new HTTPResponseError(response));
+				close();
+				return;
+			}
+			if (!response.isBodyExpected()) {
+				result.unblockSuccess(response);
+				return;
+			}
+			Long size = response.getMIME().getContentLength();
+			OutputToInput output = new OutputToInput(initIO(size, description), description);
+			int bufferSize = size != null && size.longValue() < 64 * 1024 ? size.intValue() : 64 * 1024;
+			receiveBody(response, output, bufferSize).onDone(() -> {
+				output.endOfData();
+				if (waitFullBody)
+					result.unblockSuccess(response);
+			}, error -> {
+				output.signalErrorBeforeEndOfData(error);
+				if (waitFullBody)
+					result.error(error);
+			}, cancel -> {
+				output.signalErrorBeforeEndOfData(IO.errorCancelled(cancel));
+				if (waitFullBody)
+					result.cancel(new CancelException("Download has been cancelled", cancel));
+			});
+			if (!waitFullBody)
+				result.unblockSuccess(response);
+		}, result), result);
+		return result;
+	}
+	
+	private boolean handleRedirection(
+		HTTPRequest request, HTTPResponse response, int maxRedirect, AsyncSupplier<?, IOException> result,
+		Consumer<HTTPClient> doRedirection
+	) {
+		if (maxRedirect <= 0)
+			return false;
+		int code = response.getStatusCode();
+		if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308)
+			return false;
+		String location = response.getMIME().getFirstHeaderRawValue("Location");
+		if (location == null)
+			return false;
+		try {
+			Long size = response.getMIME().getContentLength();
+			Async<IOException> skipBody;
+			if (size != null && size.longValue() > 0)
+				skipBody = client.getReceiver().skipBytes(size.intValue(), config.getReceiveTimeout());
+			else
+				skipBody = new Async<>(true);
+
+			URI u = new URI(location);
+			if (u.getHost() == null) {
+				// relative
+				u = new URI(generateURL(request)).resolve(u);
+			}
+			request.setURI(u);
+			if (isCompatible(u)) {
+				skipBody.onDone(() -> doRedirection.accept(HTTPClient.this));
+				return true;
+			}
+			HTTPClient newClient;
+			try { newClient = HTTPClient.create(u, config); }
+			catch (Exception e) {
+				result.error(new IOException("Unable to follow redirection to " + location, e));
+				return true;
+			}
+			skipBody.onDone(() -> doRedirection.accept(newClient));
+			result.onDone(newClient::close);
+		} catch (URISyntaxException e) {
+			result.error(new IOException("Invalid redirect location: " + location, e));
+		}
+		return true;
+	}
+	
+	@SuppressWarnings("unchecked")
+	private static <T extends IO.Readable.Seekable & IO.Writable.Seekable> T initIO(Long size, String description) {
+		if (size != null && size.longValue() <= 128 * 1024)
+			return (T)new ByteArrayIO(size.intValue(), description);
+		return (T)new IOInMemoryOrFile(64 * 1024, Task.PRIORITY_NORMAL, description);
+	}
+	
+	/**
+	 * Send the request and download the response into the given file.
+	 * 
+	 * @param request the request to send
+	 * @param file the file to save the response body
+	 * @param maxRedirect maximum number of redirection to follow
+	 * @return the response and the file at position 0. The file may be null if no body has been received.
+	 */
+	public AsyncSupplier<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> download(
+		HTTPRequest request, File file, int maxRedirect
+	) {
+		AsyncSupplier<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> result = new AsyncSupplier<>();
+		Async<IOException> send = sendRequest(request);
+		send.onDone(() -> receiveResponseHeader().onDone(response -> {
+			if (handleRedirection(request, response, maxRedirect, result,
+				newClient -> newClient.download(request, file, maxRedirect - 1).forward(result)))
+				return;
+			if ((response.getStatusCode() / 100) != 2) {
+				result.unblockError(new HTTPResponseError(response));
+				close();
+				return;
+			}
+			if (!response.isBodyExpected()) {
+				result.unblockSuccess(new Pair<>(response, null));
+				return;
+			}
+			FileIO.ReadWrite io = new FileIO.ReadWrite(file, Task.PRIORITY_NORMAL);
+			receiveBody(response, io, 64 * 1024).onDone(() -> {
+				AsyncSupplier<Long, IOException> seek = io.seekAsync(SeekType.FROM_BEGINNING, 0);
+				seek.onDone(() -> result.unblockSuccess(new Pair<>(response, io)), result);
+			});
+			result.onErrorOrCancel(() -> {
+				io.closeAsync().thenStart(new RemoveFileTask(file, Task.PRIORITY_NORMAL), true);
+			});
+		}, result), result);
+		return result;
+	}
+	
 	@Override
 	public void close() {
 		client.close();
+	}
+	
+	/** Utility method to create a client, send a GET request, receive the response, and close the client once the response is done. */
+	public static AsyncSupplier<HTTPResponse, IOException> get(URI uri, int maxRedirect, MimeHeader... headers)
+	throws UnsupportedHTTPProtocolException, GeneralSecurityException {
+		HTTPClient client = HTTPClient.create(uri);
+		AsyncSupplier<HTTPResponse, IOException> send =
+			client.sendAndReceive(new HTTPRequest(Method.GET).setURI(uri).setHeaders(headers), true, true, maxRedirect);
+		send.onDone(client::close);
+		return send;
 	}
 	
 }
