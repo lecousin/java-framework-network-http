@@ -25,7 +25,6 @@ import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.encoding.Base64;
-import net.lecousin.framework.io.util.DataUtil;
 import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
@@ -317,20 +316,7 @@ public class WebSocketClient implements Closeable {
 					isLast = pos + nbRead.intValue() == size;
 				else
 					isLast = nbRead.intValue() < buffer.length;
-				int bufLen = 2;
-				if (nbRead.intValue() > 125)
-					bufLen += nbRead.intValue() <= 0xFFFF ? 2 : 8;
-				byte[] b = new byte[bufLen];
-				b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
-				if (nbRead.intValue() <= 125) {
-					b[1] = (byte)nbRead.intValue();
-				} else if (nbRead.intValue() <= 0xFFFF) {
-					b[1] = (byte)126;
-					DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead.intValue());
-				} else {
-					b[1] = (byte)127;
-					DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
-				}
+				byte[] b = WebSocketDataFrame.createMessageStart(isLast, pos, nbRead.intValue(), type);
 				conn.send(ByteBuffer.wrap(b));
 				IAsync<IOException> send = conn.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()));
 				if (!isLast) {

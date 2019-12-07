@@ -1,9 +1,9 @@
 package net.lecousin.framework.network.http.test;
 
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
+import net.lecousin.framework.network.http.HTTPMessage.Protocol;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
-import net.lecousin.framework.network.http.HTTPRequest.Protocol;
 import net.lecousin.framework.util.UnprotectedString;
 
 import org.junit.Assert;

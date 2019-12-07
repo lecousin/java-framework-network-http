@@ -10,10 +10,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 
 import net.lecousin.framework.io.IO;
-import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineException;
 import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
@@ -23,7 +21,7 @@ import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
 
 /** HTTP request. */
-public class HTTPRequest extends AbstractAttributesContainer {
+public class HTTPRequest extends HTTPMessage {
 	
 	/** HTTP method. */
 	public enum Method {
@@ -37,28 +35,6 @@ public class HTTPRequest extends AbstractAttributesContainer {
 		CONNECT,
 	}
 	
-	/** HTTP protocol version. */
-	public enum Protocol {
-		HTTP_1_1("HTTP/1.1"),
-		HTTP_1_0("HTTP/1.0");
-		
-		Protocol(String name) {
-			this.name = name;
-		}
-		
-		private String name;
-		
-		public String getName() { return name; }
-		
-		/** from a string. */
-		public static Protocol from(String s) {
-			for (Protocol p : Protocol.values())
-				if (p.getName().equals(s))
-					return p;
-			return null;
-		}
-	}
-	
 	public static final String HEADER_HOST = "Host";
 	public static final String HEADER_USER_AGENT = "User-Agent";
 	public static final String HEADER_CONNECTION = "Connection";
@@ -67,17 +43,20 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	
 	/** Constructor. */
 	public HTTPRequest() {
+		setProtocol(Protocol.HTTP_1_1);
 	}
 	
 	/** Constructor. */
 	public HTTPRequest(Method method) {
 		this.method = method;
+		setProtocol(Protocol.HTTP_1_1);
 	}
 	
 	/** Constructor. */
 	public HTTPRequest(Method method, String path) {
 		this.method = method;
 		this.path = path;
+		setProtocol(Protocol.HTTP_1_1);
 	}
 	
 	// Command line
@@ -85,7 +64,6 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	private Method method = null;
 	private String path = null;
 	private HashMap<String,String> parameters = null;
-	private Protocol protocol = Protocol.HTTP_1_1;
 	
 	// Command line getters and setters
 	
@@ -106,12 +84,8 @@ public class HTTPRequest extends AbstractAttributesContainer {
 		return parameters != null ? parameters.get(name) : null;
 	}
 	
-	public Protocol getProtocol() {
-		return protocol;
-	}
-	
 	public boolean isCommandSet() {
-		return method != null && path != null && protocol != null;
+		return method != null && path != null && getProtocol() != null;
 	}
 	
 	/** Set the method to use. */
@@ -142,17 +116,11 @@ public class HTTPRequest extends AbstractAttributesContainer {
 		return this;
 	}
 	
-	/** Set the protocol version. */
-	public HTTPRequest setProtocol(Protocol protocol) {
-		this.protocol = protocol;
-		return this;
-	}
-	
 	/** Set the command line. */
 	public HTTPRequest setCommand(Method method, String path, Protocol protocol) {
 		this.method = method;
 		this.path = path;
-		this.protocol = protocol;
+		setProtocol(protocol);
 		return this;
 	}
 	
@@ -169,8 +137,8 @@ public class HTTPRequest extends AbstractAttributesContainer {
 		i = commandLine.indexOf(' ');
 		if (i <= 0) throw new InvalidHTTPCommandLineException(commandLine);
 		setPathAndQueryString(commandLine.substring(0, i));
-		protocol = Protocol.from(commandLine.substring(i + 1).trim());
-		if (protocol == null) throw new UnsupportedHTTPProtocolException(commandLine.substring(i + 1).trim());
+		setProtocol(Protocol.from(commandLine.substring(i + 1).trim()));
+		if (getProtocol() == null) throw new UnsupportedHTTPProtocolException(commandLine.substring(i + 1).trim());
 		
 		return this;
 	}
@@ -240,7 +208,7 @@ public class HTTPRequest extends AbstractAttributesContainer {
 			else
 				s.append(method.toString()).append(' ');
 			generateFullPath(s);
-			s.append(' ').append(protocol != null ? protocol.getName() : Protocol.HTTP_1_1.getName());
+			s.append(' ').append(getProtocol() != null ? getProtocol().getName() : Protocol.HTTP_1_1.getName());
 		} catch (IOException e) {
 			// does not happen if used with StringBuilder or IString
 		}
@@ -255,61 +223,25 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	
 	// Content
 	
-	private MimeMessage mime = new MimeMessage();
-	
-	public MimeMessage getMIME() { return mime; }
-	
 	/** Set multiple headers to the MIME message. */
 	public HTTPRequest setHeaders(MimeHeader... headers) {
 		for (MimeHeader h : headers)
-			mime.setHeader(h);
+			getMIME().setHeader(h);
 		return this;
 	}
 	
 	/** Set headers and body from the given message. */
 	public HTTPRequest setHeadersAndContent(MimeMessage message) {
 		for (MimeHeader header : message.getHeaders())
-			mime.setHeader(header);
-		mime.setBodyToSend(message.getBodyToSend());
+			getMIME().setHeader(header);
+		getMIME().setBodyToSend(message.getBodyToSend());
 		return this;
 	}
 	
 	/** Set the body to send. */
 	public HTTPRequest setBody(IO.Readable body) {
-		mime.setBodyToSend(body);
+		getMIME().setBodyToSend(body);
 		return this;
-	}
-	
-	// Trailer headers
-	
-	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
-	
-	/** Add a trailer MIME header. */
-	public HTTPRequest addTrailerHeader(String headerName, Supplier<String> supplier) {
-		if (trailerHeaderSuppliers == null)
-			trailerHeaderSuppliers = new HashMap<>(5);
-		trailerHeaderSuppliers.put(headerName, supplier);
-		return this;
-	}
-	
-	/** Get the trailer header supplier. */
-	public Supplier<List<MimeHeader>> getTrailerHeadersSuppliers() {
-		if (trailerHeaderSuppliers == null)
-			return null;
-		StringBuilder s = new StringBuilder();
-		for (String h : trailerHeaderSuppliers.keySet()) {
-			if (s.length() > 0)
-				s.append(", ");
-			s.append(h);
-		}
-		mime.setHeaderRaw("Trailer", s.toString());
-		return () -> {
-			List<MimeHeader> headers = new ArrayList<>(trailerHeaderSuppliers.size());
-			for (Map.Entry<String, Supplier<String>> entry : trailerHeaderSuppliers.entrySet()) {
-				headers.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
-			}
-			return headers;
-		};
 	}
 	
 	// Utilities
@@ -317,7 +249,7 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	/** Set the method to POST and body to send. */
 	public HTTPRequest post(IO.Readable body) {
 		setMethod(Method.POST);
-		mime.setBodyToSend(body);
+		getMIME().setBodyToSend(body);
 		return this;
 	}
 	
@@ -329,19 +261,18 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	/** Return true if a body is expected to be sent. */
 	public boolean isExpectingBody() {
 		if (Method.GET.equals(method)) return false;
-		Long size = mime.getContentLength();
+		Long size = getMIME().getContentLength();
 		if (size != null)
 			return size.longValue() != 0;
-		String s = mime.getFirstHeaderRawValue(MimeMessage.TRANSFER_ENCODING);
-		if (s == null) s = mime.getFirstHeaderRawValue(MimeMessage.CONTENT_TRANSFER_ENCODING);
+		String s = getMIME().getFirstHeaderRawValue(MimeMessage.TRANSFER_ENCODING);
+		if (s == null) s = getMIME().getFirstHeaderRawValue(MimeMessage.CONTENT_TRANSFER_ENCODING);
 		return (s != null && s.length() != 0);
 	}
 	
 	/** Return true if the connection should be persistent. */
 	public boolean isConnectionPersistent() {
-		if (protocol == null) return false;
-		if (Protocol.HTTP_1_1.equals(protocol)) {
-			String s = mime.getFirstHeaderRawValue(MimeMessage.CONNECTION);
+		if (Protocol.HTTP_1_1.equals(getProtocol())) {
+			String s = getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
 			return s == null || !s.equalsIgnoreCase("close");
 		}
 		return false;
@@ -352,7 +283,7 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	/** Return the requested cookie or null. */
 	public String getCookie(String name) {
 		try {
-			for (ParameterizedHeaderValue h : mime.getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+			for (ParameterizedHeaderValue h : getMIME().getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
 				String value = h.getParameter(name);
 				if (value != null)
 					return value;
@@ -367,7 +298,7 @@ public class HTTPRequest extends AbstractAttributesContainer {
 	public List<String> getCookies(String name) {
 		List<String> values = new ArrayList<>();
 		try {
-			for (ParameterizedHeaderValue h : mime.getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+			for (ParameterizedHeaderValue h : getMIME().getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
 				for (Pair<String, String> p : h.getParameters())
 					if (p.getValue1().equals(name))
 						values.add(p.getValue2());

@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.io.util.DataUtil;
 
 /** Frame used for the web socket protocol. */
 public class WebSocketDataFrame {
@@ -124,6 +125,24 @@ public class WebSocketDataFrame {
 		maskValue = null;
 		messageRead = 0;
 		return false;
+	}
+	
+	static byte[] createMessageStart(boolean isLast, long pos, int nbRead, int type) {
+		int bufLen = 2;
+		if (nbRead > 125)
+			bufLen += nbRead <= 0xFFFF ? 2 : 8;
+		byte[] b = new byte[bufLen];
+		b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
+		if (nbRead <= 125) {
+			b[1] = (byte)nbRead;
+		} else if (nbRead <= 0xFFFF) {
+			b[1] = (byte)126;
+			DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead);
+		} else {
+			b[1] = (byte)127;
+			DataUtil.writeLongBigEndian(b, 2, nbRead);
+		}
+		return b;
 	}
 	
 }

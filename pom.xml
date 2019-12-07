@@ -49,6 +49,7 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <sonar.test.exclusions>**/src/test/**/*</sonar.test.exclusions>
   </properties>
 
   <build>

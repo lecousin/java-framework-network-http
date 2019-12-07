@@ -6,11 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Supplier;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
@@ -19,14 +14,13 @@ import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.mime.MimeException;
-import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValues;
 
 /** HTTP Response. */
-public class HTTPResponse {
+public class HTTPResponse extends HTTPMessage {
 	
 	public static final String HEADER_SERVER = "Server";
 	public static final String HEADER_CACHE_CONTROL = "Cache-Control";
@@ -34,16 +28,6 @@ public class HTTPResponse {
 	
 	private int statusCode = -1;
 	private String statusMessage = null;
-	private HTTPRequest.Protocol protocol = null;
-	private MimeMessage mime = new MimeMessage();
-	
-	public void setProtocol(HTTPRequest.Protocol protocol) {
-		this.protocol = protocol;
-	}
-	
-	public HTTPRequest.Protocol getProtocol() {
-		return protocol;
-	}
 	
 	/** Set the status code and a default status message. */
 	public void setStatus(int code) {
@@ -64,25 +48,9 @@ public class HTTPResponse {
 	
 	public String getStatusMessage() { return statusMessage; }
 	
-	public MimeMessage getMIME() { return mime; }
-	
-	public void setMIME(MimeMessage mime) {
-		this.mime = mime;
-	}
-	
 	/** Set the Content-Type header. */
 	public void setRawContentType(String type) {
-		mime.setHeaderRaw(MimeMessage.CONTENT_TYPE, type);
-	}
-	
-	/** Set a header. */
-	public void setHeaderRaw(String name, String value) {
-		mime.setHeaderRaw(name, value);
-	}
-	
-	/** Add a value to a header. */
-	public void addHeaderRaw(String headerName, String value) {
-		mime.addHeaderRaw(headerName, value);
+		setHeaderRaw(MimeMessage.CONTENT_TYPE, type);
 	}
 	
 	/** Add a cookie.
@@ -111,7 +79,7 @@ public class HTTPResponse {
 	 * @throws Exception in case the Set-Cookie header cannot be parsed
 	 */
 	public String getCookie(String name) throws MimeException {
-		for (ParameterizedHeaderValues v : mime.getHeadersValues("Set-Cookie", ParameterizedHeaderValues.class)) {
+		for (ParameterizedHeaderValues v : getMIME().getHeadersValues("Set-Cookie", ParameterizedHeaderValues.class)) {
 			for (ParameterizedHeaderValue value : v.getValues()) {
 				String s = value.getParameter(name);
 				if (s != null)
@@ -123,19 +91,19 @@ public class HTTPResponse {
 	
 	/** Set headers to indicate that the response must not be cached. */
 	public void noCache() {
-		mime.setHeaderRaw(HEADER_CACHE_CONTROL, "no-cache,no-store");
-		mime.setHeaderRaw("Pragma", "no-cache");
-		mime.setHeaderRaw(HEADER_EXPIRES, DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
+		setHeaderRaw(HEADER_CACHE_CONTROL, "no-cache,no-store");
+		setHeaderRaw("Pragma", "no-cache");
+		setHeaderRaw(HEADER_EXPIRES, DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
 	}
 	
 	/** Set headers to indicate that the response can be cached for the given duration in milliseconds. */
 	public void publicCache(Long maxAge) {
 		if (maxAge != null) {
-			mime.setHeaderRaw(HEADER_CACHE_CONTROL, "public,max-age=" + maxAge);
-			mime.setHeaderRaw(HEADER_EXPIRES,DateTimeFormatter.RFC_1123_DATE_TIME.format(
+			setHeaderRaw(HEADER_CACHE_CONTROL, "public,max-age=" + maxAge);
+			setHeaderRaw(HEADER_EXPIRES,DateTimeFormatter.RFC_1123_DATE_TIME.format(
 				Instant.ofEpochMilli(System.currentTimeMillis() + maxAge.longValue()).atZone(ZoneId.of("GMT"))));
 		} else {
-			mime.setHeaderRaw(HEADER_CACHE_CONTROL, "public");
+			setHeaderRaw(HEADER_CACHE_CONTROL, "public");
 		}
 	}
 	
@@ -143,7 +111,7 @@ public class HTTPResponse {
 	public boolean isBodyExpected() {
 		if (statusCode == 204) return false;
 		if (statusCode == 205) return false;
-		Long length = mime.getContentLength();
+		Long length = getMIME().getContentLength();
 		return length == null || length.longValue() > 0;
 	}
 	
@@ -153,37 +121,6 @@ public class HTTPResponse {
 		setHeaderRaw("Location", location);
 	}
 	
-	
-	// Trailer headers
-	
-	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
-	
-	/** Add a trailer MIME header. */
-	public void addTrailerHeader(String headerName, Supplier<String> supplier) {
-		if (trailerHeaderSuppliers == null)
-			trailerHeaderSuppliers = new HashMap<>(5);
-		trailerHeaderSuppliers.put(headerName, supplier);
-	}
-	
-	/** Get the trailer header supplier. */
-	public Supplier<List<MimeHeader>> getTrailerHeadersSuppliers() {
-		if (trailerHeaderSuppliers == null)
-			return null;
-		StringBuilder s = new StringBuilder();
-		for (String h : trailerHeaderSuppliers.keySet()) {
-			if (s.length() > 0)
-				s.append(", ");
-			s.append(h);
-		}
-		mime.setHeaderRaw("Trailer", s.toString());
-		return () -> {
-			List<MimeHeader> headers = new ArrayList<>(trailerHeaderSuppliers.size());
-			for (Map.Entry<String, Supplier<String>> entry : trailerHeaderSuppliers.entrySet()) {
-				headers.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
-			}
-			return headers;
-		};
-	}
 	
 	/** Receive a response from a server, by using the given TCPClient. */
 	public static AsyncSupplier<HTTPResponse, IOException> receive(TCPClient client, int timeout) {
@@ -203,7 +140,7 @@ public class HTTPResponse {
 					return;
 				}
 				HTTPResponse response = new HTTPResponse();
-				response.setProtocol(HTTPRequest.Protocol.from(s.substring(0, i)));
+				response.setProtocol(Protocol.from(s.substring(0, i)));
 				s = s.substring(i + 1);
 				i = s.indexOf(' ');
 				int code;
@@ -218,7 +155,7 @@ public class HTTPResponse {
 				i = s.indexOf('\n');
 				if (i >= 0) s = s.substring(0,i);
 				response.setStatus(code, s);
-				Async<IOException> header = response.mime.readHeader(client, timeout);
+				Async<IOException> header = response.getMIME().readHeader(client, timeout);
 				header.onDone(() -> result.unblockSuccess(response), result);
 			},
 			result

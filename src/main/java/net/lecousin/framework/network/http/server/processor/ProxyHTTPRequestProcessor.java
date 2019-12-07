@@ -157,42 +157,23 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		return new Async<>(true);
 	}
 	
-	private URI getURI(String path, HTTPResponse response) {
-		try { return new URI(path); }
-		catch (Exception t) {
-			logger.error("Invalid requested URL: " + path, t);
-			response.setStatus(500, "Invalid URL");
-			return null;
-		}
-	}
-	
 	protected IAsync<?> forwardRequest(HTTPRequest request, HTTPResponse response) {
-		String path = request.getPath();
-		URI uri = getURI(path, response);
-		if (uri == null)
-			return new Async<>(true);
-		
-		String host = uri.getHost();
-		int port = uri.getPort();
-		if (port == -1) port = 80;
-		path = uri.getRawPath();
-		
-		request.setPath(path);
-		
-		for (Filter filter : proxyFilters) {
-			IAsync<Exception> filtered = filter.filter(request, response, host, port);
-			if (filtered != null)
-				return filtered;
-		}
-		
-		return forwarder.forward(request, response, host, port);
+		return forward(request, response, false);
 	}
 
 	protected IAsync<?> forwardHttpsRequest(HTTPRequest request, HTTPResponse response) {
+		return forward(request, response, true);
+	}
+	
+	private IAsync<?> forward(HTTPRequest request, HTTPResponse response, boolean ssl) {
 		String path = request.getPath();
-		URI uri = getURI(path, response);
-		if (uri == null)
+		URI uri;
+		try { uri = new URI(path); }
+		catch (Exception t) {
+			logger.error("Invalid requested URL: " + path, t);
+			response.setStatus(500, "Invalid URL");
 			return new Async<>(true);
+		}
 		
 		String host = uri.getHost();
 		int port = uri.getPort();
@@ -207,7 +188,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 				return filtered;
 		}
 		
-		return forwarder.forwardSSL(request, response, host, port);
+		return ssl ? forwarder.forwardSSL(request, response, host, port) : forwarder.forward(request, response, host, port);
 	}
 	
 	

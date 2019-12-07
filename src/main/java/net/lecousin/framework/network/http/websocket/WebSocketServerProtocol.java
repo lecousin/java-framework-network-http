@@ -21,7 +21,6 @@ import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.encoding.Base64;
-import net.lecousin.framework.io.util.DataUtil;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
@@ -265,21 +264,8 @@ public class WebSocketServerProtocol implements ServerProtocol {
 				isLast = pos + nbRead.intValue() == size;
 			else
 				isLast = nbRead.intValue() < buffer.length;
-			int bufLen = 2;
-			if (nbRead.intValue() > 125)
-				bufLen += nbRead.intValue() <= 0xFFFF ? 2 : 8;
-			byte[] b = new byte[bufLen];
-			b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
-			if (nbRead.intValue() <= 125) {
-				b[1] = (byte)nbRead.intValue();
-			} else if (nbRead.intValue() <= 0xFFFF) {
-				b[1] = (byte)126;
-				DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead.intValue());
-			} else {
-				b[1] = (byte)127;
-				DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
-			}
-			sendToClients(b, bufLen, clients);
+			byte[] b = WebSocketDataFrame.createMessageStart(isLast, pos, nbRead.intValue(), type);
+			sendToClients(b, b.length, clients);
 			sendToClients(buffer, nbRead.intValue(), clients);
 			if (clients.isEmpty()) {
 				content.closeAsync();
