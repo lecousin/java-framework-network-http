@@ -14,6 +14,7 @@ import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -177,7 +178,8 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		
 		String host = uri.getHost();
 		int port = uri.getPort();
-		if (port == -1) port = 443;
+		if (port == -1)
+			port = ssl ? HTTPClient.DEFAULT_HTTPS_PORT : HTTPClient.DEFAULT_HTTP_PORT;
 		path = uri.getRawPath();
 		
 		request.setPath(path);
@@ -205,7 +207,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 				host = host.substring(0, i);
 			} catch (Exception t) {
 				logger.error("Invalid address " + host, t);
-				response.setStatus(500, "Unable to connect");
+				response.setStatus(500, "Invalid address " + host);
 				return new Async<>(true);
 			}
 
