@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
@@ -108,13 +109,13 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 		byte[] buf;
 		try {
-			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes()));
+			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes(StandardCharsets.US_ASCII)));
 		} catch (Exception e) {
 			resp.setForceClose(true);
 			HTTPServerProtocol.sendError(client, 500, e.getMessage(), request, resp);
 			return;
 		}
-		acceptKey = new String(buf);
+		acceptKey = new String(buf, StandardCharsets.US_ASCII);
 		resp.addHeaderRaw("Sec-WebSocket-Accept", acceptKey);
 		if (protocol != null)
 			resp.addHeaderRaw("Sec-WebSocket-Protocol", protocol);
@@ -249,80 +250,66 @@ public class WebSocketServerProtocol implements ServerProtocol {
 		long size = -1;
 		if (content instanceof IO.KnownSize)
 			try { size = ((IO.KnownSize)content).getSizeSync(); }
-			catch (Throwable e) { /* ignore */ }
+			catch (Exception e) { /* ignore */ }
 		byte[] buffer = new byte[size >= 0 && size <= 128 * 1024 ? (int)size : 65536];
 		sendMessagePart(clients, type, content, size, buffer, 0, closeAfter);
 	}
 	
+	@SuppressWarnings("squid:S4276") // cannot use IntConsumer
 	private static void sendMessagePart(
 		List<TCPServerClient> clients, int type, IO.Readable content, long size, byte[] buffer, long pos, boolean closeAfter
 	) {
-		Listener<Integer, IOException> listener = new Listener<Integer, IOException>() {
-			@Override
-			public void ready(Integer nbRead) {
-				boolean isLast;
-				if (size >= 0)
-					isLast = pos + nbRead.intValue() == size;
-				else
-					isLast = nbRead.intValue() < buffer.length;
-				byte[] b = new byte[2 + (nbRead.intValue() <= 125 ? 0 : nbRead.intValue() <= 0xFFFF ? 2 : 8)];
-				b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
-				if (nbRead.intValue() <= 125) {
-					b[1] = (byte)nbRead.intValue();
-				} else if (nbRead.intValue() <= 0xFFFF) {
-					b[1] = (byte)126;
-					DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead.intValue());
-				} else {
-					b[1] = (byte)127;
-					DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
-				}
-				for (Iterator<TCPServerClient> it = clients.iterator(); it.hasNext(); ) {
-					TCPServerClient client = it.next();
-					try { client.send(ByteBuffer.wrap(b), false); }
-					catch (ClosedChannelException e) { it.remove(); }
-				}
-				if (clients.isEmpty()) {
-					content.closeAsync();
-					return;
-				}
-				for (Iterator<TCPServerClient> it = clients.iterator(); it.hasNext(); ) {
-					TCPServerClient client = it.next();
-					try { client.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()), false); }
-					catch (ClosedChannelException e) { it.remove(); }
-				}
-				if (clients.isEmpty()) {
-					content.closeAsync();
-					return;
-				}
-				if (!isLast) {
-					sendMessagePart(clients, type, content, size, buffer, pos + nbRead.intValue(), closeAfter);
-				} else {
-					content.closeAsync();
-					if (closeAfter) {
-						for (TCPServerClient client : clients)
-							client.close();
-					}
-				}
+		Consumer<Integer> listener = nbRead -> {
+			boolean isLast;
+			if (size >= 0)
+				isLast = pos + nbRead.intValue() == size;
+			else
+				isLast = nbRead.intValue() < buffer.length;
+			int bufLen = 2;
+			if (nbRead.intValue() > 125)
+				bufLen += nbRead.intValue() <= 0xFFFF ? 2 : 8;
+			byte[] b = new byte[bufLen];
+			b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
+			if (nbRead.intValue() <= 125) {
+				b[1] = (byte)nbRead.intValue();
+			} else if (nbRead.intValue() <= 0xFFFF) {
+				b[1] = (byte)126;
+				DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead.intValue());
+			} else {
+				b[1] = (byte)127;
+				DataUtil.writeLongBigEndian(b, 2, nbRead.intValue());
 			}
-			
-			@Override
-			public void cancelled(CancelException event) {
+			sendToClients(b, bufLen, clients);
+			sendToClients(buffer, nbRead.intValue(), clients);
+			if (clients.isEmpty()) {
 				content.closeAsync();
-				for (TCPServerClient client : clients)
-					client.close();
+				return;
 			}
-			
-			@Override
-			public void error(IOException error) {
+			if (!isLast) {
+				sendMessagePart(clients, type, content, size, buffer, pos + nbRead.intValue(), closeAfter);
+			} else {
 				content.closeAsync();
-				for (TCPServerClient client : clients)
-					client.close();
+				if (closeAfter) clients.forEach(TCPServerClient::close);
 			}
 		};
-		if (size == 0)
-			listener.ready(Integer.valueOf(0));
-		else
-			content.readFullyAsync(ByteBuffer.wrap(buffer)).listen(listener);
+		if (size == 0) {
+			listener.accept(Integer.valueOf(0));
+			return;
+		}
+		Runnable close = () -> {
+			content.closeAsync();
+			for (TCPServerClient client : clients)
+				client.close();
+		};
+		content.readFullyAsync(ByteBuffer.wrap(buffer)).onDone(listener, e -> close.run(), e -> close.run());
+	}
+	
+	private static void sendToClients(byte[] b, int len, List<TCPServerClient> clients) {
+		for (Iterator<TCPServerClient> it = clients.iterator(); it.hasNext(); ) {
+			TCPServerClient client = it.next();
+			try { client.send(ByteBuffer.wrap(b, 0, len), false); }
+			catch (ClosedChannelException e) { it.remove(); }
+		}
 	}
 	
 }

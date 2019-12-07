@@ -41,6 +41,8 @@ public class WebSocketClient implements Closeable {
 
 	private TCPClient conn;
 	
+	private static final String UPGRADE_TASK_DESCRIPTION = "Upgrade HTTP connection for WebSocket protocol";
+	
 	@Override
 	public void close() {
 		if (conn != null)
@@ -94,6 +96,7 @@ public class WebSocketClient implements Closeable {
 		// we have to create a HTTP tunnel with the proxy
 		InetSocketAddress inet = (InetSocketAddress)proxy.address();
 		inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
+		@SuppressWarnings("squid:S2095") // it is closed
 		TCPClient tunnelClient = new TCPClient();
 		Async<IOException> tunnelConnect =
 			tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
@@ -115,9 +118,7 @@ public class WebSocketClient implements Closeable {
 				response.onDone(() -> {
 					HTTPResponse resp = response.getResult();
 					if (resp.getStatusCode() != 200) {
-						tunnelClient.close();
-						result.error(new HTTPResponseError(
-							resp.getStatusCode(), resp.getStatusMessage()));
+						result.error(new HTTPResponseError(resp));
 						return;
 					}
 					// tunnel connection established
@@ -134,19 +135,20 @@ public class WebSocketClient implements Closeable {
 							}
 						Async<IOException> ready = new Async<>();
 						ssl.tunnelConnected(tunnelClient, ready, config.getReceiveTimeout());
-						ready.thenStart(new Task.Cpu.FromRunnable(
-							"Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+						ready.thenStart(new Task.Cpu.FromRunnable(UPGRADE_TASK_DESCRIPTION, Task.PRIORITY_NORMAL,
 							() -> upgradeConnection(ssl, hostname, port, path, config, protocols, result)), result);
 					} else {
-						new Task.Cpu.FromRunnable("Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+						new Task.Cpu.FromRunnable(UPGRADE_TASK_DESCRIPTION, Task.PRIORITY_NORMAL,
 						() -> upgradeConnection(tunnelClient, hostname, port, path, config, protocols, result)).start();
 					}
 				}, result);
 			}, result);
 		}, result);
+		result.onErrorOrCancel(tunnelClient::close);
 		return result;
 	}
 	
+	@SuppressWarnings("squid:S2095") // client is closed
 	private AsyncSupplier<String, IOException> directConnect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String[] protocols
 	) {
@@ -165,11 +167,13 @@ public class WebSocketClient implements Closeable {
 		}
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray())
-			.thenStart(new Task.Cpu.FromRunnable("Upgrade HTTP connection for WebSocket protocol", Task.PRIORITY_NORMAL,
+			.thenStart(new Task.Cpu.FromRunnable(UPGRADE_TASK_DESCRIPTION, Task.PRIORITY_NORMAL,
 				() -> upgradeConnection(client, hostname, port, path, config, protocols, result)), result);
+		result.onErrorOrCancel(client::close);
 		return result;
 	}
 
+	@SuppressWarnings("squid:S2119") // we save the Random
 	private void upgradeConnection(
 		TCPClient client, String hostname, int port, String path, HTTPClientConfiguration config,
 		String[] protocols, AsyncSupplier<String, IOException> result
@@ -207,13 +211,13 @@ public class WebSocketClient implements Closeable {
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 		byte[] buf;
 		try {
-			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes()));
+			buf = Base64.encodeBase64(MessageDigest.getInstance("SHA-1").digest(acceptKey.getBytes(StandardCharsets.US_ASCII)));
 		} catch (Exception e) {
 			client.close();
 			result.error(new IOException("Unable to encode key", e));
 			return;
 		}
-		String expectedAcceptKey = new String(buf);
+		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
 		send.onDone(() -> httpClient.receiveResponseHeader().onDone(response ->
 			new Task.Cpu.FromRunnable("WebSocket client connection", Task.PRIORITY_NORMAL, () -> {
@@ -313,7 +317,10 @@ public class WebSocketClient implements Closeable {
 					isLast = pos + nbRead.intValue() == size;
 				else
 					isLast = nbRead.intValue() < buffer.length;
-				byte[] b = new byte[2 + (nbRead.intValue() <= 125 ? 0 : nbRead.intValue() <= 0xFFFF ? 2 : 8)];
+				int bufLen = 2;
+				if (nbRead.intValue() > 125)
+					bufLen += nbRead.intValue() <= 0xFFFF ? 2 : 8;
+				byte[] b = new byte[bufLen];
 				b[0] = (byte)((isLast ? 0x80 : 0) + (pos == 0 ? type : 0));
 				if (nbRead.intValue() <= 125) {
 					b[1] = (byte)nbRead.intValue();

@@ -26,8 +26,6 @@ import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.SimpleBufferedReadable;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.math.RangeLong;
-import net.lecousin.framework.mutable.Mutable;
-import net.lecousin.framework.mutable.MutableLong;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Protocol;
 import net.lecousin.framework.network.http.HTTPResponse;
@@ -61,6 +59,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 	public static final String REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE = "protocol.http.request.receive.end.nanotime";
 	public static final String REQUEST_END_PROCESS_NANOTIME_ATTRIBUTE = "protocol.http.request.process.end.nanotime";
 	public static final String UPGRADED_PROTOCOL_ATTRIBUTE = "protocol.http.upgrade";
+	
+	public static final String UPGRADE_CONNECTION_HEADER = "Upgrade";
 	
 	private enum ReceiveStatus {
 		RECEIVING_START, RECEIVING_HEADER, RECEIVING_BODY
@@ -156,142 +156,148 @@ public class HTTPServerProtocol implements ServerProtocol {
 		}
 		while (data.hasRemaining()) {
 			char c = (char)(data.get() & 0xFF);
-			if (c == '\n') {
-				String s;
-				if (line.length() > 0 && line.charAt(line.length() - 1) == '\r')
-					s = line.substring(0, line.length() - 1);
-				else
-					s = line.toString();
-				if (s.isEmpty()) {
-					// end of header
-					client.removeAttribute(HEADERS_RECEIVER_ATTRIBUTE);
-					try { linesReceiver.newLine(s); }
-					catch (Exception e) {
-						logger.error("Error parsing HTTP headers", e);
-						HTTPServerResponse response = new HTTPServerResponse();
-						response.setForceClose(true);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
-							"Error parsing HTTP headers: " + e.getMessage(), request, response);
-						onbufferavailable.run();
-						return;
-					}
-					if (logger.trace()) {
-						logger.trace("End of headers received");
-					}
-					if (logger.debug()) {
-						logger.debug("HTTP Request: " + request.generateCommandLine());
-					}
-					// Analyze headers to check if an upgrade of the protocol is requested
-					if (upgradableProtocols != null &&
-						request.getMIME().hasHeader("Upgrade")) {
-						String conn = request.getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
-						boolean isUpgrade = false;
-						if (conn != null)
-							for (String str : conn.split(","))
-								if (str.equalsIgnoreCase("Upgrade")) {
-									isUpgrade = true;
-									break;
-								}
-						if (isUpgrade) {
-							// there is an upgrade request
-							String protoName = request.getMIME().getFirstHeaderRawValue("Upgrade").trim().toLowerCase();
-							ServerProtocol proto = upgradableProtocols.get(protoName);
-							if (proto != null) {
-								// the protocol is supported
-								client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE,
-									Long.valueOf(System.nanoTime()));
-								client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
-								logger.debug("Upgrading protocol to " + protoName);
-								proto.startProtocol(client);
-								if (data.hasRemaining())
-									proto.dataReceivedFromClient(client, data, onbufferavailable);
-								else
-									onbufferavailable.run();
-								return;
-							}
-						}
-					}
-					if (!request.isExpectingBody()) {
-						client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
-						client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
-						if (!data.hasRemaining())
-							onbufferavailable.run();
-						client.removeAttribute(REQUEST_ATTRIBUTE);
-						client.removeAttribute(CURRENT_LINE_ATTRIBUTE);
-						if (logger.trace())
-							logger.trace("Start processing the request");
-						// we are already in a CPU Thread, we can stay here
-						HTTPServerResponse response = new HTTPServerResponse();
-						@SuppressWarnings("unchecked")
-						Async<IOException> previousResponseSent =
-							(Async<IOException>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
-						client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.getSent());
-						processRequest(client, request, response, previousResponseSent);
-						if (data.hasRemaining()) {
-							dataReceivedFromClient(client, data, onbufferavailable);
-							return;
-						}
-						if (request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE))
-							try { client.waitForData(receiveDataTimeout); }
-							catch (ClosedChannelException e) { client.closed(); }
-						return;
-					}
-					if (logger.trace())
-						logger.trace("Start receiving the body");
-					// maximum 1MB in memory
-					IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, "HTTP Body");
-					request.getMIME().setBodyReceived(io);
-					client.addToClose(io);
-					try {
-						TransferReceiver transfer = TransferEncodingFactory.create(request.getMIME(), io);
-						client.setAttribute(BODY_TRANSFER_ATTRIBUTE, transfer);
-					} catch (IOException e) {
-						logger.error("Error initializing body transfer", e);
-						HTTPServerResponse response = new HTTPServerResponse();
-						response.setForceClose(true);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, response);
-						onbufferavailable.run();
-						client.close();
-						return;
-					}
-					client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_BODY);
-					receiveBody(client, data, onbufferavailable);
-					return;
-				}
-				if (logger.trace())
-					logger.trace("Request header line received: " + line.toString().trim());
-				if (request.isCommandSet())
-					try { linesReceiver.newLine(s); }
-					catch (Exception e) {
-						logger.error("Error parsing HTTP headers", e);
-						HTTPServerResponse response = new HTTPServerResponse();
-						response.setForceClose(true);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST,
-							"Error parsing HTTP headers: " + e.getMessage(), request, response);
-						line.setLength(0);
-						onbufferavailable.run();
-						return;
-					}
-				else {
-					try { request.setCommand(s); }
-					catch (Exception e) {
-						logger.error("Invalid HTTP command: " + s, e);
-						HTTPServerResponse response = new HTTPServerResponse();
-						response.setForceClose(true);
-						sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, response);
-						line.setLength(0);
-						onbufferavailable.run();
-						return;
-					}
-				}
-				line.setLength(0);
+			if (c != '\n') {
+				line.append(c);
 				continue;
 			}
-			line.append(c);
+			String s;
+			if (line.length() > 0 && line.charAt(line.length() - 1) == '\r')
+				s = line.substring(0, line.length() - 1);
+			else
+				s = line.toString();
+			if (s.isEmpty()) {
+				// end of header
+				client.removeAttribute(HEADERS_RECEIVER_ATTRIBUTE);
+				try { linesReceiver.newLine(s); }
+				catch (Exception e) {
+					errorReadingHeader("Error parsing HTTP headers", e, client, request, onbufferavailable);
+					return;
+				}
+				endOfHeader(client, request, data, onbufferavailable);
+				return;
+			}
+			
+			if (logger.trace())
+				logger.trace("Request header line received: " + line.toString().trim());
+			
+			if (request.isCommandSet()) {
+				try { linesReceiver.newLine(s); }
+				catch (Exception e) {
+					errorReadingHeader("Error parsing HTTP headers", e, client, request, onbufferavailable);
+					line.setLength(0);
+					return;
+				}
+			} else {
+				try { request.setCommand(s); }
+				catch (Exception e) {
+					errorReadingHeader("Invalid HTTP command: " + s, e, client, request, onbufferavailable);
+					line.setLength(0);
+					return;
+				}
+			}
+			line.setLength(0);
 		}
 		onbufferavailable.run();
 		try { client.waitForData(receiveDataTimeout); }
 		catch (ClosedChannelException e) { client.closed(); }
+	}
+	
+	private void errorReadingHeader(String message, Exception e, TCPServerClient client, HTTPRequest request, Runnable onbufferavailable) {
+		logger.error(message, e);
+		HTTPServerResponse response = new HTTPServerResponse();
+		response.setForceClose(true);
+		sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, message + ": " + e.getMessage(), request, response);
+		onbufferavailable.run();
+	}
+	
+	private void endOfHeader(TCPServerClient client, HTTPRequest request, ByteBuffer data, Runnable onbufferavailable) {
+		if (logger.trace()) {
+			logger.trace("End of headers received");
+		}
+		if (logger.debug()) {
+			logger.debug("HTTP Request: " + request.generateCommandLine());
+		}
+		
+		// Analyze headers to check if an upgrade of the protocol is requested
+		if (handleUpgradeRequest(client, request, data, onbufferavailable))
+			return;
+		
+		if (!request.isExpectingBody()) {
+			client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
+			client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_START);
+			if (!data.hasRemaining())
+				onbufferavailable.run();
+			client.removeAttribute(REQUEST_ATTRIBUTE);
+			client.removeAttribute(CURRENT_LINE_ATTRIBUTE);
+			if (logger.trace())
+				logger.trace("Start processing the request");
+			// we are already in a CPU Thread, we can stay here
+			HTTPServerResponse response = new HTTPServerResponse();
+			@SuppressWarnings("unchecked")
+			Async<IOException> previousResponseSent = (Async<IOException>)client.getAttribute(LAST_RESPONSE_SENT_ATTRIBUTE);
+			client.setAttribute(LAST_RESPONSE_SENT_ATTRIBUTE, response.getSent());
+			processRequest(client, request, response, previousResponseSent);
+			if (data.hasRemaining()) {
+				dataReceivedFromClient(client, data, onbufferavailable);
+				return;
+			}
+			if (request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE))
+				try { client.waitForData(receiveDataTimeout); }
+				catch (ClosedChannelException e) { client.closed(); }
+			return;
+		}
+		if (logger.trace())
+			logger.trace("Start receiving the body");
+		// maximum 1MB in memory
+		IOInMemoryOrFile io = new IOInMemoryOrFile(1024 * 1024, Task.PRIORITY_NORMAL, "HTTP Body");
+		request.getMIME().setBodyReceived(io);
+		client.addToClose(io);
+		try {
+			TransferReceiver transfer = TransferEncodingFactory.create(request.getMIME(), io);
+			client.setAttribute(BODY_TRANSFER_ATTRIBUTE, transfer);
+		} catch (IOException e) {
+			logger.error("Error initializing body transfer", e);
+			HTTPServerResponse response = new HTTPServerResponse();
+			response.setForceClose(true);
+			sendError(client, HttpURLConnection.HTTP_BAD_REQUEST, e.getMessage(), request, response);
+			onbufferavailable.run();
+			client.close();
+			return;
+		}
+		client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.RECEIVING_BODY);
+		receiveBody(client, data, onbufferavailable);
+	}
+	
+	private boolean handleUpgradeRequest(TCPServerClient client, HTTPRequest request, ByteBuffer data, Runnable onbufferavailable) {
+		if (upgradableProtocols == null || !request.getMIME().hasHeader(UPGRADE_CONNECTION_HEADER))
+			return false;
+		String conn = request.getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
+		boolean isUpgrade = false;
+		if (conn != null)
+			for (String str : conn.split(","))
+				if (str.equalsIgnoreCase(UPGRADE_CONNECTION_HEADER)) {
+					isUpgrade = true;
+					break;
+				}
+		if (!isUpgrade)
+			return false;
+
+		// there is an upgrade request
+		String protoName = request.getMIME().getFirstHeaderRawValue(UPGRADE_CONNECTION_HEADER).trim().toLowerCase();
+		ServerProtocol proto = upgradableProtocols.get(protoName);
+		if (proto == null)
+			return false;
+
+		// the protocol is supported
+		client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
+		client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
+		logger.debug("Upgrading protocol to " + protoName);
+		proto.startProtocol(client);
+		if (data.hasRemaining())
+			proto.dataReceivedFromClient(client, data, onbufferavailable);
+		else
+			onbufferavailable.run();
+		return true;
 	}
 	
 	private void receiveBody(TCPServerClient client, ByteBuffer data, Runnable onbufferavailable) {
@@ -357,40 +363,44 @@ public class HTTPServerProtocol implements ServerProtocol {
 		return list;
 	}
 	
+	private static class StartSendingResponse extends Task.Cpu.FromRunnable {
+		
+		private StartSendingResponse(Runnable runnable) {
+			super("Start sending HTTP response", Task.PRIORITY_NORMAL, runnable);
+		}
+		
+	}
+	
 	private void processRequest(
 		TCPServerClient client, HTTPRequest request, HTTPServerResponse response,
 		Async<IOException> previousResponseSent
 	) {
 		IAsync<?> processing = processor.process(client, request, response);
 		client.addPending(processing);
-		processing.thenStart(new Task.Cpu<Void, NoException>("Start sending HTTP response", Task.PRIORITY_NORMAL) {
-			@Override
-			public Void run() {
-				if (processing.isCancelled()) {
-					client.close();
-					IO.Readable responseBody = response.getMIME().getBodyToSend();
-					if (responseBody != null) responseBody.closeAsync();
-					response.getSent().cancel(processing.getCancelEvent());
-					return null;
-				}
-				if (processing.hasError()) {
-					Exception error = processing.getError();
-					if (error instanceof HTTPResponseError) {
-						response.setStatus(((HTTPResponseError)error).getStatusCode());
-					} else {
-						response.setStatus(500);
-					}
-				}
-				if (response.getStatusCode() < 100)
-					response.setStatus(500);
-				
-				if (enableRangeRequests)
-					handleRangeRequest(request, response);
-
-				sendResponse(client, request, response, previousResponseSent);
-				return null;
+		processing.thenStart(new StartSendingResponse(() -> {
+			if (processing.isCancelled()) {
+				client.close();
+				IO.Readable responseBody = response.getMIME().getBodyToSend();
+				if (responseBody != null) responseBody.closeAsync();
+				response.getSent().cancel(processing.getCancelEvent());
+				return;
 			}
-		}, true);
+			if (processing.hasError()) {
+				Exception error = processing.getError();
+				if (error instanceof HTTPResponseError) {
+					response.setStatus(((HTTPResponseError)error).getStatusCode());
+				} else {
+					response.setStatus(500);
+				}
+			}
+			if (response.getStatusCode() < 100)
+				response.setStatus(500);
+			
+			if (enableRangeRequests)
+				handleRangeRequest(request, response);
+
+			sendResponse(client, request, response, previousResponseSent);
+		}), true);
 	}
 	
 	/** Send an error response to the client. */
@@ -440,13 +450,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			sendResponseReady(client, request, response);
 			return;
 		}
-		previousResponseSent.thenStart(new Task.Cpu<Void, NoException>("Start sending HTTP response", Task.PRIORITY_NORMAL) {
-			@Override
-			public Void run() {
-				sendResponseReady(client, request, response);
-				return null;
-			}
-		}, true);
+		previousResponseSent.thenStart(new StartSendingResponse(() -> sendResponseReady(client, request, response)), true);
 	}
 	
 	private static void sendResponseReady(
@@ -473,7 +477,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 					sendResponse(client, request, response, body, -1);
 
 			} else {
-				ready.thenStart(new Task.Cpu.FromRunnable("Start sending HTTP response", Task.PRIORITY_NORMAL, () -> {
+				ready.thenStart(new StartSendingResponse(() -> {
 					if (out2in.isFullDataAvailable())
 						sendResponse(client, request, response, body, out2in.getAvailableDataSize());
 					else
@@ -489,8 +493,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 	private static void sendResponse(
 		TCPServerClient client, HTTPRequest request, HTTPServerResponse response, IO.Readable body, long bodySize
 	) {
-		if (!response.getMIME().hasHeader(HTTPResponse.SERVER_HEADER))
-			response.getMIME().setHeaderRaw(HTTPResponse.SERVER_HEADER,
+		if (!response.getMIME().hasHeader(HTTPResponse.HEADER_SERVER))
+			response.getMIME().setHeaderRaw(HTTPResponse.HEADER_SERVER,
 				"net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
 		
 		Supplier<List<MimeHeader>> trailerSupplier = response.getTrailerHeadersSuppliers();
@@ -521,6 +525,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 		byte[] headers = s.toUsAsciiBytes();
 		if (logger.trace())
 			logger.trace("Sending response with headers:\n" + s);
+		
 		Async<IOException> sendHeaders;
 		try {
 			sendHeaders = client.send(
@@ -534,6 +539,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			response.getSent().error(IO.error(e));
 			return;
 		}
+		
 		if (bodySize == 0 && trailerSupplier == null) {
 			// empty answer
 			if (body != null) body.closeAsync();
@@ -549,52 +555,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 			sendResponseBuffered(client, request, response, (IO.Readable.Buffered)body, sendHeaders);
 			return;
 		}
-		MutableLong size = new MutableLong(bodySize);
-		int bufferSize = size.get() > 256 * 1024 ? 256 * 1024 : (int)size.get();
-		Mutable<ByteBuffer> buf = new Mutable<>(ByteBuffer.allocate(bufferSize));
-		Mutable<AsyncSupplier<Integer,IOException>> read = new Mutable<>(body.readFullyAsync(buf.get()));
-		JoinPoint<IOException> jp = new JoinPoint<>();
-		jp.addToJoin(sendHeaders);
-		jp.addToJoin(read.get());
-		jp.start();
-		jp.onDone(new Runnable() {
-			@Override
-			public void run() {
-				if (jp.hasError() || jp.isCancelled()) {
-					body.closeAsync();
-					client.close();
-					if (jp.hasError()) response.getSent().error(jp.getError());
-					else response.getSent().cancel(jp.getCancelEvent());
-					return;
-				}
-				buf.get().flip();
-				size.set(size.get() - read.get().getResult().intValue());
-				Async<IOException> send;
-				try {
-					send = client.send(buf.get(),
-						size.get() > 0 ? false : !request.isConnectionPersistent() || response.isForceClose());
-				} catch (IOException e) {
-					body.closeAsync();
-					client.close();
-					response.getSent().error(e);
-					return;
-				}
-				if (size.get() > 0) {
-					buf.set(ByteBuffer.allocate(bufferSize));
-					read.set(body.readFullyAsync(buf.get()));
-					JoinPoint<IOException> jp = new JoinPoint<>();
-					jp.addToJoin(send);
-					jp.addToJoin(read.get());
-					jp.start();
-					jp.onDone(this);
-				} else {
-					response.getSent().unblock();
-					body.closeAsync();
-					if (request.getMIME().getBodyReceivedAsOutput() != null)
-						request.getMIME().getBodyReceivedAsOutput().closeAsync();
-				}
-			}
-		});
+		
+		sendNextBuffer(client, request, response, sendHeaders, body, bodySize);
 	}
 	
 	private static void sendResponseBuffered(
@@ -680,6 +642,47 @@ public class HTTPServerProtocol implements ServerProtocol {
 			}
 		});
 	}
+
+	private static void sendNextBuffer(
+		TCPServerClient client, HTTPRequest request, HTTPServerResponse response,
+		IAsync<IOException> previousSend, IO.Readable body, long remainingSize
+	) {
+		int bufferSize = remainingSize > 256 * 1024 ? 256 * 1024 : (int)remainingSize;
+		ByteBuffer buf = ByteBuffer.allocate(bufferSize);
+		AsyncSupplier<Integer,IOException> read = body.readFullyAsync(buf);
+		JoinPoint<IOException> jp = new JoinPoint<>();
+		jp.addToJoin(previousSend);
+		jp.addToJoin(read);
+		jp.start();
+		jp.onDone(() -> {
+			if (jp.hasError() || jp.isCancelled()) {
+				body.closeAsync();
+				client.close();
+				if (jp.hasError()) response.getSent().error(jp.getError());
+				else response.getSent().cancel(jp.getCancelEvent());
+				return;
+			}
+			buf.flip();
+			long size = remainingSize - read.getResult().intValue();
+			Async<IOException> send;
+			try {
+				send = client.send(buf, size <= 0 && (!request.isConnectionPersistent() || response.isForceClose()));
+			} catch (IOException e) {
+				body.closeAsync();
+				client.close();
+				response.getSent().error(e);
+				return;
+			}
+			if (size > 0) {
+				sendNextBuffer(client, request, response, send, body, size);
+			} else {
+				response.getSent().unblock();
+				body.closeAsync();
+				if (request.getMIME().getBodyReceivedAsOutput() != null)
+					request.getMIME().getBodyReceivedAsOutput().closeAsync();
+			}
+		});
+	}
 	
 	private static void endOfProcessing(TCPServerClient client, Logger logger) {
 		long now = System.nanoTime();
@@ -716,52 +719,30 @@ public class HTTPServerProtocol implements ServerProtocol {
 		if (!rangeStr.startsWith("bytes=")) return;
 		rangeStr = rangeStr.substring(6).trim();
 		String[] rangesStr = rangeStr.split(",");
+
+		long totalSize;
+		try { totalSize = ((IO.KnownSize)io).getSizeSync(); }
+		catch (Exception t) { return; }
+		
 		if (rangesStr.length == 1) {
-			long totalSize;
-			try { totalSize = ((IO.KnownSize)io).getSizeSync(); }
-			catch (Exception t) { return; }
 			RangeLong range = getRange(rangeStr, totalSize);
-			if (range == null) return;
-			if (range.max < range.min) {
-				response.setStatus(416, "Invalid range");
-				return;
-			}
-			SubIO.Readable.Seekable subIO;
-			if (io instanceof IO.Readable.Buffered)
-				subIO = new SubIO.Readable.Seekable.Buffered(
-					(IO.Readable.Seekable & IO.Readable.Buffered)io,
-					range.min, range.getLength(), io.getSourceDescription(), true);
-			else
-				subIO = new SubIO.Readable.Seekable(
-					(IO.Readable.Seekable)io, range.min, range.getLength(), io.getSourceDescription(), true);
+			SubIO.Readable.Seekable subIO = openRange(range, (IO.Readable.Seekable)io, response);
+			if (subIO == null) return;
 			response.getMIME().setBodyToSend(subIO);
 			response.setStatus(206);
 			response.getMIME().setHeaderRaw("Content-Range", range.min + "-" + range.max + "/" + totalSize);
 			return;
 		}
+		
 		// multipart
 		MultipartEntity multipart = new MultipartEntity("byteranges");
 		for (MimeHeader h : response.getMIME().getHeaders())
 			if (!h.getNameLowerCase().startsWith("content-"))
 				multipart.addHeader(h);
-		long totalSize;
-		try { totalSize = ((IO.KnownSize)io).getSizeSync(); }
-		catch (Exception t) { return; }
 		for (String s : rangesStr) {
 			RangeLong range = getRange(s, totalSize);
-			if (range == null) return;
-			if (range.max < range.min) {
-				response.setStatus(416, "Invalid range");
-				return;
-			}
-			SubIO.Readable.Seekable subIO;
-			if (io instanceof IO.Readable.Buffered)
-				subIO = new SubIO.Readable.Seekable.Buffered(
-					(IO.Readable.Seekable & IO.Readable.Buffered)io,
-					range.min, range.getLength(), io.getSourceDescription(), true);
-			else
-				subIO = new SubIO.Readable.Seekable(
-					(IO.Readable.Seekable)io, range.min, range.getLength(), io.getSourceDescription(), true);
+			SubIO.Readable.Seekable subIO = openRange(range, (IO.Readable.Seekable)io, response);
+			if (subIO == null) return;
 			MimeMessage part = new MimeMessage();
 			part.setBodyToSend(subIO);
 			for (MimeHeader h : response.getMIME().getHeaders())
@@ -801,5 +782,17 @@ public class HTTPServerProtocol implements ServerProtocol {
 			return null;
 		}
 		return new RangeLong(start, end);
+	}
+	
+	private static SubIO.Readable.Seekable openRange(RangeLong range, IO.Readable.Seekable io, HTTPResponse response) {
+		if (range == null) return null;
+		if (range.max < range.min) {
+			response.setStatus(416, "Invalid range");
+			return null;
+		}
+		if (io instanceof IO.Readable.Buffered)
+			return new SubIO.Readable.Seekable.Buffered((IO.Readable.Seekable & IO.Readable.Buffered)io,
+				range.min, range.getLength(), io.getSourceDescription(), true);
+		return new SubIO.Readable.Seekable(io, range.min, range.getLength(), io.getSourceDescription(), true);
 	}
 }

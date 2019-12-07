@@ -172,22 +172,22 @@ public class HTTPClient implements Closeable {
 			if (client instanceof SSLClient) {
 				if (!"https".equals(protocol))
 					return false;
-			}
-			if (!"http".equals(protocol))
+			} else if (!"http".equals(protocol)) {
 				return false;
+			}
 		}
 
 		if (!this.hostname.equals(uri.getHost()))
 			return false;
 		
-		int port = uri.getPort();
-		if (port <= 0) {
+		int p = uri.getPort();
+		if (p <= 0) {
 			if (client instanceof SSLClient)
-				port = DEFAULT_HTTPS_PORT;
+				p = DEFAULT_HTTPS_PORT;
 			else
-				port = DEFAULT_HTTP_PORT;
+				p = DEFAULT_HTTP_PORT;
 		}
-		return port == this.port;
+		return p == this.port;
 	}
 	
 	/**
@@ -243,7 +243,6 @@ public class HTTPClient implements Closeable {
 		
 		connect.onDone(() -> {
 			IAsync<IOException> send = client.send(data);
-			// TODO if the connection has been closed while preparing the request, try to reconnect, but only once
 			if (body == null || (size != null && size.longValue() == 0)) {
 				send.onDone(result);
 				return;
@@ -280,6 +279,7 @@ public class HTTPClient implements Closeable {
 				//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 				if (client instanceof SSLClient) {
 					// we have to create a HTTP tunnel with the proxy
+					@SuppressWarnings("squid:S2095") // it is closed
 					TCPClient tunnelClient = new TCPClient();
 					Async<IOException> tunnelConnect =
 						tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
@@ -301,10 +301,11 @@ public class HTTPClient implements Closeable {
 							// replace connection of SSLClient by the tunnel
 							((SSLClient)client).tunnelConnected(tunnelClient, connect, config.getReceiveTimeout());
 						}, connect), connect), connect);
+					connect.onErrorOrCancel(tunnelClient::close);
 					return connect;
 				}
 				Async<IOException> connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-				request.setPath(url.toString());
+				request.setPath(url);
 				return connect;
 			}
 		}
@@ -663,6 +664,7 @@ public class HTTPClient implements Closeable {
 		return result;
 	}
 	
+	@SuppressWarnings("squid:S1141") // nested try
 	private boolean handleRedirection(
 		HTTPRequest request, HTTPResponse response, int maxRedirect, AsyncSupplier<?, IOException> result,
 		Consumer<HTTPClient> doRedirection
@@ -745,9 +747,7 @@ public class HTTPClient implements Closeable {
 				AsyncSupplier<Long, IOException> seek = io.seekAsync(SeekType.FROM_BEGINNING, 0);
 				seek.onDone(() -> result.unblockSuccess(new Pair<>(response, io)), result);
 			});
-			result.onErrorOrCancel(() -> {
-				io.closeAsync().thenStart(new RemoveFileTask(file, Task.PRIORITY_NORMAL), true);
-			});
+			result.onErrorOrCancel(() -> io.closeAsync().thenStart(new RemoveFileTask(file, Task.PRIORITY_NORMAL), true));
 		}, result), result);
 		return result;
 	}

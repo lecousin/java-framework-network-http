@@ -18,6 +18,7 @@ import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.mime.MimeException;
 import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.MimeUtil;
@@ -27,7 +28,9 @@ import net.lecousin.framework.network.mime.header.ParameterizedHeaderValues;
 /** HTTP Response. */
 public class HTTPResponse {
 	
-	public static final String SERVER_HEADER = "Server";
+	public static final String HEADER_SERVER = "Server";
+	public static final String HEADER_CACHE_CONTROL = "Cache-Control";
+	public static final String HEADER_EXPIRES = "Expires";
 	
 	private int statusCode = -1;
 	private String statusMessage = null;
@@ -107,7 +110,7 @@ public class HTTPResponse {
 	 * @param name name of the cookie to search
 	 * @throws Exception in case the Set-Cookie header cannot be parsed
 	 */
-	public String getCookie(String name) throws Exception {
+	public String getCookie(String name) throws MimeException {
 		for (ParameterizedHeaderValues v : mime.getHeadersValues("Set-Cookie", ParameterizedHeaderValues.class)) {
 			for (ParameterizedHeaderValue value : v.getValues()) {
 				String s = value.getParameter(name);
@@ -120,19 +123,20 @@ public class HTTPResponse {
 	
 	/** Set headers to indicate that the response must not be cached. */
 	public void noCache() {
-		mime.setHeaderRaw("Cache-Control", "no-cache,no-store");
+		mime.setHeaderRaw(HEADER_CACHE_CONTROL, "no-cache,no-store");
 		mime.setHeaderRaw("Pragma", "no-cache");
-		mime.setHeaderRaw("Expires", DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
+		mime.setHeaderRaw(HEADER_EXPIRES, DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
 	}
 	
 	/** Set headers to indicate that the response can be cached for the given duration in milliseconds. */
 	public void publicCache(Long maxAge) {
 		if (maxAge != null) {
-			mime.setHeaderRaw("Cache-Control", "public,max-age=" + maxAge);
-			mime.setHeaderRaw("Expires",DateTimeFormatter.RFC_1123_DATE_TIME.format(
+			mime.setHeaderRaw(HEADER_CACHE_CONTROL, "public,max-age=" + maxAge);
+			mime.setHeaderRaw(HEADER_EXPIRES,DateTimeFormatter.RFC_1123_DATE_TIME.format(
 				Instant.ofEpochMilli(System.currentTimeMillis() + maxAge.longValue()).atZone(ZoneId.of("GMT"))));
-		} else
-			mime.setHeaderRaw("Cache-Control", "public");
+		} else {
+			mime.setHeaderRaw(HEADER_CACHE_CONTROL, "public");
+		}
 	}
 	
 	/** Return true if a body is expected to be received in this response. */
@@ -140,8 +144,7 @@ public class HTTPResponse {
 		if (statusCode == 204) return false;
 		if (statusCode == 205) return false;
 		Long length = mime.getContentLength();
-		if (length != null && length.longValue() == 0) return false;
-		return true;
+		return length == null || length.longValue() > 0;
 	}
 	
 	/** Set status code to 301 with the given location. */

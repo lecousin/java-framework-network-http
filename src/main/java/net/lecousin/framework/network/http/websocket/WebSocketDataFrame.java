@@ -41,29 +41,39 @@ public class WebSocketDataFrame {
 	
 	/** Parse the given received data, return true if the frame is complete, false if more data is needed. */
 	public boolean read(ByteBuffer data) throws IOException {
-		if (headerRead == 0) {
-			byte1 = data.get();
-			headerRead++;
-			if (messageType == 0)
-				messageType = (byte1 & 0xF);
-			if (!data.hasRemaining()) return false;
+		if (headerRead == 0) return readByte1(data);
+		if (headerRead == 1) return readByte2(data);
+		return readNextBytes(data);
+	}
+	
+	private boolean readByte1(ByteBuffer data) throws IOException {
+		byte1 = data.get();
+		headerRead++;
+		if (messageType == 0)
+			messageType = (byte1 & 0xF);
+		if (!data.hasRemaining()) return false;
+		return readByte2(data);
+	}
+	
+	private boolean readByte2(ByteBuffer data) throws IOException {
+		if (!data.hasRemaining()) return false;
+		byte b = data.get();
+		headerRead++;
+		maskPresent = (b & 0x80) != 0;
+		payloadLength = (b & 0x7F);
+		if (payloadLength == 126) {
+			payloadLengthBits = 16;
+			payloadLength = 0;
+		} else if (payloadLength == 127) {
+			payloadLengthBits = 64;
+			payloadLength = 0;
+		} else {
+			payloadLengthBits = 7;
 		}
-		if (headerRead == 1) {
-			if (!data.hasRemaining()) return false;
-			byte b = data.get();
-			headerRead++;
-			maskPresent = (b & 0x80) != 0;
-			payloadLength = (b & 0x7F);
-			if (payloadLength == 126) {
-				payloadLengthBits = 16;
-				payloadLength = 0;
-			} else if (payloadLength == 127) {
-				payloadLengthBits = 64;
-				payloadLength = 0;
-			} else {
-				payloadLengthBits = 7;
-			}
-		}
+		return readNextBytes(data);
+	}
+	
+	private boolean readNextBytes(ByteBuffer data) throws IOException {
 		while (payloadLengthBits == 16 && headerRead < 4) {
 			if (!data.hasRemaining()) return false;
 			byte b = data.get();
