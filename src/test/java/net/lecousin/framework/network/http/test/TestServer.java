@@ -39,7 +39,10 @@ import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.BlockJUnit4ClassRunner;
 
+@RunWith(BlockJUnit4ClassRunner.class)
 public class TestServer extends AbstractHTTPTest {
 
 	private static class TestProcessor implements HTTPRequestProcessor {
@@ -382,9 +385,9 @@ public class TestServer extends AbstractHTTPTest {
 				buf[i] = (byte)(i * 7 % 621);
 			try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
 				HTTPResponse response = client.sendAndReceive(new HTTPRequest().setPathAndQueryString("/test/post?status=200").post(new ByteArrayIO(buf, "test")), true, false, 0).blockResult(0);
-						PreBufferedReadable bio = new PreBufferedReadable(response.getMIME().getBodyReceivedAsInput(), 8192, Task.PRIORITY_NORMAL, 16384, Task.PRIORITY_NORMAL, 10);
+				PreBufferedReadable bio = new PreBufferedReadable(response.getMIME().getBodyReceivedAsInput(), 8192, Task.PRIORITY_NORMAL, 16384, Task.PRIORITY_NORMAL, 10);
 				for (int i = 0; i < buf.length; ++i)
-					Assert.assertEquals(buf[i] & 0xFF, bio.read());
+					Assert.assertEquals("Byte at " + i, buf[i] & 0xFF, bio.read());
 				Assert.assertEquals(-1, bio.read());
 				bio.close();
 			}
