@@ -49,6 +49,10 @@ public class WebSocketClient implements Closeable {
 			conn.close();
 	}
 	
+	public boolean isClosed() {
+		return conn == null || conn.isClosed();
+	}
+	
 	/** Connect and return the selected protocol. */
 	public AsyncSupplier<String, IOException> connect(URI uri, HTTPClientConfiguration config, String... protocols) {
 		String protocol = uri.getScheme();
@@ -223,7 +227,8 @@ public class WebSocketClient implements Closeable {
 			new Task.Cpu.FromRunnable("WebSocket client connection", Task.PRIORITY_NORMAL, () -> {
 				if (response.getStatusCode() != 101) {
 					client.close();
-					result.error(new IOException("Server does not support websocket on this address"));
+					result.error(new IOException("Server does not support websocket on this address, response received is "
+						+ response.getStatusCode()));
 					return;
 				}
 				String accept = response.getMIME().getFirstHeaderRawValue("Sec-WebSocket-Accept");

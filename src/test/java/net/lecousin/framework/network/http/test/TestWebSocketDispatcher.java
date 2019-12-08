@@ -47,12 +47,12 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 
 		@Override
 		public void processTextMessage(TCPServerClient client, String message) {
-			WebSocketServerProtocol.sendTextMessage(client, "Hello World!");
+			sendTextMessage("Hello World!");
 		}
 
 		@Override
 		public void processBinaryMessage(TCPServerClient client, Seekable message) {
-			WebSocketServerProtocol.sendTextMessage(client, "Hello Binary!");
+			sendTextMessage("Hello Binary!");
 		}
 		
 		public int getNbClients() {

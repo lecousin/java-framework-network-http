@@ -19,6 +19,7 @@ import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.application.Version;
+import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.io.IO.Readable.Seekable;
@@ -26,6 +27,7 @@ import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
@@ -103,12 +105,14 @@ public class TestWebSocket extends AbstractHTTPTest {
 		connected = new MutableInteger(0);
 		WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketMessageListener() {
 			@Override
-			public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) {
+			public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) throws HTTPResponseError {
 				System.out.println("WebSocket client connected");
 				connected.inc();
 				for (String p : requestedProtocols)
 					if ("test2".equals(p))
 						return "test2";
+					else if ("test_error".equals(p))
+						throw new HTTPResponseError(501, "test");
 				return null;
 			}
 			@Override
@@ -188,6 +192,21 @@ public class TestWebSocket extends AbstractHTTPTest {
 			throw new AssertionError("No protocol must raise an error");
 		} catch (Exception e) {}
 		finally { client.close(); }
+	}
+	
+	@Test
+	public void testRejectedProtocol() throws Exception {
+		// try a correct protocol
+		WebSocketClient client = new WebSocketClient();
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test_error", "test3");
+		try {
+			conn.blockResult(0);
+			throw new AssertionError("Connection with protocol test_error must fail");
+		} catch (IOException e) {
+			Assert.assertTrue(e.getMessage().contains("501"));
+		} finally {
+			client.close();
+		}
 	}
 	
 	@Test
@@ -344,6 +363,25 @@ public class TestWebSocket extends AbstractHTTPTest {
 	
 	
 	@Test
+	public void testInvalidMessage() throws Exception {
+		WebSocketClient client = new WebSocketClient();
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		String selected = conn.blockResult(0);
+		Assert.assertEquals(1, connected.get());
+		Assert.assertEquals("test2", selected);
+		Mutable<Async<Exception>> sp = new Mutable<>(new Async<>());
+		client.onMessage((frame) -> {
+			if (frame.getMessageType() != WebSocketDataFrame.TYPE_PONG)
+				sp.get().error(new Exception("Unexpected message: " + frame.getMessageType()));
+			else
+				sp.get().unblock();
+		});
+		client.sendMessage(9999, new EmptyReadable("empty", Task.PRIORITY_NORMAL)).blockThrow(0);
+		client.close();
+	}
+
+	
+	@Test
 	public void testProxyConfigurations() throws Exception {
 		WebSocketClient client = new WebSocketClient();
 		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
@@ -427,6 +465,18 @@ public class TestWebSocket extends AbstractHTTPTest {
 			client.sendAndReceive(
 				new HTTPRequest(Method.GET)
 				.setHeaders(
+					new MimeHeader("Upgrade", "websocket")
+				),
+				true, false, 0
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(404, e.getStatusCode());
+		}
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
 					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket")
 				),
@@ -435,6 +485,19 @@ public class TestWebSocket extends AbstractHTTPTest {
 			throw new AssertionError("Error should be thrown");
 		} catch (HTTPResponseError e) {
 			Assert.assertEquals(400, e.getStatusCode());
+		}
+		try (HTTPClient client = HTTPClient.create(new URI(url))) {
+			client.sendAndReceive(
+				new HTTPRequest(Method.GET)
+				.setHeaders(
+					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+					new MimeHeader("Upgrade", "unknown")
+				),
+				true, false, 0
+			).blockResult(0);
+			throw new AssertionError("Error should be thrown");
+		} catch (HTTPResponseError e) {
+			Assert.assertEquals(404, e.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
 			client.sendAndReceive(

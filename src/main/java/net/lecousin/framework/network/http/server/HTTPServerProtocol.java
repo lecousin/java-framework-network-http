@@ -430,22 +430,15 @@ public class HTTPServerProtocol implements ServerProtocol {
 			sendResponseReady(client, request, response);
 			return;
 		}
-		if (previousResponseSent.isCancelled()) {
-			client.close();
-			IO.Readable responseBody = response.getMIME().getBodyToSend();
-			if (responseBody != null) responseBody.closeAsync();
-			response.getSent().cancel(previousResponseSent.getCancelEvent());
-			return;
-		}
-		if (previousResponseSent.hasError()) {
-			client.close();
-			IO.Readable responseBody = response.getMIME().getBodyToSend();
-			if (responseBody != null) responseBody.closeAsync();
-			response.getSent().error(previousResponseSent.getError());
-			return;
-		}
-		if (previousResponseSent.isDone()) {
+		if (previousResponseSent.isSuccessful()) {
 			sendResponseReady(client, request, response);
+			return;
+		}
+		if (previousResponseSent.hasError() || previousResponseSent.isCancelled()) {
+			client.close();
+			IO.Readable responseBody = response.getMIME().getBodyToSend();
+			if (responseBody != null) responseBody.closeAsync();
+			previousResponseSent.forwardIfNotSuccessful(response.getSent());
 			return;
 		}
 		previousResponseSent.thenStart(new StartSendingResponse(() -> sendResponseReady(client, request, response)), true);
