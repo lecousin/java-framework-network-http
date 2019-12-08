@@ -116,7 +116,6 @@ public class TestWebSocket extends AbstractHTTPTest {
 				System.out.println("WebSocket text message received from client: "+message);
 				WebSocketServerProtocol.sendTextMessage(client, "Hello " + message + "!");
 			}
-			@SuppressWarnings("resource")
 			@Override
 			public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, Seekable message) {
 				System.out.println("WebSocket binary message received from client");
