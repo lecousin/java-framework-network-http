@@ -1,6 +1,8 @@
 package net.lecousin.framework.network.http.test.client;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -10,11 +12,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import net.lecousin.framework.concurrent.Task;
+import net.lecousin.framework.concurrent.Threading;
+import net.lecousin.framework.io.FileIO;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOAsInputStream;
+import net.lecousin.framework.io.IOFromInputStream;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.mime.MimeHeader;
@@ -36,12 +43,12 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		return parameters(HTTP_BIN, HTTPS_BIN);
 	}
 	
-	private static class CheckJSONResponse implements ResponseChecker {
+	public static class CheckJSONResponse implements ResponseChecker {
 		
-		private CheckJSONResponse() {
+		public CheckJSONResponse() {
 		}
 		
-		private CheckJSONResponse(FormDataEntity formData) {
+		public CheckJSONResponse(FormDataEntity formData) {
 			this.formData = formData;
 		}
 		
@@ -66,7 +73,8 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 			if (json.containsKey("url")) {
 				String u = (String)json.get("url");
 				URI uri = new URI(u);
-				Assert.assertEquals(request.getPath(), uri.getPath());
+				URI expected = new URI(request.getPath());
+				Assert.assertEquals(expected.getPath(), uri.getPath());
 			}
 		}
 		
@@ -85,6 +93,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 				if ("content-length".equals(h)) continue;
 				if ("host".equals(h)) continue;
 				if ("connection".equals(h)) continue;
+				if ("transfer-encoding".equals(h)) continue;
 				Assert.assertEquals("Header sent: " + h, header.getRawValue(), received.get(h));
 			}
 		}
@@ -196,11 +205,39 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 	}
 	
 	@Test
+	public void testDownload() throws Exception {
+		URI uri = new URI(HTTP_BIN + "stream-bytes/51478");
+		File file = File.createTempFile("test", "download");
+		try (HTTPClient client = HTTPClient.create(uri)) {
+			Pair<HTTPResponse, FileIO.ReadWrite> p = client.download(new HTTPRequest(Method.GET).setURI(uri), file, 0).blockResult(0);
+			Assert.assertEquals(200, p.getValue1().getStatusCode());
+			p.getValue2().close();
+			Assert.assertEquals(51478, file.length());
+		} finally {
+			file.delete();
+		}
+	}
+	
+	@Test
 	public void testPostFormDataWith1Field() throws Exception {
 		FormDataEntity form = new FormDataEntity();
 		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
 
 		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+	}
+	
+	@Test
+	public void testPostFormDataWith1FieldAndUnknownSize() throws Exception {
+		FormDataEntity form = new FormDataEntity();
+		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+
+		HTTPRequest request = new HTTPRequest(Method.POST).setHeaders(new MimeHeader("X-Test", "a test"));
+		for (MimeHeader h : form.getHeaders())
+			request.getMIME().addHeader(h);
+		InputStream is = IOAsInputStream.get(form.getBodyToSend(), false);
+		IO.Readable io = new IOFromInputStream(is, "test form", Threading.getCPUTaskManager(), Task.PRIORITY_NORMAL);
+		request.getMIME().setBodyToSend(io);
+		testRequest("post", request, 0, new CheckJSONResponse(form));
 	}
 	
 	@Test

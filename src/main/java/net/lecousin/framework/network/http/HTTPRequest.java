@@ -219,6 +219,7 @@ public class HTTPRequest extends HTTPMessage {
 		return s.toString();
 	}
 	
+	/** Generate command line and headers into a string. */
 	public UnprotectedStringBuffer generateCommandLineAndHeaders() {
 		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
 		generateCommandLine(s);

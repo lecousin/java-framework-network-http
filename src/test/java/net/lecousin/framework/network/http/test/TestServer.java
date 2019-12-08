@@ -35,6 +35,7 @@ import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.entity.MultipartEntity;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
@@ -92,8 +93,34 @@ public class TestServer extends AbstractHTTPTest {
 		protocol.getProcessor();
 		server.setProtocol(protocol);
 		InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		
-		try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+
+		testSimpleRequests(serverAddress, false);
+		server.close();
+	}
+	
+	@Test
+	public void testHttpsSimpleRequests() throws Exception {
+		// launch server
+		TCPServer server = new TCPServer();
+		HTTPServerProtocol protocol = new HTTPServerProtocol(new TestProcessor());
+		protocol.setReceiveDataTimeout(10000);
+		Assert.assertEquals(10000, protocol.getReceiveDataTimeout());
+		protocol.getProcessor();
+		server.setProtocol(new SSLServerProtocol(sslTest, protocol));
+		InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+
+		testSimpleRequests(serverAddress, true);
+		server.close();
+	}
+	
+	private static void testSimpleRequests(InetSocketAddress serverAddress, boolean ssl) throws Exception {
+		HTTPClientConfiguration config;
+		if (ssl) {
+			config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+			config.setSSLContext(sslTest);
+		} else
+			config = HTTPClientConfiguration.defaultConfiguration;
+		try (HTTPClient client = HTTPClient.create(serverAddress, ssl, config)) {
 			AsyncSupplier<HTTPResponse, IOException> get;
 			
 			get = client.sendAndReceive(new HTTPRequest(Method.GET).setPathAndQueryString("/test/get?status=200&test=hello"), true, false, 0);
@@ -125,7 +152,6 @@ public class TestServer extends AbstractHTTPTest {
 					throw new AssertionError("Unexpected parameter " + p.getValue1());
 			}
 		}
-		server.close();
 	}
 	
 	private static void check(AsyncSupplier<HTTPResponse, IOException> req, int status, String expectedXTest) throws Exception {

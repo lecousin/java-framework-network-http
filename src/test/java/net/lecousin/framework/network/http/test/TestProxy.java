@@ -12,13 +12,9 @@ import java.util.List;
 
 import javax.net.ssl.SSLContext;
 
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
@@ -34,8 +30,14 @@ import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor.Filter;
+import net.lecousin.framework.network.http.test.client.TestHttpClientToHttpBin;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
+
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class TestProxy extends AbstractHTTPTest {
 	
@@ -73,6 +75,8 @@ public class TestProxy extends AbstractHTTPTest {
 		Assert.assertEquals(200, response.getStatusCode());
 		MemoryIO io = new MemoryIO(4096, "test");
 		http.receiveBody(response, io, 8192).blockThrow(0);
+		io.seekSync(SeekType.FROM_BEGINNING, 0);
+		new TestHttpClientToHttpBin.CheckJSONResponse().check(request, response, null);
 		http.close();
 	}
 
@@ -101,6 +105,8 @@ public class TestProxy extends AbstractHTTPTest {
 		Assert.assertEquals(200, response.getStatusCode());
 		MemoryIO io = new MemoryIO(4096, "test");
 		http.receiveBody(response, io, 8192).blockThrow(0);
+		io.seekSync(SeekType.FROM_BEGINNING, 0);
+		new TestHttpClientToHttpBin.CheckJSONResponse().check(request, response, null);
 		http.close();
 	}
 
