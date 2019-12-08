@@ -3,6 +3,7 @@ package net.lecousin.framework.network.http.test;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.log.LoggerFactory;
+import net.lecousin.framework.network.NetworkManager;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
@@ -22,6 +23,8 @@ public abstract class AbstractHTTPTest extends AbstractNetworkTest {
 		lf.getLogger(MimeMessage.class).setLevel(Level.TRACE);
 		lf.getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
 		lf.getLogger(HTTPClient.class).setLevel(Level.TRACE);
+		NetworkManager.get().getDataLogger().setLevel(Level.INFO);
+		NetworkManager.get().getLogger().setLevel(Level.INFO);
 	}
 	
 	public static final String HTTP_BIN_DOMAIN = "eu.httpbin.org";
