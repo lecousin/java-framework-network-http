@@ -562,16 +562,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 	) {
 		body.readNextBufferAsync().onDone(
 			buffer -> previousSend.onDone(() -> {
-				if (previousSend.isCancelled()) {
+				if (!previousSend.isSuccessful()) {
 					body.closeAsync();
 					client.close();
-					response.getSent().cancel(previousSend.getCancelEvent());
-					return;
-				}
-				if (previousSend.hasError()) {
-					body.closeAsync();
-					client.close();
-					response.getSent().error(previousSend.getError());
+					previousSend.forwardIfNotSuccessful(response.getSent());
 					return;
 				}
 				if (buffer == null) {
@@ -652,11 +646,10 @@ public class HTTPServerProtocol implements ServerProtocol {
 		jp.addToJoin(read);
 		jp.start();
 		jp.onDone(() -> {
-			if (jp.hasError() || jp.isCancelled()) {
+			if (!jp.isSuccessful()) {
 				body.closeAsync();
 				client.close();
-				if (jp.hasError()) response.getSent().error(jp.getError());
-				else response.getSent().cancel(jp.getCancelEvent());
+				jp.forwardIfNotSuccessful(response.getSent());
 				return;
 			}
 			buf.flip();

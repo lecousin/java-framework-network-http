@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
+import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.io.IO;
@@ -309,6 +310,9 @@ public class TestServer extends AbstractHTTPTest {
 		testInvalidRequest("GET /titi\r\n\r\n", serverPort, 400);
 		testInvalidRequest("GET\r\n\r\n", serverPort, 400);
 		testInvalidRequest("GET tutu FTP/10.51\r\n\r\n", serverPort, 400);
+		testInvalidRequest("GET /test HTTP/1.1\r\n\tFollowing: nothing\r\n\r\n", serverPort, 400);
+		testInvalidRequest("POST /test/post?status=200 HTTP/1.1\r\nTransfer-Encoding: identity\r\n\r\n", serverPort, 400);
+		testInvalidRequest("GET /titi HTTP/1.1\r\n\r\n", serverPort, 500);
 		server.close();
 	}
 	
@@ -424,4 +428,47 @@ public class TestServer extends AbstractHTTPTest {
 		}
 	}
 	
+	private static class TestTrailerTimeProcessor implements HTTPRequestProcessor {
+		
+		@Override
+		public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+			response.setStatus(200);
+			response.addHeaderRaw("X-Time-Start", client.getAttribute(HTTPServerProtocol.REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE).toString());
+			response.addHeaderRaw("X-Time-Send", Long.toString(System.nanoTime()));
+			response.addTrailerHeader("X-Time-End", () -> Long.toString(System.nanoTime()));
+			response.addTrailerHeader("X-Final", () -> "test");
+			response.getMIME().setBodyToSend(new ByteArrayIO(new byte[123456], "test"));
+			return new Async<>(true);
+		}
+		
+	}
+	
+	@Test
+	public void testTrailerTime() throws Exception {
+		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.INFO);
+		try {
+			TCPServer server = new TCPServer();
+			server.setProtocol(new HTTPServerProtocol(new TestTrailerTimeProcessor()));
+			InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+	
+			try (HTTPClient client = HTTPClient.create(serverAddress, false)) {
+				HTTPResponse response = client.sendAndReceive(new HTTPRequest(Method.GET).setPathAndQueryString("/tutu"), true, true, 0).blockResult(0);
+				Assert.assertTrue(response.getMIME().hasHeader("X-Time-Start"));
+				Assert.assertTrue(response.getMIME().hasHeader("X-Time-Send"));
+				Assert.assertTrue(response.getMIME().hasHeader("X-Time-End"));
+				Assert.assertTrue(response.getMIME().hasHeader("X-Final"));
+				long start = Long.parseLong(response.getMIME().getFirstHeaderRawValue("X-Time-Start"));
+				long send = Long.parseLong(response.getMIME().getFirstHeaderRawValue("X-Time-Send"));
+				long end = Long.parseLong(response.getMIME().getFirstHeaderRawValue("X-Time-End"));
+				Assert.assertTrue(send >= start);
+				Assert.assertTrue(end >= send);
+				Assert.assertEquals("test", response.getMIME().getFirstHeaderRawValue("X-Final"));
+			}
+			server.close();
+		} finally {
+			LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
+			LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class).setLevel(Level.TRACE);
+		}
+	}
 }
