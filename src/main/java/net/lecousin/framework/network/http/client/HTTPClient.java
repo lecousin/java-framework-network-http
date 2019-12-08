@@ -1,6 +1,7 @@
 package net.lecousin.framework.network.http.client;
 
 import java.io.Closeable;
+import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -15,10 +16,10 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
-import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
 import net.lecousin.framework.concurrent.async.CancelException;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.tasks.drives.RemoveFileTask;
@@ -28,12 +29,14 @@ import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.out2in.OutputToInput;
+import net.lecousin.framework.log.Logger;
+import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
-import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
 import net.lecousin.framework.network.mime.MimeHeader;
@@ -43,28 +46,27 @@ import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.network.mime.transfer.TransferReceiver;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.UnprotectedString;
-import net.lecousin.framework.util.UnprotectedStringBuffer;
 
 /** HTTP client. */
 public class HTTPClient implements Closeable {
 	
-	public static final String USER_AGENT = "net.lecousin.framework.network.http.client/" + LibraryVersion.VERSION;
+	/** Return the default HTTPS port for an SSLClient else the default HTTP port. */
+	public static int getDefaultPort(TCPClient client) {
+		return client instanceof SSLClient ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
+	}
 	
-	public static final int DEFAULT_HTTP_PORT = 80;
-	public static final int DEFAULT_HTTPS_PORT = 443;
-
 	/** Constructor. */
 	public HTTPClient(TCPClient client, String hostname, int port, HTTPClientConfiguration config) {
 		this.client = client;
 		this.hostname = hostname;
 		this.port = port;
 		this.config = config;
+		this.logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPClient.class);
 	}
 
 	/** Constructor. */
 	public HTTPClient(TCPClient client, String hostname, HTTPClientConfiguration config) {
-		this(client, hostname, client instanceof SSLClient ? DEFAULT_HTTPS_PORT : DEFAULT_HTTP_PORT, config);
+		this(client, hostname, getDefaultPort(client), config);
 	}
 	
 	/** Create a client for the given URI. */
@@ -79,9 +81,9 @@ public class HTTPClient implements Closeable {
 		int port = uri.getPort();
 		if (port <= 0) {
 			if ("http".equals(protocol))
-				port = DEFAULT_HTTP_PORT;
+				port = HTTPConstants.DEFAULT_HTTP_PORT;
 			else
-				port = DEFAULT_HTTPS_PORT;
+				port = HTTPConstants.DEFAULT_HTTPS_PORT;
 		}
 		
 		TCPClient client;
@@ -131,6 +133,7 @@ public class HTTPClient implements Closeable {
 	protected String hostname;
 	protected int port;
 	protected HTTPClientConfiguration config;
+	private Logger logger;
 	
 	public TCPClient getTCPClient() {
 		return client;
@@ -155,9 +158,9 @@ public class HTTPClient implements Closeable {
 			url.append("http://");
 		url.append(hostname);
 		if (client instanceof SSLClient) {
-			if (port != DEFAULT_HTTPS_PORT)
+			if (port != HTTPConstants.DEFAULT_HTTPS_PORT)
 				url.append(':').append(port);
-		} else if (port != DEFAULT_HTTP_PORT) {
+		} else if (port != HTTPConstants.DEFAULT_HTTP_PORT) {
 			url.append(':').append(port);
 		}
 		url.append(request.getPath());
@@ -183,9 +186,9 @@ public class HTTPClient implements Closeable {
 		int p = uri.getPort();
 		if (p <= 0) {
 			if (client instanceof SSLClient)
-				p = DEFAULT_HTTPS_PORT;
+				p = HTTPConstants.DEFAULT_HTTPS_PORT;
 			else
-				p = DEFAULT_HTTP_PORT;
+				p = HTTPConstants.DEFAULT_HTTP_PORT;
 		}
 		return p == this.port;
 	}
@@ -201,7 +204,7 @@ public class HTTPClient implements Closeable {
 	 * 	the Transfer-Encoding header is set to chunked.</li>
 	 * <li>If it implements IO.Readable.Buffered, the method readNextBufferAsync will be used to send
 	 * 	buffer by buffer as soon as they are ready. Else a default buffer size is used: if the total size
-	 *  is known, the buffer size is set to 1MB for a body larger than 4MB, to 512KB for a body larger
+	 *  is known, the buffer size is set to 1MB for a body larger than 8MB, to 512KB for a body larger
 	 *  than 1MB, 64KB for a body larger than 128KB, 16KB for a body larger than 32KB, or a single buffer
 	 *  for a size less than 32KB.
 	 * </ul>
@@ -232,7 +235,7 @@ public class HTTPClient implements Closeable {
 				}
 				//request.getMIME().setHeader(MIME.TRANSFER_ENCODING, "8bit");
 			} else {
-				request.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
+				request.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
 				size = null;
 			}
 		} else {
@@ -242,6 +245,7 @@ public class HTTPClient implements Closeable {
 		ByteBuffer data = generateCommandAndHeaders(request);
 		
 		connect.onDone(() -> {
+			if (logger.debug()) logger.debug("Connected to server, send headers: " + request);
 			IAsync<IOException> send = client.send(data);
 			if (body == null || (size != null && size.longValue() == 0)) {
 				send.onDone(result);
@@ -279,6 +283,7 @@ public class HTTPClient implements Closeable {
 				//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 				if (client instanceof SSLClient) {
 					// we have to create a HTTP tunnel with the proxy
+					if (logger.debug()) logger.debug("Establishing a tunnel connection with proxy " + inet);
 					@SuppressWarnings("squid:S2095") // it is closed
 					TCPClient tunnelClient = new TCPClient();
 					Async<IOException> tunnelConnect =
@@ -286,7 +291,7 @@ public class HTTPClient implements Closeable {
 					Async<IOException> connect = new Async<>();
 					// prepare the CONNECT request
 					HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-					connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+					connectRequest.getMIME().addHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
 					ByteBuffer data = generateCommandAndHeaders(connectRequest);
 					tunnelConnect.onDone(
 						() -> tunnelClient.send(data).onDone(
@@ -304,33 +309,31 @@ public class HTTPClient implements Closeable {
 					connect.onErrorOrCancel(tunnelClient::close);
 					return connect;
 				}
+				if (logger.debug()) logger.debug("Connecting to proxy " + inet);
 				Async<IOException> connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
 				request.setPath(url);
 				return connect;
 			}
 		}
 		// direct connection
+		if (logger.debug()) logger.debug("Connecting to server " + hostname + ":" + port);
 		return client.connect(
 			new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
 	}
 	
 	private static ByteBuffer generateCommandAndHeaders(HTTPRequest request) {
-		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
-		request.generateCommandLine(s);
-		s.append("\r\n");
-		request.getMIME().appendHeadersTo(s);
-		s.append("\r\n");
-		return ByteBuffer.wrap(s.toUsAsciiBytes());
+		return ByteBuffer.wrap(request.generateCommandLineAndHeaders().toUsAsciiBytes());
 	}
 	
 	private IAsync<IOException> sendBody(IO.Readable body, Long size, HTTPRequest request) {
+		if (logger.debug()) logger.debug("Sending request body to server");
 		if (body instanceof IO.KnownSize) {
 			if (body instanceof IO.Readable.Buffered)
 				return IdentityTransfer.send(client, (IO.Readable.Buffered)body);
 			int bufferSize;
 			int maxBuffers;
 			long si = size.longValue();
-			if (si >= 4 * 1024 * 1024) {
+			if (si >= 8 * 1024 * 1024) {
 				bufferSize = 1024 * 1024;
 				maxBuffers = 4;
 			} else if (si >= 1024 * 1024) {
@@ -369,99 +372,48 @@ public class HTTPClient implements Closeable {
 		AsyncSupplier<HTTPResponse, IOException> responseHeaderListener,
 		AsyncSupplier<HTTPResponse, IOException> outputReceived
 	) {
-		receiveResponseHeader().listen(new Listener<HTTPResponse, IOException>() {
-			@Override
-			public void ready(HTTPResponse response) {
-				if (!response.isBodyExpected()) {
-					if (responseHeaderListener != null) responseHeaderListener.unblockSuccess(response);
-					outputReceived.unblockSuccess(response);
-					return;
-				}
-				OutputToInput output = new OutputToInput(io, source);
-				try {
-					response.getMIME().setBodyReceived(output);
-					TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output);
-					if (!transfer.isExpectingData()) {
-						output.endOfData();
-						if (responseHeaderListener != null)
-							responseHeaderListener.unblockSuccess(response);
-						outputReceived.unblockSuccess(response);
-					} else {
-						if (responseHeaderListener != null)
-							responseHeaderListener.unblockSuccess(response);
-						Async<IOException> result = new Async<>();
-						receiveBody(transfer, result, bufferSize);
-						result.onDone(() -> {
-							output.endOfData();
-							outputReceived.unblockSuccess(response);
-						}, outputReceived);
-					}
-				} catch (IOException error) {
-					outputReceived.unblockError(error);
-				}
-			}
-			
-			@Override
-			public void error(IOException error) {
-				if (responseHeaderListener != null) responseHeaderListener.unblockError(error);
-				outputReceived.error(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				if (responseHeaderListener != null) responseHeaderListener.unblockCancel(event);
-				outputReceived.cancel(event);
-			}
+		AsyncSupplier<HTTPResponse, IOException> ondone = new AsyncSupplier<>();
+		Mutable<OutputToInput> o2i = new Mutable<>(null);
+		receiveResponse(
+			responseHeaderListener,
+			response -> {
+				OutputToInput out = new OutputToInput(io, source);
+				o2i.set(out);
+				return new Pair<>(out, Integer.valueOf(bufferSize));
+			},
+			ondone
+		);
+		ondone.onDone(response -> {
+			if (o2i.get() != null)
+				o2i.get().endOfData();
+			outputReceived.unblockSuccess(response);
+		}, error -> {
+			if (o2i.get() != null)
+				o2i.get().signalErrorBeforeEndOfData(error);
+			outputReceived.error(error);
+		}, cancel -> {
+			if (o2i.get() != null)
+				o2i.get().signalErrorBeforeEndOfData(IO.errorCancelled(cancel));
+			outputReceived.cancel(cancel);
 		});
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveResponse(
+	public <TIO extends IO.Writable & IO.Readable> AsyncSupplier<HTTPResponse, IOException> receiveResponse(
 		AsyncSupplier<HTTPResponse,IOException> responseHeaderListener,
 		TIO output, int bufferSize
 	) {
-		Async<IOException> result = new Async<>();
-		receiveResponseHeader().listen(new Listener<HTTPResponse, IOException>() {
-			@Override
-			public void ready(HTTPResponse response) {
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockSuccess(response);
-				if (!response.isBodyExpected()) {
-					result.unblock();
-					return;
-				}
-				try {
-					response.getMIME().setBodyReceived(output);
-					TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output);
-					if (!transfer.isExpectingData()) {
-						result.unblock();
-						return;
-					}
-					receiveBody(transfer, result, bufferSize);
-				} catch (IOException error) {
-					result.error(error);
-				}
-			}
-			
-			@Override
-			public void error(IOException error) {
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockError(error);
-				result.error(error);
-			}
-			
-			@Override
-			public void cancelled(CancelException event) {
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockCancel(event);
-				result.cancel(event);
-			}
-		});
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		receiveResponse(
+			responseHeaderListener,
+			response -> new Pair<>(output, Integer.valueOf(bufferSize)),
+			result
+		);
 		return result;
 	}
 	
 	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveResponse(
+	public <TIO extends IO.Writable & IO.Readable> AsyncSupplier<HTTPResponse, IOException> receiveResponse(
 		TIO output, int bufferSize
 	) {
 		return receiveResponse(null, output, bufferSize);
@@ -474,32 +426,25 @@ public class HTTPClient implements Closeable {
 	 * If the provider provides a null pair, the body is not received.
 	 */
 	public <TIO extends IO.Writable & IO.Readable> void receiveResponse(
+		AsyncSupplier<HTTPResponse,IOException> responseHeaderListener,
 		Function<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
 		AsyncSupplier<HTTPResponse, IOException> onReceived
 	) {
 		receiveResponseHeader().onDone(
 			response -> {
+				if (logger.debug()) logger.debug("Response headers received, start to receive response body");
+				if (responseHeaderListener != null)
+					responseHeaderListener.unblockSuccess(response);
 				if (!response.isBodyExpected()) {
 					onReceived.unblockSuccess(response);
 					return;
 				}
 				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.apply(response);
-				if (output == null)
+				if (output == null) {
 					onReceived.unblockSuccess(response);
-				else {
-					try {
-						response.getMIME().setBodyReceived(output.getValue1());
-						TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), output.getValue1());
-						if (!transfer.isExpectingData()) {
-							onReceived.unblockSuccess(response);
-							return;
-						}
-						Async<IOException> result = new Async<>();
-						receiveBody(transfer, result, output.getValue2().intValue());
-						result.onDone(() -> onReceived.unblockSuccess(response), onReceived);
-					} catch (IOException error) {
-						onReceived.error(error);
-					}
+				} else {
+					Async<IOException> result = receiveBody(response, output.getValue1(), output.getValue2().intValue());
+					result.onDone(() -> onReceived.unblockSuccess(response), onReceived);
 				}
 			},
 			onReceived
@@ -533,12 +478,14 @@ public class HTTPClient implements Closeable {
 		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).onDone(
 		data -> {
 			if (data == null) {
-				result.error(new IOException("Unexpected end of data"));
+				result.error(new EOFException("Unexpected end of data"));
 				return;
 			}
+			if (logger.trace()) logger.trace("Consuming response body data: " + data.remaining());
 			AsyncSupplier<Boolean,IOException> t = transfer.consume(data);
 			t.onDone(end -> {
 				if (end.booleanValue()) {
+					if (logger.debug()) logger.debug("End of response body");
 					if (data.hasRemaining()) {
 						// TODO it must not happen, but we have to request to the transfer,
 						// how many bytes are expected!
@@ -674,7 +621,7 @@ public class HTTPClient implements Closeable {
 		int code = response.getStatusCode();
 		if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308)
 			return false;
-		String location = response.getMIME().getFirstHeaderRawValue("Location");
+		String location = response.getMIME().getFirstHeaderRawValue(HTTPConstants.Headers.Response.LOCATION);
 		if (location == null)
 			return false;
 		try {

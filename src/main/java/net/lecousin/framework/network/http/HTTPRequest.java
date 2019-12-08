@@ -19,6 +19,8 @@ import net.lecousin.framework.network.mime.MimeHeader;
 import net.lecousin.framework.network.mime.MimeMessage;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.UnprotectedString;
+import net.lecousin.framework.util.UnprotectedStringBuffer;
 
 /** HTTP request. */
 public class HTTPRequest extends HTTPMessage {
@@ -34,10 +36,6 @@ public class HTTPRequest extends HTTPMessage {
 		TRACE,
 		CONNECT,
 	}
-	
-	public static final String HEADER_HOST = "Host";
-	public static final String HEADER_USER_AGENT = "User-Agent";
-	public static final String HEADER_CONNECTION = "Connection";
 	
 	// Constructors
 	
@@ -219,6 +217,20 @@ public class HTTPRequest extends HTTPMessage {
 		StringBuilder s = new StringBuilder(128);
 		generateCommandLine(s);
 		return s.toString();
+	}
+	
+	public UnprotectedStringBuffer generateCommandLineAndHeaders() {
+		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
+		generateCommandLine(s);
+		s.append("\r\n");
+		getMIME().appendHeadersTo(s);
+		s.append("\r\n");
+		return s;
+	}
+	
+	@Override
+	public String toString() {
+		return generateCommandLineAndHeaders().toString();
 	}
 	
 	// Content

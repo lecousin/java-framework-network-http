@@ -1,5 +1,6 @@
 package net.lecousin.framework.network.http.client.interceptors;
 
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.client.HTTPRequestInterceptor;
 
@@ -15,8 +16,10 @@ public class ConnectionInterceptor implements HTTPRequestInterceptor {
 	
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
-		if (!request.getMIME().hasHeader(HTTPRequest.HEADER_CONNECTION))
-			request.getMIME().setHeaderRaw(HTTPRequest.HEADER_CONNECTION, keepAlive ? "Keep-Alive" : "Close");
+		if (!request.getMIME().hasHeader(HTTPConstants.Headers.Request.CONNECTION))
+			request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.CONNECTION,
+				keepAlive ? HTTPConstants.Headers.Request.CONNECTION_VALUE_KEEP_ALIVE
+						  : HTTPConstants.Headers.Request.CONNECTION_VALUE_CLOSE);
 	}
 	
 }

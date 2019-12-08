@@ -10,6 +10,7 @@ import net.lecousin.framework.io.out2in.OutputToInputBuffers;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
@@ -89,7 +90,7 @@ public class HTTPRequestForwarder {
 	
 	protected void prepareRequest(HTTPRequest request, String host, int port, boolean secure) {
 		StringBuilder hostname = new StringBuilder(host);
-		if (port != (secure ? HTTPClient.DEFAULT_HTTPS_PORT : HTTPClient.DEFAULT_HTTP_PORT))
+		if (port != (secure ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT))
 			hostname.append(':').append(port);
 		request.getMIME().setHeaderRaw("Host", hostname.toString());
 		request.getMIME().setBodyToSend(request.getMIME().getBodyReceivedAsInput());

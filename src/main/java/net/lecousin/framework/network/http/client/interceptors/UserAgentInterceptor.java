@@ -1,5 +1,6 @@
 package net.lecousin.framework.network.http.client.interceptors;
 
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.client.HTTPRequestInterceptor;
 
@@ -17,8 +18,8 @@ public class UserAgentInterceptor implements HTTPRequestInterceptor {
 	
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
-		if (force || !request.getMIME().hasHeader(HTTPRequest.HEADER_USER_AGENT))
-			request.getMIME().setHeaderRaw(HTTPRequest.HEADER_USER_AGENT, userAgent);
+		if (force || !request.getMIME().hasHeader(HTTPConstants.Headers.Request.USER_AGENT))
+			request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.USER_AGENT, userAgent);
 	}
 	
 }

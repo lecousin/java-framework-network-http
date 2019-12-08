@@ -1,5 +1,6 @@
 package net.lecousin.framework.network.http.client.interceptors;
 
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.client.HTTPRequestInterceptor;
 
@@ -8,11 +9,11 @@ public class EnsureHostInterceptor implements HTTPRequestInterceptor {
 
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
-		if (!request.getMIME().hasHeader(HTTPRequest.HEADER_HOST)) {
+		if (!request.getMIME().hasHeader(HTTPConstants.Headers.Request.HOST)) {
 			if (port != 80)
-				request.getMIME().setHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+				request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
 			else
-				request.getMIME().setHeaderRaw(HTTPRequest.HEADER_HOST, hostname);
+				request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname);
 		}
 	}
 	

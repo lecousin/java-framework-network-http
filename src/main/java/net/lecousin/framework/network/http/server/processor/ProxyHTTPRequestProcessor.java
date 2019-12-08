@@ -1,6 +1,7 @@
 package net.lecousin.framework.network.http.server.processor;
 
 import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -11,10 +12,10 @@ import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
-import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -109,7 +110,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 
 		if (Method.CONNECT.equals(request.getMethod())) {
 			if (!allowConnect) {
-				response.setStatus(405, "CONNECT method is not allowed on this server");
+				response.setStatus(HttpURLConnection.HTTP_BAD_METHOD, "CONNECT method is not allowed on this server");
 				return new Async<>(true);
 			}
 			return openTunnel(client, request, response);
@@ -128,7 +129,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		
 		int i = path.indexOf(':');
 		if (i < 0) {
-			response.setStatus(404, "Invalid URL");
+			response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Invalid URL");
 			return new Async<>(true);
 		}
 		
@@ -139,7 +140,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		if (allowForwardFromHttpToHttps && protocol.equals("https"))
 			return forwardHttpsRequest(request, response);
 		
-		response.setStatus(404, "Invalid protocol");
+		response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Invalid protocol");
 		return new Async<>(true);
 	}
 	
@@ -172,14 +173,14 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 		try { uri = new URI(path); }
 		catch (Exception t) {
 			logger.error("Invalid requested URL: " + path, t);
-			response.setStatus(500, "Invalid URL");
+			response.setStatus(HttpURLConnection.HTTP_BAD_REQUEST, "Invalid URL");
 			return new Async<>(true);
 		}
 		
 		String host = uri.getHost();
 		int port = uri.getPort();
 		if (port == -1)
-			port = ssl ? HTTPClient.DEFAULT_HTTPS_PORT : HTTPClient.DEFAULT_HTTP_PORT;
+			port = ssl ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
 		path = uri.getRawPath();
 		
 		request.setPath(path);
@@ -207,7 +208,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 				host = host.substring(0, i);
 			} catch (Exception t) {
 				logger.error("Invalid address " + host, t);
-				response.setStatus(500, "Invalid address " + host);
+				response.setStatus(HttpURLConnection.HTTP_BAD_REQUEST, "Invalid address " + host);
 				return new Async<>(true);
 			}
 

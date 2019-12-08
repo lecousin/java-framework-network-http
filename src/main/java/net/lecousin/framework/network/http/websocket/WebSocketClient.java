@@ -28,6 +28,7 @@ import net.lecousin.framework.io.encoding.Base64;
 import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
@@ -55,7 +56,7 @@ public class WebSocketClient implements Closeable {
 		else protocol = protocol.toLowerCase();
 		boolean secure = protocol.equals("wss");
 		int port = uri.getPort();
-		if (port <= 0) port = secure ? HTTPClient.DEFAULT_HTTPS_PORT : HTTPClient.DEFAULT_HTTP_PORT;
+		if (port <= 0) port = secure ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
 		return connect(uri.getHost(), port, uri.getPath(), secure, config, protocols);
 	}
 	
@@ -102,7 +103,7 @@ public class WebSocketClient implements Closeable {
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		// prepare the CONNECT request
 		HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-		connectRequest.getMIME().addHeaderRaw(HTTPRequest.HEADER_HOST, hostname + ":" + port);
+		connectRequest.getMIME().addHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
 		StringBuilder s = new StringBuilder(512);
 		connectRequest.generateCommandLine(s);
 		s.append("\r\n");
@@ -181,8 +182,8 @@ public class WebSocketClient implements Closeable {
 		HTTPClient httpClient = new HTTPClient(client, hostname, port, config);
 		HTTPRequest request = new HTTPRequest(Method.GET, path);
 		// Upgrade connection
-		request.getMIME().addHeaderRaw(HTTPRequest.HEADER_CONNECTION, "Upgrade");
-		request.getMIME().addHeaderRaw("Upgrade", "websocket");
+		request.getMIME().addHeaderRaw(HTTPConstants.Headers.Request.CONNECTION, HTTPConstants.Headers.Request.CONNECTION_VALUE_UPGRADE);
+		request.getMIME().addHeaderRaw(HTTPConstants.Headers.Request.UPGRADE, "websocket");
 		// Generate random key
 		Random rand = LCCore.getApplication().getInstance(Random.class);
 		if (rand == null) {

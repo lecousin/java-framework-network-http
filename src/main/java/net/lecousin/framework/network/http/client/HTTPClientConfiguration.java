@@ -9,6 +9,7 @@ import java.util.List;
 import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.network.SocketOptionValue;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.interceptors.ConnectionInterceptor;
 import net.lecousin.framework.network.http.client.interceptors.EnsureHostInterceptor;
 import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
@@ -20,12 +21,12 @@ public class HTTPClientConfiguration {
 	public static final HTTPClientConfiguration defaultConfiguration = new HTTPClientConfiguration();
 	
 	static {
-		basicConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPClient.USER_AGENT, false));
+		basicConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
 		basicConfiguration.appendInterceptor(new EnsureHostInterceptor());
 		
 		defaultConfiguration.setConnectionTimeout(30000);
 		defaultConfiguration.setReceiveTimeout(60000);
-		defaultConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPClient.USER_AGENT, false));
+		defaultConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
 		defaultConfiguration.appendInterceptor(new ConnectionInterceptor(true));
 		defaultConfiguration.appendInterceptor(new EnsureHostInterceptor());
 		defaultConfiguration.setProxySelector(ProxySelector.getDefault());

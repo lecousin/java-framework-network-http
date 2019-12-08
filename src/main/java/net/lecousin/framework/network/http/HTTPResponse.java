@@ -22,10 +22,6 @@ import net.lecousin.framework.network.mime.header.ParameterizedHeaderValues;
 /** HTTP Response. */
 public class HTTPResponse extends HTTPMessage {
 	
-	public static final String HEADER_SERVER = "Server";
-	public static final String HEADER_CACHE_CONTROL = "Cache-Control";
-	public static final String HEADER_EXPIRES = "Expires";
-	
 	private int statusCode = -1;
 	private String statusMessage = null;
 	
@@ -91,19 +87,20 @@ public class HTTPResponse extends HTTPMessage {
 	
 	/** Set headers to indicate that the response must not be cached. */
 	public void noCache() {
-		setHeaderRaw(HEADER_CACHE_CONTROL, "no-cache,no-store");
-		setHeaderRaw("Pragma", "no-cache");
-		setHeaderRaw(HEADER_EXPIRES, DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
+		setHeaderRaw(HTTPConstants.Headers.Response.CACHE_CONTROL, "no-cache,no-store");
+		setHeaderRaw(HTTPConstants.Headers.Response.PRAGMA, "no-cache");
+		setHeaderRaw(HTTPConstants.Headers.Response.EXPIRES,
+			DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.EPOCH.atZone(ZoneId.of("GMT"))));
 	}
 	
 	/** Set headers to indicate that the response can be cached for the given duration in milliseconds. */
 	public void publicCache(Long maxAge) {
 		if (maxAge != null) {
-			setHeaderRaw(HEADER_CACHE_CONTROL, "public,max-age=" + maxAge);
-			setHeaderRaw(HEADER_EXPIRES,DateTimeFormatter.RFC_1123_DATE_TIME.format(
+			setHeaderRaw(HTTPConstants.Headers.Response.CACHE_CONTROL, "public,max-age=" + maxAge);
+			setHeaderRaw(HTTPConstants.Headers.Response.EXPIRES,DateTimeFormatter.RFC_1123_DATE_TIME.format(
 				Instant.ofEpochMilli(System.currentTimeMillis() + maxAge.longValue()).atZone(ZoneId.of("GMT"))));
 		} else {
-			setHeaderRaw(HEADER_CACHE_CONTROL, "public");
+			setHeaderRaw(HTTPConstants.Headers.Response.CACHE_CONTROL, "public");
 		}
 	}
 	

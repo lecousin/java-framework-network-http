@@ -26,10 +26,10 @@ import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.buffering.SimpleBufferedReadable;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.math.RangeLong;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPMessage.Protocol;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
-import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.mime.MimeHeader;
@@ -59,8 +59,6 @@ public class HTTPServerProtocol implements ServerProtocol {
 	public static final String REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE = "protocol.http.request.receive.end.nanotime";
 	public static final String REQUEST_END_PROCESS_NANOTIME_ATTRIBUTE = "protocol.http.request.process.end.nanotime";
 	public static final String UPGRADED_PROTOCOL_ATTRIBUTE = "protocol.http.upgrade";
-	
-	public static final String UPGRADE_CONNECTION_HEADER = "Upgrade";
 	
 	private enum ReceiveStatus {
 		RECEIVING_START, RECEIVING_HEADER, RECEIVING_BODY
@@ -269,13 +267,13 @@ public class HTTPServerProtocol implements ServerProtocol {
 	}
 	
 	private boolean handleUpgradeRequest(TCPServerClient client, HTTPRequest request, ByteBuffer data, Runnable onbufferavailable) {
-		if (upgradableProtocols == null || !request.getMIME().hasHeader(UPGRADE_CONNECTION_HEADER))
+		if (upgradableProtocols == null || !request.getMIME().hasHeader(HTTPConstants.Headers.Request.UPGRADE))
 			return false;
-		String conn = request.getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
+		String conn = request.getMIME().getFirstHeaderRawValue(HTTPConstants.Headers.Request.CONNECTION);
 		boolean isUpgrade = false;
 		if (conn != null)
 			for (String str : conn.split(","))
-				if (str.equalsIgnoreCase(UPGRADE_CONNECTION_HEADER)) {
+				if (str.equalsIgnoreCase(HTTPConstants.Headers.Request.CONNECTION_VALUE_UPGRADE)) {
 					isUpgrade = true;
 					break;
 				}
@@ -283,7 +281,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			return false;
 
 		// there is an upgrade request
-		String protoName = request.getMIME().getFirstHeaderRawValue(UPGRADE_CONNECTION_HEADER).trim().toLowerCase();
+		String protoName = request.getMIME().getFirstHeaderRawValue(HTTPConstants.Headers.Request.UPGRADE).trim().toLowerCase();
 		ServerProtocol proto = upgradableProtocols.get(protoName);
 		if (proto == null)
 			return false;
@@ -390,11 +388,11 @@ public class HTTPServerProtocol implements ServerProtocol {
 				if (error instanceof HTTPResponseError) {
 					response.setStatus(((HTTPResponseError)error).getStatusCode());
 				} else {
-					response.setStatus(500);
+					response.setStatus(HttpURLConnection.HTTP_INTERNAL_ERROR);
 				}
 			}
 			if (response.getStatusCode() < 100)
-				response.setStatus(500);
+				response.setStatus(HttpURLConnection.HTTP_INTERNAL_ERROR);
 			
 			if (enableRangeRequests)
 				handleRangeRequest(request, response);
@@ -493,9 +491,8 @@ public class HTTPServerProtocol implements ServerProtocol {
 	private static void sendResponse(
 		TCPServerClient client, HTTPRequest request, HTTPServerResponse response, IO.Readable body, long bodySize
 	) {
-		if (!response.getMIME().hasHeader(HTTPResponse.HEADER_SERVER))
-			response.getMIME().setHeaderRaw(HTTPResponse.HEADER_SERVER,
-				"net.lecousin.framework.network.http.server/" + LibraryVersion.VERSION);
+		if (!response.getMIME().hasHeader(HTTPConstants.Headers.Response.SERVER))
+			response.getMIME().setHeaderRaw(HTTPConstants.Headers.Response.SERVER, HTTPConstants.Headers.Response.DEFAULT_SERVER);
 		
 		Supplier<List<MimeHeader>> trailerSupplier = response.getTrailerHeadersSuppliers();
 		
@@ -503,7 +500,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			if (bodySize >= 0 && trailerSupplier == null)
 				response.getMIME().setContentLength(bodySize);
 			else
-				response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, "chunked");
+				response.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
 		}
 		
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTPServerProtocol.class);
@@ -711,9 +708,9 @@ public class HTTPServerProtocol implements ServerProtocol {
 		if (!(io instanceof IO.KnownSize)) return;
 		if (response.getStatusCode() != 200) return;
 		
-		response.setHeaderRaw("Accept-Ranges", "bytes");
+		response.setHeaderRaw(HTTPConstants.Headers.Response.ACCEPT_RANGES, HTTPConstants.Headers.Response.ACCEPT_RANGES_VALUE_BYTES);
 			
-		MimeHeader rangeHeader = request.getMIME().getFirstHeader("Range");
+		MimeHeader rangeHeader = request.getMIME().getFirstHeader(HTTPConstants.Headers.Request.RANGE);
 		if (rangeHeader == null) return;
 		String rangeStr = rangeHeader.getRawValue().trim();
 		if (!rangeStr.startsWith("bytes=")) return;
@@ -730,7 +727,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			if (subIO == null) return;
 			response.getMIME().setBodyToSend(subIO);
 			response.setStatus(206);
-			response.getMIME().setHeaderRaw("Content-Range", range.min + "-" + range.max + "/" + totalSize);
+			response.getMIME().setHeaderRaw(HTTPConstants.Headers.Response.CONTENT_RANGE, range.min + "-" + range.max + "/" + totalSize);
 			return;
 		}
 		
@@ -748,7 +745,7 @@ public class HTTPServerProtocol implements ServerProtocol {
 			for (MimeHeader h : response.getMIME().getHeaders())
 				if (h.getNameLowerCase().startsWith("content-"))
 					part.addHeader(h);
-			part.setHeaderRaw("Content-Range", range.min + "-" + range.max + "/" + totalSize);
+			part.setHeaderRaw(HTTPConstants.Headers.Response.CONTENT_RANGE, range.min + "-" + range.max + "/" + totalSize);
 			multipart.add(part);
 		}
 		response.setStatus(206);
