@@ -49,8 +49,58 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    
+    <lc.core.version>0.20.3</lc.core.version>
+    <net.core.version>0.7.1</net.core.version>
+    <mime.version>0.5.0</mime.version>
+    
     <sonar.test.exclusions>**/src/test/**/*</sonar.test.exclusions>
   </properties>
+  
+  <dependencies>
+    <dependency>
+      <groupId>net.lecousin</groupId>
+      <artifactId>core</artifactId>
+      <version>${lc.core.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>net.lecousin.framework.network</groupId>
+      <artifactId>core</artifactId>
+      <version>${net.core.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>net.lecousin.framework.network</groupId>
+      <artifactId>core</artifactId>
+      <version>${net.core.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>net.lecousin.framework.network</groupId>
+      <artifactId>mime</artifactId>
+      <version>${mime.version}</version>
+    </dependency>
+    <dependency>
+    <groupId>junit</groupId>
+    <artifactId>junit</artifactId>
+    <version>4.12</version>
+    <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>net.lecousin</groupId>
+      <artifactId>core</artifactId>
+    <version>${lc.core.version}</version>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <!-- TODO replace by our own library once released -->
+    <dependency>
+      <groupId>com.googlecode.json-simple</groupId>
+      <artifactId>json-simple</artifactId>
+      <version>1.1.1</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 
   <build>
     <plugins>
@@ -124,50 +174,5 @@
 	    </plugins>
 	</pluginManagement>    
   </build>
-  
-  <dependencies>
-  	<dependency>
-  		<groupId>net.lecousin</groupId>
-  		<artifactId>core</artifactId>
-  		<version>0.16.4</version>
-  	</dependency>
-  	<dependency>
-  		<groupId>net.lecousin.framework.network</groupId>
-  		<artifactId>core</artifactId>
-  		<version>0.6.3</version>
-  	</dependency>
-  	<dependency>
-  		<groupId>net.lecousin.framework.network</groupId>
-  		<artifactId>core</artifactId>
-  		<version>0.6.3</version>
-  		<type>test-jar</type>
-  		<scope>test</scope>
-  	</dependency>
-  	<dependency>
-  		<groupId>net.lecousin.framework.network</groupId>
-  		<artifactId>mime</artifactId>
-  		<version>0.4.0</version>
-  	</dependency>
-  	<dependency>
-		<groupId>junit</groupId>
-		<artifactId>junit</artifactId>
-		<version>4.12</version>
-		<scope>test</scope>
-  	</dependency>
-  	<dependency>
-  		<groupId>net.lecousin</groupId>
-  		<artifactId>core</artifactId>
-		<version>0.16.4</version>
-  		<type>test-jar</type>
-  		<scope>test</scope>
-  	</dependency>
-  	<!-- TODO replace by our own library once released -->
-  	<dependency>
-  		<groupId>com.googlecode.json-simple</groupId>
-  		<artifactId>json-simple</artifactId>
-  		<version>1.1.1</version>
-  		<scope>test</scope>
-  	</dependency>
-  </dependencies>
   
 </project>

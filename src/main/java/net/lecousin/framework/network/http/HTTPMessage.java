@@ -7,62 +7,60 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 import net.lecousin.framework.network.AbstractAttributesContainer;
-import net.lecousin.framework.network.mime.MimeHeader;
-import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.mime.entity.MimeEntity;
+import net.lecousin.framework.network.mime.header.MimeHeader;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
+import net.lecousin.framework.network.mime.header.MimeHeadersContainer;
 
-/** Abstract class for HTTPRequest and HTTPResponse. */
-public abstract class HTTPMessage extends AbstractAttributesContainer {
+/** Abstract class for HTTPRequest and HTTPResponse.
+ * @param <ME> type of implementation
+ */
+public abstract class HTTPMessage<ME extends HTTPMessage<ME>> extends AbstractAttributesContainer implements MimeHeadersContainer<ME> {
 
-	/** HTTP protocol version. */
-	public enum Protocol {
-		HTTP_1_1("HTTP/1.1"),
-		HTTP_1_0("HTTP/1.0");
-		
-		Protocol(String name) {
-			this.name = name;
-		}
-		
-		private String name;
-		
-		public String getName() { return name; }
-		
-		/** from a string. */
-		public static Protocol from(String s) {
-			for (Protocol p : Protocol.values())
-				if (p.getName().equals(s))
-					return p;
-			return null;
-		}
-	}
+	protected HTTPProtocolVersion protocolVersion = null;
+	protected MimeHeaders headers;
+	protected MimeEntity entity;
+	protected Map<String, Supplier<String>> trailerHeaderSuppliers = null;
 
-	private Protocol protocol = null;
-	private MimeMessage mime = new MimeMessage();
-	private Map<String, Supplier<String>> trailerHeaderSuppliers = null;
-
-	public void setProtocol(Protocol protocol) {
-		this.protocol = protocol;
+	/** Set the protocol version. */
+	@SuppressWarnings("unchecked")
+	public ME setProtocolVersion(HTTPProtocolVersion protocolVersion) {
+		this.protocolVersion = protocolVersion;
+		return (ME)this;
 	}
 	
-	public Protocol getProtocol() {
-		return protocol;
+	public HTTPProtocolVersion getProtocolVersion() {
+		return protocolVersion;
 	}
 
-	public MimeMessage getMIME() {
-		return mime;
-	}
-
-	public void setMIME(MimeMessage mime) {
-		this.mime = mime;
-	}
-
-	/** Set a header. */
-	public void setHeaderRaw(String name, String value) {
-		mime.setHeaderRaw(name, value);
+	/** Return the MIME headers. */
+	@Override
+	public MimeHeaders getHeaders() {
+		if (entity != null)
+			return entity.getHeaders();
+		if (headers == null) headers = new MimeHeaders();
+		return headers;
 	}
 	
-	/** Add a value to a header. */
-	public void addHeaderRaw(String headerName, String value) {
-		mime.addHeaderRaw(headerName, value);
+	/** Set the MIME headers. */
+	@SuppressWarnings("unchecked")
+	public ME setHeaders(MimeHeaders headers) {
+		if (entity != null)
+			throw new IllegalStateException("Headers cannot be set if an entity is already set");
+		this.headers = headers;
+		return (ME)this;
+	}
+	
+	public MimeEntity getEntity() {
+		return entity;
+	}
+	
+	/** Set the MIME entity. */
+	@SuppressWarnings("unchecked")
+	public ME setEntity(MimeEntity entity) {
+		this.entity = entity;
+		this.headers = null;
+		return (ME)this;
 	}
 
 	/** Add a trailer MIME header. */
@@ -72,7 +70,7 @@ public abstract class HTTPMessage extends AbstractAttributesContainer {
 		trailerHeaderSuppliers.put(headerName, supplier);
 	}
 	
-	/** Get the trailer header supplier. */
+	/** Get the trailer header supplier, and add their declaration in the headers. */
 	public Supplier<List<MimeHeader>> getTrailerHeadersSuppliers() {
 		if (trailerHeaderSuppliers == null)
 			return null;
@@ -82,13 +80,13 @@ public abstract class HTTPMessage extends AbstractAttributesContainer {
 				s.append(", ");
 			s.append(h);
 		}
-		mime.setHeaderRaw("Trailer", s.toString());
+		setHeader("Trailer", s.toString());
 		return () -> {
-			List<MimeHeader> headers = new ArrayList<>(trailerHeaderSuppliers.size());
+			List<MimeHeader> list = new ArrayList<>(trailerHeaderSuppliers.size());
 			for (Map.Entry<String, Supplier<String>> entry : trailerHeaderSuppliers.entrySet()) {
-				headers.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
+				list.add(new MimeHeader(entry.getKey(), entry.getValue().get()));
 			}
-			return headers;
+			return list;
 		};
 	}
 	

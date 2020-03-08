@@ -13,26 +13,21 @@ import java.util.List;
 import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.async.IAsync;
-import net.lecousin.framework.io.IO.Seekable.SeekType;
-import net.lecousin.framework.io.buffering.MemoryIO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
-import net.lecousin.framework.network.http.server.HTTPServerProtocol;
-import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor.Filter;
 import net.lecousin.framework.network.http.test.client.TestHttpClientToHttpBin;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.TCPServer;
-import net.lecousin.framework.network.server.TCPServerClient;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -50,8 +45,8 @@ public class TestProxy extends AbstractHTTPTest {
 		server = new TCPServer();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
 		logger.setLevel(Level.TRACE);
-		processor = new ProxyHTTPRequestProcessor(8192, logger);
-		HTTPServerProtocol protocol = new HTTPServerProtocol(processor);
+		processor = new ProxyHTTPRequestProcessor(8192, 10000, 10000, logger);
+		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(processor);
 		server.setProtocol(protocol);
 		SocketAddress serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		serverPort = ((InetSocketAddress)serverAddress).getPort();
@@ -69,13 +64,10 @@ public class TestProxy extends AbstractHTTPTest {
 	public void testHttp() throws Exception {
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTP_BIN + "get");
+		HTTPRequest request = new HTTPRequest().get(HTTP_BIN + "get");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(200, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
-		io.seekSync(SeekType.FROM_BEGINNING, 0);
 		new TestHttpClientToHttpBin.CheckJSONResponse().check(request, response, null);
 		http.close();
 	}
@@ -85,12 +77,10 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.allowForwardFromHttpToHttps(false);
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTPS_BIN + "get");
+		HTTPRequest request = new HTTPRequest().get(HTTPS_BIN + "get");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(404, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 
@@ -99,13 +89,10 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTPS_BIN + "get");
+		HTTPRequest request = new HTTPRequest().get(HTTPS_BIN + "get");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(200, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
-		io.seekSync(SeekType.FROM_BEGINNING, 0);
 		new TestHttpClientToHttpBin.CheckJSONResponse().check(request, response, null);
 		http.close();
 	}
@@ -115,12 +102,10 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, "ftp://google.com");
+		HTTPRequest request = new HTTPRequest().get("ftp://google.com");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(404, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 
@@ -130,12 +115,10 @@ public class TestProxy extends AbstractHTTPTest {
 		LCCore.getApplication().getLoggerFactory().getLogger("test-proxy").setLevel(Level.INFO);
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, "hello");
+		HTTPRequest request = new HTTPRequest().get("hello");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(404, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 
@@ -144,12 +127,10 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.allowForwardFromHttpToHttps(true);
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, "");
+		HTTPRequest request = new HTTPRequest().get("");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(400, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 	
@@ -168,12 +149,10 @@ public class TestProxy extends AbstractHTTPTest {
 			}
 		});
 		HTTPClient http = HTTPClient.create(new URI(HTTPS_BIN), config);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTPS_BIN + "get");
+		HTTPRequest request = new HTTPRequest().get(HTTPS_BIN + "get");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(200, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 	
@@ -193,7 +172,7 @@ public class TestProxy extends AbstractHTTPTest {
 		});
 		processor.allowConnectMethod(false);
 		HTTPClient http = HTTPClient.create(new URI(HTTPS_BIN), config);
-		HTTPRequest request = new HTTPRequest(Method.GET, HTTPS_BIN + "get");
+		HTTPRequest request = new HTTPRequest().get(HTTPS_BIN + "get");
 		try {
 			http.sendRequest(request).blockThrow(0);
 			throw new AssertionError("Request must be rejected");
@@ -209,48 +188,40 @@ public class TestProxy extends AbstractHTTPTest {
 		processor.mapLocalPath("/tutu", HTTP_BIN_DOMAIN, 443, "/get", true);
 		processor.addFilter(new HTTPRequestFilter() {
 			@Override
-			public IAsync<?> filter(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
-				request.getMIME().addHeaderRaw("X-Test", "test");
-				return null;
+			public void filter(HTTPRequestContext ctx) {
+				ctx.getRequest().addHeader("X-Test", "test");
 			}
 		});
 		processor.addFilter(new Filter() {
 			@Override
-			public IAsync<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port) {
-				return null;
+			public void filter(HTTPRequestContext ctx, String hostname, int port) {
 			}
 		});
 		
 		TCPClient client = new TCPClient();
 		HTTPClient http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		HTTPRequest request = new HTTPRequest(Method.GET, "/titi");
+		HTTPRequest request = new HTTPRequest().get("/titi");
 		http.sendRequest(request).blockThrow(0);
-		HTTPResponse response = http.receiveResponseHeader().blockResult(0);
+		HTTPResponse response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(200, response.getStatusCode());
-		MemoryIO io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
-		Assert.assertEquals("application/json", response.getMIME().getFirstHeader("Content-Type").getRawValue());
+		Assert.assertEquals("application/json", response.getHeaders().getFirst("Content-Type").getRawValue());
 		
 		client = new TCPClient();
 		http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		request = new HTTPRequest(Method.GET, "/tutu");
+		request = new HTTPRequest().get("/tutu");
 		http.sendRequest(request).blockThrow(0);
-		response = http.receiveResponseHeader().blockResult(0);
+		response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(200, response.getStatusCode());
-		io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
-		Assert.assertEquals("application/json", response.getMIME().getFirstHeader("Content-Type").getRawValue());
+		Assert.assertEquals("application/json", response.getHeaders().getFirst("Content-Type").getRawValue());
 		
 		client = new TCPClient();
 		http = new HTTPClient(client, "localhost", serverPort, HTTPClientConfiguration.defaultConfiguration);
-		request = new HTTPRequest(Method.GET, "/toto");
+		request = new HTTPRequest().get("/toto");
 		http.sendRequest(request).blockThrow(0);
-		response = http.receiveResponseHeader().blockResult(0);
+		response = http.receiveResponseHeadersThenBodyAsBinary(4096).blockResult(0);
 		Assert.assertEquals(404, response.getStatusCode());
-		io = new MemoryIO(4096, "test");
-		http.receiveBody(response, io, 8192).blockThrow(0);
 		http.close();
 	}
 	

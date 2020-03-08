@@ -6,7 +6,7 @@ import java.nio.ByteBuffer;
 import org.junit.Assert;
 import org.junit.Test;
 
-import net.lecousin.framework.concurrent.Task;
+import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFromURI;
@@ -18,7 +18,7 @@ public class TestHTTPIOProvider extends AbstractHTTPTest {
 		IOProvider p = IOProviderFromURI.getInstance().get(new URI(HTTP_BIN + "get"));
 		Assert.assertTrue(p instanceof IOProvider.Readable);
 		p.getDescription();
-		IO.Readable io = ((IOProvider.Readable)p).provideIOReadable(Task.PRIORITY_NORMAL);
+		IO.Readable io = ((IOProvider.Readable)p).provideIOReadable(Task.Priority.NORMAL);
 		Assert.assertNotNull(io);
 		ByteBuffer buffer = ByteBuffer.allocate(65536);
 		io.readFullySync(buffer);
@@ -26,7 +26,7 @@ public class TestHTTPIOProvider extends AbstractHTTPTest {
 		
 		p = IOProviderFromURI.getInstance().get(new URI("http://doesnotexists.com/hello_world"));
 		try {
-			((IOProvider.Readable)p).provideIOReadable(Task.PRIORITY_NORMAL);
+			((IOProvider.Readable)p).provideIOReadable(Task.Priority.NORMAL);
 			throw new AssertionError("error");
 		} catch (Exception e) {}
 	}

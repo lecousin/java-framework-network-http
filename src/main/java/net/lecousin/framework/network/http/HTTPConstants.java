@@ -1,7 +1,5 @@
 package net.lecousin.framework.network.http;
 
-import net.lecousin.framework.network.mime.MimeMessage;
-
 /** Constants used for HTTP protocol. */
 public final class HTTPConstants {
 
@@ -22,7 +20,7 @@ public final class HTTPConstants {
 
 			private Request() { /* no instance */ }
 
-			public static final String CONNECTION = MimeMessage.CONNECTION;
+			public static final String CONNECTION = "Connection";
 			public static final String HOST = "Host";
 			public static final String RANGE = "Range";
 			public static final String UPGRADE = "Upgrade";

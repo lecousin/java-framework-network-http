@@ -4,25 +4,21 @@ import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.collections.LinkedArrayList;
 import net.lecousin.framework.concurrent.async.Async;
-import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
-import net.lecousin.framework.network.http.server.HTTPServerProtocol;
-import net.lecousin.framework.network.http.server.HTTPServerResponse;
-import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.protocol.TunnelProtocol;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 
 /**
  * Implements a Proxy.
@@ -33,20 +29,22 @@ import net.lecousin.framework.network.server.protocol.TunnelProtocol;
 public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 
 	/** Constructor. */
-	public ProxyHTTPRequestProcessor(int bufferSize, Logger logger) {
+	public ProxyHTTPRequestProcessor(int bufferSize, int clientSendTimeout, int remoteSendTimeout, Logger logger) {
 		this.logger = logger;
 		forwarder = new HTTPRequestForwarder(logger, HTTPClientConfiguration.defaultConfiguration);
-		tunnelProtocol = new TunnelProtocol(bufferSize, logger);
+		tunnelProtocol = new TunnelProtocol(bufferSize, clientSendTimeout, remoteSendTimeout, logger);
 	}
 	
 	/** Filter that may catch requests.
 	 * For example to implement a cache, a filter may check if the resource is already in the cache or not.
+	 * It works the same way as an HTTPRequestFilter, but take 2 additional parameters: hostname and port.
+	 * @see HTTPRequestFilter 
 	 */
 	public static interface Filter {
-		/** Return null if the request is not filtered, else the synchronization point should be unblocked
-		 * when the server can start sending the response (same as HTTPRequestProcessor).
+		/** Filter proxy request. 
+		 * @see HTTPRequestFilter#filter(HTTPRequestContext)
 		 */
-		IAsync<Exception> filter(HTTPRequest request, HTTPResponse response, String hostname, int port);
+		void filter(HTTPRequestContext ctx, String hostname, int port);
 	}
 	
 	protected Logger logger;
@@ -104,102 +102,113 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 	}
 	
 	@Override
-	public IAsync<?> process(TCPServerClient client, HTTPRequest request, HTTPServerResponse response) {
+	public void process(HTTPRequestContext ctx) {
 		if (logger.trace())
-			logger.trace("Request: " + request.generateCommandLine());
+			logger.trace("Request: " + HTTP1RequestCommandProducer.generateString(ctx.getRequest()));
 
-		if (Method.CONNECT.equals(request.getMethod())) {
+		if (HTTPRequest.METHOD_CONNECT.equals(ctx.getRequest().getMethod())) {
 			if (!allowConnect) {
-				response.setStatus(HttpURLConnection.HTTP_BAD_METHOD, "CONNECT method is not allowed on this server");
-				return new Async<>(true);
+				ctx.getErrorHandler().setError(ctx,
+					HttpURLConnection.HTTP_BAD_METHOD, "CONNECT method is not allowed on this server", null);
+				return;
 			}
-			return openTunnel(client, request, response);
+			openTunnel(ctx);
+			return;
 		}
 		
 		for (HTTPRequestFilter filter : requestFilters) {
-			IAsync<?> filtered = filter.filter(client, request, response);
-			if (filtered != null)
-				return filtered;
+			filter.filter(ctx);
+			if (ctx.getResponse().getReady().isDone())
+				return;
 		}
 		
-		String path = request.getPath();
+		String path = ctx.getRequest().getDecodedPath();
 
-		if (path.charAt(0) == '/')
-			return localPath(request, response);
+		if (path.length() == 0) {
+			ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_BAD_REQUEST, "Empty path", null);
+			return;
+		}
+		if (path.charAt(0) == '/') {
+			localPath(ctx);
+			return;
+		}
 		
 		int i = path.indexOf(':');
 		if (i < 0) {
-			response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Invalid URL");
-			return new Async<>(true);
+			ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_NOT_FOUND, "Invalid URL", null);
+			return;
 		}
 		
 		String protocol = path.substring(0, i).toLowerCase();
-		if (protocol.equals("http"))
-			return forwardRequest(request, response);
+		if (protocol.equals("http")) {
+			forwardRequest(ctx);
+			return;
+		}
 		
-		if (allowForwardFromHttpToHttps && protocol.equals("https"))
-			return forwardHttpsRequest(request, response);
+		if (allowForwardFromHttpToHttps && protocol.equals("https")) {
+			forwardHttpsRequest(ctx);
+			return;
+		}
 		
-		response.setStatus(HttpURLConnection.HTTP_NOT_FOUND, "Invalid protocol");
-		return new Async<>(true);
+		ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_NOT_FOUND, "Invalid protocol", null);
 	}
 	
-	protected IAsync<?> localPath(HTTPRequest request, HTTPResponse response) {
-		String path = request.getPath();
+	protected void localPath(HTTPRequestContext ctx) {
+		String path = ctx.getRequest().getDecodedPath();
 		for (LocalMapping m : localPathMapping) {
 			if (path.startsWith(m.localPath)) {
 				// forward
-				request.setPath(m.path + path.substring(m.localPath.length()));
+				ctx.getRequest().setDecodedPath(m.path + path.substring(m.localPath.length()));
 				if (!m.secure)
-					return forwarder.forward(request, response, m.hostname, m.port);
-				return forwarder.forwardSSL(request, response, m.hostname, m.port);
+					forwarder.forward(ctx, m.hostname, m.port);
+				else
+					forwarder.forwardSSL(ctx, m.hostname, m.port);
+				return;
 			}
 		}
-		response.setStatus(404);
-		return new Async<>(true);
+		ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_NOT_FOUND, "Not found", null);
 	}
 	
-	protected IAsync<?> forwardRequest(HTTPRequest request, HTTPResponse response) {
-		return forward(request, response, false);
+	protected void forwardRequest(HTTPRequestContext ctx) {
+		forward(ctx, false);
 	}
 
-	protected IAsync<?> forwardHttpsRequest(HTTPRequest request, HTTPResponse response) {
-		return forward(request, response, true);
+	protected void forwardHttpsRequest(HTTPRequestContext ctx) {
+		forward(ctx, true);
 	}
 	
-	private IAsync<?> forward(HTTPRequest request, HTTPResponse response, boolean ssl) {
-		String path = request.getPath();
+	private void forward(HTTPRequestContext ctx, boolean ssl) {
+		ByteArrayStringIso8859Buffer path = ctx.getRequest().getEncodedPath();
 		URI uri;
-		try { uri = new URI(path); }
+		try { uri = new URI(path.asString()); }
 		catch (Exception t) {
 			logger.error("Invalid requested URL: " + path, t);
-			response.setStatus(HttpURLConnection.HTTP_BAD_REQUEST, "Invalid URL");
-			return new Async<>(true);
+			ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_BAD_REQUEST, "Invalid URL", t);
+			return;
 		}
 		
 		String host = uri.getHost();
 		int port = uri.getPort();
 		if (port == -1)
 			port = ssl ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
-		path = uri.getRawPath();
+		path = new ByteArrayStringIso8859Buffer(uri.getRawPath());
 		
-		request.setPath(path);
+		ctx.getRequest().setEncodedPath(path);
 		
 		for (Filter filter : proxyFilters) {
-			IAsync<Exception> filtered = filter.filter(request, response, host, port);
-			if (filtered != null)
-				return filtered;
+			filter.filter(ctx, host, port);
+			if (ctx.getResponse().getReady().isDone())
+				return;
 		}
 		
-		return ssl ? forwarder.forwardSSL(request, response, host, port) : forwarder.forward(request, response, host, port);
+		if (ssl)
+			forwarder.forwardSSL(ctx, host, port);
+		else
+			forwarder.forward(ctx, host, port);
 	}
 	
-	
-	private static final byte[] okResponse = "HTTP/1.1 200 OK\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-	private static final byte[] koResponse = "HTTP/1.1 500 Error\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-	
-	protected IAsync<?> openTunnel(TCPServerClient client, HTTPRequest request, HTTPResponse response) {
-		String host = request.getPath();
+	protected void openTunnel(HTTPRequestContext ctx) {
+		String host = ctx.getRequest().getDecodedPath();
 		int i = host.indexOf(':');
 		int port = 80;
 		if (i > 0)
@@ -208,35 +217,36 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 				host = host.substring(0, i);
 			} catch (Exception t) {
 				logger.error("Invalid address " + host, t);
-				response.setStatus(HttpURLConnection.HTTP_BAD_REQUEST, "Invalid address " + host);
-				return new Async<>(true);
+				ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_BAD_REQUEST, "Invalid address " + host, t);
+				return;
 			}
 
 		for (Filter filter : proxyFilters) {
-			IAsync<Exception> filtered = filter.filter(request, response, host, port);
-			if (filtered != null)
-				return filtered;
+			filter.filter(ctx, host, port);
+			if (ctx.getResponse().getReady().isDone())
+				return;
 		}
 		
 		@SuppressWarnings("squid:S2095") // it is closed
 		TCPClient tunnel = new TCPClient();
 		// take client out of normal protocol
-		client.setAttribute(HTTPServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE, tunnelProtocol);
+		ctx.getClient().setAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE, tunnelProtocol);
+		ctx.getResponse().setForceNoContent(true);
 		Async<IOException> connect = tunnel.connect(new InetSocketAddress(host, port), 30000);
 		connect.onDone(
 			() -> {
-				tunnelProtocol.registerClient(client, tunnel);
-				client.send(ByteBuffer.wrap(okResponse));
+				tunnelProtocol.registerClient(ctx.getClient(), tunnel);
+				ctx.getResponse().setStatus(200);
+				ctx.getResponse().getReady().unblock();
 			}, error -> {
 				logger.error("Error connecting to remote site", error);
-				client.send(ByteBuffer.wrap(koResponse));
+				ctx.getResponse().setStatus(500, "Connection failed to remote site");
+				ctx.getResponse().getReady().unblock();
 			}, cancel -> {
-				client.close();
+				ctx.getClient().close();
 				tunnel.close();
 			}
 		);
-		// never unblock, because we don't want to send a response
-		return new Async<>();
 	}
 
 }

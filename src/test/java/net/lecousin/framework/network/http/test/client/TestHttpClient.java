@@ -12,7 +12,6 @@ import java.util.List;
 
 import net.lecousin.framework.network.SocketOptionValue;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
@@ -68,10 +67,10 @@ public class TestHttpClient extends AbstractHTTPTest {
 	}
 	
 	@Test
-	public void testSendAndReceiveHeaders() throws Exception {
+	public void testSendAndReceive() throws Exception {
 		URI uri = new URI(HTTP_BIN + "get");
 		try (HTTPClient client = HTTPClient.create(uri)) {
-			client.sendAndReceiveHeaders(new HTTPRequest(Method.GET).setURI(uri)).blockResult(0);
+			client.sendAndReceive(new HTTPRequest().get().setURI(uri), null, null).blockResult(0);
 		}
 	}
 	
@@ -103,10 +102,10 @@ public class TestHttpClient extends AbstractHTTPTest {
 		});
 		
 		HTTPClient client = HTTPClient.create(new URI("http://example.com"), cfg);
-		HTTPRequest req = new HTTPRequest(Method.GET, "/");
-		req.getMIME().setHeaderRaw("Host", "example.com");
+		HTTPRequest req = new HTTPRequest().get("/");
+		req.addHeader("Host", "example.com");
 		client.sendRequest(req).blockThrow(0);
-		client.receiveResponseHeader().blockResult(0);
+		client.receiveResponse().blockResult(0);
 		client.close();
 	}
 	

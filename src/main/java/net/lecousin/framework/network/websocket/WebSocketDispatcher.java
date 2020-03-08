@@ -1,15 +1,17 @@
-package net.lecousin.framework.network.http.websocket;
+package net.lecousin.framework.network.websocket;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.util.ArrayList;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.collections.LinkedArrayList;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IO.Readable.Seekable;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.http.server.HTTPServerProtocol;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.TCPServerClient;
 
 /** Dispatch messages received by the server. */
@@ -18,6 +20,7 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 	/** Handle a list of connected clients. */
 	public abstract static class WebSocketHandler {
 		protected LinkedArrayList<TCPServerClient> connectedClients = new LinkedArrayList<>(10);
+		protected Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(WebSocketHandler.class);
 		
 		/** Add a new connected client. */
 		public void newClient(TCPServerClient client) {
@@ -44,7 +47,7 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 			synchronized (connectedClients) {
 				clients = new ArrayList<>(connectedClients);
 			}
-			WebSocketServerProtocol.sendTextMessage(clients, message);
+			WebSocketServerProtocol.sendTextMessage(clients, message, logger);
 		}
 
 		/** Send a binary message to all connected clients. */
@@ -53,7 +56,7 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 			synchronized (connectedClients) {
 				clients = new ArrayList<>(connectedClients);
 			}
-			WebSocketServerProtocol.sendBinaryMessage(clients, message);
+			WebSocketServerProtocol.sendBinaryMessage(clients, message, logger);
 		}
 	}
 	
@@ -91,13 +94,8 @@ public class WebSocketDispatcher implements WebSocketServerProtocol.WebSocketMes
 	public String onClientConnected(
 		WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols
 	) throws HTTPResponseError {
-		HTTPRequest request = (HTTPRequest)client.getAttribute(HTTPServerProtocol.REQUEST_ATTRIBUTE);
-		String path = request.getPath();
-		try { path = URLDecoder.decode(path, "UTF-8"); }
-		catch (UnsupportedEncodingException e) {
-			// should never happen
-		}
-		WebSocketHandler handler = router.getWebSocketHandler(client, request, path, requestedProtocols);
+		HTTPRequest request = (HTTPRequest)client.getAttribute(HTTP1ServerProtocol.REQUEST_ATTRIBUTE);
+		WebSocketHandler handler = router.getWebSocketHandler(client, request, request.getDecodedPath(), requestedProtocols);
 		if (handler == null)
 			throw new HTTPResponseError(404, "WebSocket not found");
 		handler.newClient(client);

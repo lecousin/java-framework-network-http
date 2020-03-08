@@ -1,9 +1,9 @@
-package net.lecousin.framework.network.http.websocket;
+package net.lecousin.framework.network.websocket;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-import net.lecousin.framework.concurrent.Task;
+import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.util.DataUtil;
 
@@ -18,7 +18,7 @@ public class WebSocketDataFrame {
 	
 	/** Constructor. */
 	public WebSocketDataFrame() {
-		message = new IOInMemoryOrFile(32768, Task.PRIORITY_NORMAL, "WebSocket Data Frame");
+		message = new IOInMemoryOrFile(32768, Task.Priority.NORMAL, "WebSocket Data Frame");
 	}
 	
 	private int messageType = 0;
@@ -137,10 +137,10 @@ public class WebSocketDataFrame {
 			b[1] = (byte)nbRead;
 		} else if (nbRead <= 0xFFFF) {
 			b[1] = (byte)126;
-			DataUtil.writeUnsignedShortBigEndian(b, 2, nbRead);
+			DataUtil.Write16U.BE.write(b, 2, nbRead);
 		} else {
 			b[1] = (byte)127;
-			DataUtil.writeLongBigEndian(b, 2, nbRead);
+			DataUtil.Write64.BE.write(b, 2, nbRead);
 		}
 		return b;
 	}

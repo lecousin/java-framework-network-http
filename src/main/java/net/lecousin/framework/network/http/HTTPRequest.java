@@ -1,291 +1,353 @@
 package net.lecousin.framework.network.http;
 
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URI;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import net.lecousin.framework.io.IO;
-import net.lecousin.framework.network.http.exception.InvalidHTTPCommandLineException;
-import net.lecousin.framework.network.http.exception.InvalidHTTPMethodException;
-import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
-import net.lecousin.framework.network.mime.MimeHeader;
-import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.encoding.URLEncoding;
+import net.lecousin.framework.io.data.CharsFromString;
+import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
+import net.lecousin.framework.network.mime.entity.MimeEntity;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
+import net.lecousin.framework.text.ByteArrayStringIso8859;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
+import net.lecousin.framework.text.CharArrayStringBuffer;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.UnprotectedString;
-import net.lecousin.framework.util.UnprotectedStringBuffer;
 
 /** HTTP request. */
-public class HTTPRequest extends HTTPMessage {
+public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	
-	/** HTTP method. */
-	public enum Method {
-		OPTIONS,
-		GET,
-		HEAD,
-		POST,
-		PUT,
-		DELETE,
-		TRACE,
-		CONNECT,
-	}
+	public static final String METHOD_GET = "GET";
+	public static final String METHOD_POST = "POST";
+	public static final String METHOD_PUT = "PUT";
+	public static final String METHOD_DELETE = "DELETE";
+	public static final String METHOD_OPTIONS = "OPTIONS";
+	public static final String METHOD_HEAD = "HEAD";
+	public static final String METHOD_TRACE = "TRACE";
+	public static final String METHOD_CONNECT = "CONNECT";
 	
-	// Constructors
+	public static final int MAX_METHOD_LENGTH = 32;
+	public static final int MAX_URI_LENGTH = 8000;
+	
+	protected String method;
+	protected ByteArrayStringIso8859Buffer encodedPath;
+	protected String decodedPath;
+	protected Map<String, String> queryParameters;
+	protected ByteArrayStringIso8859Buffer encodedQueryString;
 	
 	/** Constructor. */
 	public HTTPRequest() {
-		setProtocol(Protocol.HTTP_1_1);
+		this.protocolVersion = new HTTPProtocolVersion((byte)1, (byte)1);
 	}
 	
-	/** Constructor. */
-	public HTTPRequest(Method method) {
-		this.method = method;
-		setProtocol(Protocol.HTTP_1_1);
-	}
-	
-	/** Constructor. */
-	public HTTPRequest(Method method, String path) {
-		this.method = method;
-		this.path = path;
-		setProtocol(Protocol.HTTP_1_1);
-	}
-	
-	// Command line
-	
-	private Method method = null;
-	private String path = null;
-	private HashMap<String,String> parameters = null;
-	
-	// Command line getters and setters
-	
-	public Method getMethod() {
+	public String getMethod() {
 		return method;
 	}
 	
-	public String getPath() {
-		return path;
-	}
-	
-	public Map<String,String> getParameters() {
-		return parameters;
-	}
-	
-	/** Return a query parameter or null if not set. */
-	public String getParameter(String name) {
-		return parameters != null ? parameters.get(name) : null;
-	}
-	
-	public boolean isCommandSet() {
-		return method != null && path != null && getProtocol() != null;
-	}
-	
-	/** Set the method to use. */
-	public HTTPRequest setMethod(Method method) {
+	/** Set the method. */
+	public HTTPRequest setMethod(String method) {
 		this.method = method;
 		return this;
 	}
 	
-	/** Set the path. */
-	public HTTPRequest setPath(String path) {
-		this.path = path;
-		return this;
+	/** Return the decoded path. */
+	public String getDecodedPath() {
+		if (decodedPath == null && encodedPath != null)
+			decodedPath = URLEncoding.decode(encodedPath.asReadableBytes()).asString();
+		return decodedPath;
 	}
 	
-	/** Set the path. */
-	public HTTPRequest setPathAndQueryString(String pathAndQuery) {
-		path = pathAndQuery;
-		parameters = new HashMap<>();
-		int i = path.indexOf('?');
-		if (i >= 0) {
-			setQueryString(path.substring(i + 1));
-			if (i == 0)
-				path = "";
-			else
-				path = path.substring(0, i);
+	/** Return the URL encoded path. */
+	public ByteArrayStringIso8859Buffer getEncodedPath() {
+		if (encodedPath == null && decodedPath != null) {
+			encodedPath = new ByteArrayStringIso8859Buffer();
+			CharsFromString chars = new CharsFromString(decodedPath);
+			URLEncoding.encode(chars, encodedPath.asWritableBytes(), true, true);
 		}
+		return encodedPath;
+	}
 
+	/** Set the path. */
+	public HTTPRequest setDecodedPath(String path) {
+		this.decodedPath = path;
+		this.encodedPath = null;
+		return this;
+	}
+
+	/** Set the path. */
+	public HTTPRequest setEncodedPath(ByteArrayStringIso8859Buffer path) {
+		this.encodedPath = path;
+		this.decodedPath = null;
 		return this;
 	}
 	
-	/** Set the command line. */
-	public HTTPRequest setCommand(Method method, String path, Protocol protocol) {
-		this.method = method;
-		this.path = path;
-		setProtocol(protocol);
-		return this;
-	}
-	
-	/** Set the command line. */
-	public HTTPRequest setCommand(String commandLine)
-	throws InvalidHTTPCommandLineException, InvalidHTTPMethodException, UnsupportedHTTPProtocolException {
-		int i = commandLine.indexOf(' ');
-		if (i <= 0) throw new InvalidHTTPCommandLineException(commandLine);
-		try { method = Method.valueOf(commandLine.substring(0, i)); }
-		catch (IllegalArgumentException e) {
-			throw new InvalidHTTPMethodException(commandLine.substring(0, i));
+	/** Get a query parameter. */
+	public String getQueryParameter(String name) {
+		if (queryParameters == null) {
+			if (encodedQueryString != null)
+				decodeQueryParameters();
+			else
+				return null;
 		}
-		commandLine = commandLine.substring(i + 1);
-		i = commandLine.indexOf(' ');
-		if (i <= 0) throw new InvalidHTTPCommandLineException(commandLine);
-		setPathAndQueryString(commandLine.substring(0, i));
-		setProtocol(Protocol.from(commandLine.substring(i + 1).trim()));
-		if (getProtocol() == null) throw new UnsupportedHTTPProtocolException(commandLine.substring(i + 1).trim());
-		
+		return queryParameters.get(name);
+	}
+	
+	/** Return a read-only map of decoded query parameters. */
+	public Map<String, String> getQueryParameters() {
+		if (queryParameters == null) {
+			if (encodedQueryString != null)
+				decodeQueryParameters();
+			else
+				queryParameters = new HashMap<>();
+		}
+		return Collections.unmodifiableMap(queryParameters);
+	}
+	
+	private void decodeQueryParameters() {
+		queryParameters = new HashMap<>();
+		int nameStart = 0;
+		int nameEnd = 0;
+		int valueStart = -1;
+		for (int i = 0; i < encodedQueryString.length(); ++i) {
+			if (encodedQueryString.charAt(i) == '&') {
+				decodeQueryParameter(nameStart, nameEnd, valueStart, i);
+				nameStart = i + 1;
+				nameEnd = i + 1;
+				valueStart = -1;
+				continue;
+			}
+			if (valueStart == -1 && encodedQueryString.charAt(i) == '=') {
+				nameEnd = i;
+				valueStart = i + 1;
+			}
+		}
+		if (valueStart == -1)
+			nameEnd = encodedQueryString.length();
+		decodeQueryParameter(nameStart, nameEnd, valueStart, encodedQueryString.length());
+	}
+	
+	private void decodeQueryParameter(int nameStart, int nameEnd, int valueStart, int valueEnd) {
+		int nameLen = nameEnd - nameStart;
+		int valueLen = valueStart == -1 ? 0 : valueEnd - valueStart;
+		if (nameLen == 0 && valueLen == 0)
+			return;
+		String name = URLEncoding.decode(encodedQueryString.substring(nameStart, nameStart + nameLen).asReadableBytes()).asString();
+		String value = valueLen > 0
+			? URLEncoding.decode(encodedQueryString.substring(valueStart, valueStart + valueLen).asReadableBytes()).asString() : "";
+		queryParameters.put(name, value);
+	}
+	
+	/** Set a query parameter. */
+	public HTTPRequest setQueryParameter(String name, String value) {
+		if (queryParameters == null) {
+			if (encodedQueryString != null) {
+				decodeQueryParameters();
+				encodedQueryString = null;
+			} else {
+				queryParameters = new HashMap<>();
+			}
+		}
+		queryParameters.put(name, value);
 		return this;
 	}
 	
 	/** Set the query string in the path. */
-	public HTTPRequest setQueryString(String s) {
-		if (s == null || s.length() == 0)
-			return this;
-		String[] params = s.split("&");
-		if (parameters == null)
-			parameters = new HashMap<>();
-		for (String p : params) {
-			int i = p.indexOf('=');
-			if (i < 0)
-				parameters.put(p, "");
-			else
-				try {
-					parameters.put(
-						URLDecoder.decode(p.substring(0, i), StandardCharsets.UTF_8.name()),
-						URLDecoder.decode(p.substring(i + 1), StandardCharsets.UTF_8.name())
-					);
-				} catch (UnsupportedEncodingException e) {
-					// cannot happen... utf-8 is always supported
-				}
-		}
+	public HTTPRequest setEncodedQueryString(ByteArrayStringIso8859Buffer query) {
+		queryParameters = null;
+		encodedQueryString = query;
 		return this;
 	}
 	
-	/** Add a query parameter in the URL. */
-	public HTTPRequest addParameter(String name, String value) {
-		if (parameters == null)
-			parameters = new HashMap<>();
-		parameters.put(name, value);
+	/** Set the path and query. */
+	public HTTPRequest setEncodedPathAndQuery(ByteArrayStringIso8859Buffer pathAndQuery) {
+		int sep = pathAndQuery.indexOf('?');
+		if (sep < 0) {
+			// only path
+			setEncodedPath(pathAndQuery);
+			setEncodedQueryString(new ByteArrayStringIso8859Buffer());
+			return this;
+		}
+		setEncodedPath(pathAndQuery.substring(0, sep));
+		setEncodedQueryString(pathAndQuery.substring(sep + 1));
 		return this;
+	}
+	
+	/** Return the URL encoded query string. */
+	public ByteArrayStringIso8859Buffer getEncodedQueryString() {
+		if (encodedQueryString == null) {
+			if (queryParameters == null) {
+				encodedQueryString = new ByteArrayStringIso8859Buffer();
+			} else {
+				encodeQueryString();
+			}
+		}
+		return encodedQueryString;
+	}
+	
+	private void encodeQueryString() {
+		if (queryParameters.isEmpty()) {
+			encodedQueryString = new ByteArrayStringIso8859Buffer();
+			return;
+		}
+		encodedQueryString = new ByteArrayStringIso8859Buffer();
+		encodedQueryString.setNewArrayStringCapacity(512);
+		for (Map.Entry<String, String> param : queryParameters.entrySet()) {
+			CharsFromString chars = new CharsFromString(param.getKey());
+			URLEncoding.encode(chars, encodedQueryString.asWritableBytes(), false, true);
+			encodedQueryString.append((byte)'=');
+			chars = new CharsFromString(param.getValue());
+			URLEncoding.encode(chars, encodedQueryString.asWritableBytes(), false, true);
+		}
 	}
 	
 	/** Set the path and query string from the given URI. */
 	public HTTPRequest setURI(URI uri) {
-		return setPath(uri.getRawPath()).setQueryString(uri.getRawQuery());
+		setDecodedPath(uri.getPath());
+		String q = uri.getRawQuery();
+		setEncodedQueryString(new ByteArrayStringIso8859Buffer(
+			new ByteArrayStringIso8859(q == null ? new byte[0] : uri.getRawQuery().getBytes(StandardCharsets.US_ASCII))));
+		return this;
 	}
 	
-	/** Generate path with query string. */
-	public void generateFullPath(Appendable s) {
-		try {
-			s.append(path);
-			if (parameters == null || parameters.isEmpty())
-				return;
-			s.append('?');
-			boolean first = true;
-			for (Map.Entry<String,String> param : parameters.entrySet()) {
-				if (first) first = false;
-				else s.append('&');
-				s.append(URLEncoder.encode(param.getKey(), StandardCharsets.UTF_8.name()));
-				s.append('=');
-				s.append(URLEncoder.encode(param.getValue(), StandardCharsets.UTF_8.name()));
-			}
-		} catch (IOException e) {
-			// does not happen if used with StringBuilder or IString
+	/** Set the path and query string from the given URI. */
+	public HTTPRequest setURI(CharSequence uri) {
+		if (uri instanceof ByteArrayStringIso8859)
+			uri = new ByteArrayStringIso8859Buffer((ByteArrayStringIso8859)uri);
+		else if (!(uri instanceof ByteArrayStringIso8859Buffer))
+			uri = new ByteArrayStringIso8859Buffer(uri);
+		return setEncodedPathAndQuery((ByteArrayStringIso8859Buffer)uri);
+	}
+	
+	/** Set method GET. */
+	public HTTPRequest get() {
+		return setMethod(METHOD_GET);
+	}
+	
+	/** Set method GET with given path and query string. */
+	public HTTPRequest get(CharSequence uri) {
+		return setMethod(METHOD_GET).setURI(uri);
+	}
+	
+	/** Set method POST. */
+	public HTTPRequest post() {
+		return setMethod(METHOD_POST);
+	}
+
+	/** Set method POST with given entity. */
+	public HTTPRequest post(MimeEntity entity) {
+		return setMethod(METHOD_POST).setEntity(entity);
+	}
+
+	/** Set method POST with given path and query string. */
+	public HTTPRequest post(CharSequence uri) {
+		return setMethod(METHOD_POST).setURI(uri);
+	}
+	
+	/** Set method POST with given path and query string and entity. */
+	public HTTPRequest post(CharSequence uri, MimeEntity entity) {
+		return setMethod(METHOD_POST).setURI(uri).setEntity(entity);
+	}
+	
+	/** Set method PUT. */
+	public HTTPRequest put() {
+		return setMethod(METHOD_PUT);
+	}
+	
+	/** Set method PUT with given entity. */
+	public HTTPRequest put(MimeEntity entity) {
+		return setMethod(METHOD_PUT).setEntity(entity);
+	}
+
+	/** Set method PUT with given path and query string. */
+	public HTTPRequest put(CharSequence uri) {
+		return setMethod(METHOD_PUT).setURI(uri);
+	}
+	
+	/** Set method PUT with given path and query string and entity. */
+	public HTTPRequest put(CharSequence uri, MimeEntity entity) {
+		return setMethod(METHOD_PUT).setURI(uri).setEntity(entity);
+	}
+	
+	/** Set method DELETE. */
+	public HTTPRequest delete() {
+		return setMethod(METHOD_DELETE);
+	}
+
+	/** Set method DELETE with given path and query string. */
+	public HTTPRequest delete(CharSequence uri) {
+		return setMethod(METHOD_DELETE).setURI(uri);
+	}
+
+	/** Return true if this is a valid character for a method. */
+	public static boolean isValidMethodChar(byte b) {
+		if (b < 0x21) return false;
+		if (b > 0x5A) {
+			if (b < 0x5E) return false;
+			if (b < 0x7B) return true;
+			return b == 0x7C || b == 0x7E;
 		}
+		if (b >= 0x41) return true;
+		if (b == 0x40) return false;
+		if (b >= 0x30) return true;
+		if (b >= 0x2A)
+			return b != 0x2F && b != 0x2C;
+		return b != 0x22;
 	}
 	
-	/** Generate the command line. */
-	public void generateCommandLine(Appendable s) {
-		try {
-			if (method == null)
-				s.append("NULL ");
-			else
-				s.append(method.toString()).append(' ');
-			generateFullPath(s);
-			s.append(' ').append(getProtocol() != null ? getProtocol().getName() : Protocol.HTTP_1_1.getName());
-		} catch (IOException e) {
-			// does not happen if used with StringBuilder or IString
+	/** Return true if this is a valid character for an URI. */
+	public static boolean isValidURIChar(byte b) {
+		if (b < 0x5B) {
+			if (b >= 0x3F) return true;
+			if (b >= 0x24)
+				return b <= 0x3B || b == 0x3D;
+			return b == 0x21;
 		}
+		if (b >= 0x61)
+			return b <= 0x7A || b == 0x7E;
+		return b == 0x5F;
 	}
-	
-	/** Generate the command line. */
-	public String generateCommandLine() {
-		StringBuilder s = new StringBuilder(128);
-		generateCommandLine(s);
-		return s.toString();
-	}
-	
-	/** Generate command line and headers into a string. */
-	public UnprotectedStringBuffer generateCommandLineAndHeaders() {
-		UnprotectedStringBuffer s = new UnprotectedStringBuffer(new UnprotectedString(512));
-		generateCommandLine(s);
-		s.append("\r\n");
-		getMIME().appendHeadersTo(s);
-		s.append("\r\n");
-		return s;
-	}
-	
+
 	@Override
 	public String toString() {
-		return generateCommandLineAndHeaders().toString();
-	}
-	
-	// Content
-	
-	/** Set multiple headers to the MIME message. */
-	public HTTPRequest setHeaders(MimeHeader... headers) {
-		for (MimeHeader h : headers)
-			getMIME().setHeader(h);
-		return this;
-	}
-	
-	/** Set headers and body from the given message. */
-	public HTTPRequest setHeadersAndContent(MimeMessage message) {
-		for (MimeHeader header : message.getHeaders())
-			getMIME().setHeader(header);
-		getMIME().setBodyToSend(message.getBodyToSend());
-		return this;
-	}
-	
-	/** Set the body to send. */
-	public HTTPRequest setBody(IO.Readable body) {
-		getMIME().setBodyToSend(body);
-		return this;
-	}
-	
-	// Utilities
-	
-	/** Set the method to POST and body to send. */
-	public HTTPRequest post(IO.Readable body) {
-		setMethod(Method.POST);
-		getMIME().setBodyToSend(body);
-		return this;
-	}
-	
-	/** Set the method to POST and body to send. */
-	public HTTPRequest post(MimeMessage body) {
-		return setMethod(Method.POST).setHeadersAndContent(body);
+		CharArrayStringBuffer s = new CharArrayStringBuffer();
+		s.setNewArrayStringCapacity(512);
+		HTTP1RequestCommandProducer.generate(this, s);
+		MimeHeaders headers = getHeaders();
+		if (headers != null) {
+			s.append("\r\n");
+			headers.appendTo(s);
+		}
+		return s.asString();
 	}
 	
 	/** Return true if a body is expected to be sent. */
 	public boolean isExpectingBody() {
-		if (Method.GET.equals(method)) return false;
-		Long size = getMIME().getContentLength();
+		if (!methodMayContainBody(method)) return false;
+		MimeHeaders headers = getHeaders();
+		if (headers == null)
+			return false;
+		Long size = headers.getContentLength();
 		if (size != null)
 			return size.longValue() != 0;
-		String s = getMIME().getFirstHeaderRawValue(MimeMessage.TRANSFER_ENCODING);
-		if (s == null) s = getMIME().getFirstHeaderRawValue(MimeMessage.CONTENT_TRANSFER_ENCODING);
+		String s = headers.getFirstRawValue(MimeHeaders.TRANSFER_ENCODING);
+		if (s == null) s = headers.getFirstRawValue(MimeHeaders.CONTENT_TRANSFER_ENCODING);
 		return (s != null && s.length() != 0);
+	}
+	
+	/** Return true is the given method may contain a body. GET method returns false. */
+	public static boolean methodMayContainBody(String method) {
+		return !METHOD_GET.equals(method);
 	}
 	
 	/** Return true if the connection should be persistent. */
 	public boolean isConnectionPersistent() {
-		if (Protocol.HTTP_1_1.equals(getProtocol())) {
-			String s = getMIME().getFirstHeaderRawValue(MimeMessage.CONNECTION);
+		if (getProtocolVersion() != null && getProtocolVersion().getMajor() == 1 && getProtocolVersion().getMinor() == 1) {
+			String s = getHeaders().getFirstRawValue(HTTPConstants.Headers.Request.CONNECTION);
 			return s == null || !s.equalsIgnoreCase("close");
 		}
 		return false;
@@ -296,7 +358,7 @@ public class HTTPRequest extends HTTPMessage {
 	/** Return the requested cookie or null. */
 	public String getCookie(String name) {
 		try {
-			for (ParameterizedHeaderValue h : getMIME().getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+			for (ParameterizedHeaderValue h : getHeaders().getValues("cookie", ParameterizedHeaderValue.class)) {
 				String value = h.getParameter(name);
 				if (value != null)
 					return value;
@@ -311,7 +373,7 @@ public class HTTPRequest extends HTTPMessage {
 	public List<String> getCookies(String name) {
 		List<String> values = new ArrayList<>();
 		try {
-			for (ParameterizedHeaderValue h : getMIME().getHeadersValues("cookie", ParameterizedHeaderValue.class)) {
+			for (ParameterizedHeaderValue h : getHeaders().getValues("cookie", ParameterizedHeaderValue.class)) {
 				for (Pair<String, String> p : h.getParameters())
 					if (p.getValue1().equals(name))
 						values.add(p.getValue2());

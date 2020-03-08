@@ -2,8 +2,6 @@ package net.lecousin.framework.network.http.exception;
 
 import net.lecousin.framework.locale.LocalizableString;
 import net.lecousin.framework.locale.LocalizableStringBuffer;
-import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.util.StringUtil;
 
 /** Invalid HTTP method. */
 public class InvalidHTTPMethodException extends HTTPException {
@@ -15,10 +13,7 @@ public class InvalidHTTPMethodException extends HTTPException {
 		super(
 			new LocalizableStringBuffer(
 				new LocalizableString("lc.http", "Invalid HTTP method"),
-				": ",method,", ",
-				new LocalizableString("b", "possible values are"),
-				" ",
-				StringUtil.possibleValues(HTTPRequest.Method.class)
+				": ", method
 			)
 		);
 	}

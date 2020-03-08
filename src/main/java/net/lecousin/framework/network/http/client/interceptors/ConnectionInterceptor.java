@@ -16,8 +16,8 @@ public class ConnectionInterceptor implements HTTPRequestInterceptor {
 	
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
-		if (!request.getMIME().hasHeader(HTTPConstants.Headers.Request.CONNECTION))
-			request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.CONNECTION,
+		if (!request.getHeaders().has(HTTPConstants.Headers.Request.CONNECTION))
+			request.getHeaders().setRawValue(HTTPConstants.Headers.Request.CONNECTION,
 				keepAlive ? HTTPConstants.Headers.Request.CONNECTION_VALUE_KEEP_ALIVE
 						  : HTTPConstants.Headers.Request.CONNECTION_VALUE_CLOSE);
 	}

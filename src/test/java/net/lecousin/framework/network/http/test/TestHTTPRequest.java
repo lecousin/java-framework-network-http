@@ -1,10 +1,13 @@
 package net.lecousin.framework.network.http.test;
 
+import java.nio.charset.StandardCharsets;
+
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
-import net.lecousin.framework.network.http.HTTPMessage.Protocol;
+import net.lecousin.framework.io.data.ByteArray;
+import net.lecousin.framework.network.http.HTTPProtocolVersion;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
-import net.lecousin.framework.util.UnprotectedString;
+import net.lecousin.framework.network.http1.HTTP1RequestCommandConsumer;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -12,11 +15,7 @@ import org.junit.Test;
 public class TestHTTPRequest extends LCCoreAbstractTest {
 
 	@Test
-	public void test() throws Exception {
-		Assert.assertEquals(Protocol.HTTP_1_0, Protocol.from("HTTP/1.0"));
-		Assert.assertEquals(Protocol.HTTP_1_1, Protocol.from("HTTP/1.1"));
-		Assert.assertNull(Protocol.from("HTTP/4.5"));
-		
+	public void testAttributes() {
 		HTTPRequest r = new HTTPRequest();
 		r.setAttribute("test", "yes");
 		Assert.assertEquals("yes", r.getAttribute("test"));
@@ -24,55 +23,77 @@ public class TestHTTPRequest extends LCCoreAbstractTest {
 		Assert.assertEquals("yes", r.removeAttribute("test"));
 		Assert.assertNull(r.getAttribute("test"));
 		Assert.assertFalse(r.hasAttribute("test"));
-		
-		Assert.assertFalse(r.isCommandSet());
-		Assert.assertNull(r.getParameter("toto"));
-		
-		r.setCommand(Method.GET, "/toto/titi", Protocol.HTTP_1_0);
-		Assert.assertTrue(r.isCommandSet());
-		Assert.assertEquals(Method.GET, r.getMethod());
-		Assert.assertEquals(Protocol.HTTP_1_0, r.getProtocol());
-		Assert.assertEquals("/toto/titi", r.getPath());
+	}
 
-		r.setMethod(Method.POST);
-		Assert.assertEquals(Method.POST, r.getMethod());
-		
-		r.setProtocol(Protocol.HTTP_1_1);
-		Assert.assertEquals(Protocol.HTTP_1_1, r.getProtocol());
+	@Test
+	public void testCommandLineConsumerWithoutParameters() throws Exception {
+		HTTPRequest r = new HTTPRequest();
+		ByteArray data = new ByteArray("GET /toto/titi HTTP/1.0\r\n123".getBytes(StandardCharsets.US_ASCII));
+		Assert.assertTrue(new HTTP1RequestCommandConsumer(r).consume(data).blockResult(0).booleanValue());
+		Assert.assertEquals(3, data.remaining());
+		Assert.assertEquals(HTTPRequest.METHOD_GET, r.getMethod());
+		Assert.assertEquals(1, r.getProtocolVersion().getMajor());
+		Assert.assertEquals(0, r.getProtocolVersion().getMinor());
+		Assert.assertEquals("/toto/titi", r.getDecodedPath());
+		Assert.assertNull(r.getQueryParameter("toto"));
+	}
 
-		r.setPath("/hello/world");
-		Assert.assertEquals("/hello/world", r.getPath());
+	@Test
+	public void testCommandLineConsumerWithParameters() throws Exception {
+		HTTPRequest r = new HTTPRequest();
+		ByteArray data = new ByteArray("GET /toto/titi?a=bc&d= HTTP/1.0\r\n123".getBytes(StandardCharsets.US_ASCII));
+		Assert.assertTrue(new HTTP1RequestCommandConsumer(r).consume(data).blockResult(0).booleanValue());
+		Assert.assertEquals(3, data.remaining());
+		Assert.assertEquals(HTTPRequest.METHOD_GET, r.getMethod());
+		Assert.assertEquals(1, r.getProtocolVersion().getMajor());
+		Assert.assertEquals(0, r.getProtocolVersion().getMinor());
+		Assert.assertEquals("/toto/titi", r.getDecodedPath());
+		Assert.assertEquals("bc", r.getQueryParameter("a"));
+		Assert.assertEquals("", r.getQueryParameter("d"));
+		Assert.assertNull(r.getQueryParameter("toto"));
+	}
+
+	@Test
+	public void testCommandLineConsumerWithParameters2() throws Exception {
+		HTTPRequest r = new HTTPRequest();
+		ByteArray data = new ByteArray("DELETE /hello/world?p1=v1&p2=v2&p3=v3&p+4=%3E4 HTTP/1.1\r\n12345".getBytes(StandardCharsets.US_ASCII));
+		Assert.assertTrue(new HTTP1RequestCommandConsumer(r).consume(data).blockResult(0).booleanValue());
+		Assert.assertEquals(5, data.remaining());
+		Assert.assertEquals(HTTPRequest.METHOD_DELETE, r.getMethod());
+		Assert.assertEquals(1, r.getProtocolVersion().getMajor());
+		Assert.assertEquals(1, r.getProtocolVersion().getMinor());
+		Assert.assertEquals("/hello/world", r.getDecodedPath());
+		Assert.assertEquals("v1", r.getQueryParameter("p1"));
+		Assert.assertEquals("v2", r.getQueryParameter("p2"));
+		Assert.assertEquals("v3", r.getQueryParameter("p3"));
+		Assert.assertEquals(">4", r.getQueryParameter("p 4"));
+	}
+	
+	@Test
+	public void testSetCommandLine() {
+		HTTPRequest r = new HTTPRequest();
+		r.setMethod(HTTPRequest.METHOD_POST);
+		Assert.assertEquals(HTTPRequest.METHOD_POST, r.getMethod());
 		
-		r.setCommand("GET /toto/titi?test=tata HTTP/1.0");
-		Assert.assertEquals(Method.GET, r.getMethod());
-		Assert.assertEquals(Protocol.HTTP_1_0, r.getProtocol());
-		Assert.assertEquals("/toto/titi", r.getPath());
-		Assert.assertEquals(1, r.getParameters().size());
-		Assert.assertEquals("tata", r.getParameter("test"));
-		
-		r.setCommand("DELETE /hello/world?p1=v1&p2=v2&p3=v3&p+4=%3E4 HTTP/1.1");
-		Assert.assertEquals(Method.DELETE, r.getMethod());
-		Assert.assertEquals(Protocol.HTTP_1_1, r.getProtocol());
-		Assert.assertEquals("/hello/world", r.getPath());
-		Assert.assertEquals(4, r.getParameters().size());
-		Assert.assertEquals("v1", r.getParameter("p1"));
-		Assert.assertEquals("v2", r.getParameter("p2"));
-		Assert.assertEquals("v3", r.getParameter("p3"));
-		Assert.assertEquals(">4", r.getParameter("p 4"));
-		StringBuilder sb = new StringBuilder();
-		r.generateFullPath(sb);
-		Assert.assertEquals("/hello/world?p1=v1&p2=v2&p3=v3&p+4=%3E4", sb.toString());
-		UnprotectedString us = new UnprotectedString(64);
-		r.generateFullPath(us);
-		Assert.assertEquals("/hello/world?p1=v1&p2=v2&p3=v3&p+4=%3E4", us.toString());
-		
-		r.getMIME().addHeaderRaw("Cookie", "toto=titi; hello=\"bonjour\"; \"the world\"=\"le monde\"");
+		r.setProtocolVersion(new HTTPProtocolVersion((byte)1, (byte)1));
+		Assert.assertEquals(1, r.getProtocolVersion().getMajor());
+		Assert.assertEquals(1, r.getProtocolVersion().getMinor());
+
+		r.setDecodedPath("/hello/world");
+		Assert.assertEquals("/hello/world", r.getDecodedPath());
+	}
+	
+	@Test
+	public void testCookies() throws Exception {
+		HTTPRequest r = new HTTPRequest();
+		r.setHeaders(new MimeHeaders());
+		r.addHeader("Cookie", "toto=titi; hello=\"bonjour\"; \"the world\"=\"le monde\"");
 		Assert.assertEquals("titi", r.getCookie("toto"));
 		Assert.assertEquals("bonjour", r.getCookie("hello"));
 		Assert.assertEquals("le monde", r.getCookie("the world"));
 		Assert.assertNull(r.getCookie("titi"));
 
-		r.getMIME().addHeaderRaw("Cookie", "toto=tutu; toto=tata");
+		r.addHeader("Cookie", "toto=tutu; toto=tata");
 		Assert.assertEquals(3, r.getCookies("toto").size());
 	}
 	

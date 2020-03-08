@@ -1,7 +1,6 @@
 package net.lecousin.framework.network.http.client;
 
 import java.io.Closeable;
-import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -12,39 +11,47 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
-import net.lecousin.framework.concurrent.async.CancelException;
 import net.lecousin.framework.concurrent.async.IAsync;
-import net.lecousin.framework.concurrent.tasks.drives.RemoveFileTask;
-import net.lecousin.framework.io.FileIO;
+import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.util.AsyncConsumer;
+import net.lecousin.framework.concurrent.util.AsyncProducer;
+import net.lecousin.framework.concurrent.util.PartialAsyncConsumer;
 import net.lecousin.framework.io.IO;
-import net.lecousin.framework.io.IO.Seekable.SeekType;
-import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
+import net.lecousin.framework.io.data.ByteArray;
 import net.lecousin.framework.io.out2in.OutputToInput;
+import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
-import net.lecousin.framework.network.mime.MimeHeader;
-import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
+import net.lecousin.framework.network.http1.HTTP1ResponseStatusConsumer;
+import net.lecousin.framework.network.mime.entity.BinaryEntity;
+import net.lecousin.framework.network.mime.entity.BinaryFileEntity;
+import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
+import net.lecousin.framework.network.mime.entity.EmptyEntity;
+import net.lecousin.framework.network.mime.entity.MimeEntity;
+import net.lecousin.framework.network.mime.entity.MimeEntityFactory;
+import net.lecousin.framework.network.mime.header.MimeHeader;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
-import net.lecousin.framework.network.mime.transfer.IdentityTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
-import net.lecousin.framework.network.mime.transfer.TransferReceiver;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 
 /** HTTP client. */
@@ -163,7 +170,7 @@ public class HTTPClient implements Closeable {
 		} else if (port != HTTPConstants.DEFAULT_HTTP_PORT) {
 			url.append(':').append(port);
 		}
-		url.append(request.getPath());
+		url.append(request.getEncodedPath());
 		return url.toString();
 	}
 	
@@ -221,39 +228,67 @@ public class HTTPClient implements Closeable {
 		for (HTTPRequestInterceptor interceptor : config.getInterceptors())
 			interceptor.intercept(request, hostname, port);
 
-		final Long size;
-		IO.Readable body = request.getMIME().getBodyToSend();
-		if (body != null) {
-			result.onDone(body::closeAsync);
-			if (body instanceof IO.KnownSize) {
-				try {
-					size = Long.valueOf(((IO.KnownSize)body).getSizeSync());
-					request.getMIME().setContentLength(size.longValue());
-				} catch (IOException e) {
-					result.error(e);
-					return result;
-				}
-				//request.getMIME().setHeader(MIME.TRANSFER_ENCODING, "8bit");
-			} else {
-				request.getMIME().setHeaderRaw(MimeMessage.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
-				size = null;
-			}
+		// prepare body
+		MimeEntity entity = request.getEntity();
+		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer;
+		if (entity != null)
+			bodyProducer = entity.createBodyProducer();
+		else
+			bodyProducer = new AsyncSupplier<>(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()), null);
+		
+		if (bodyProducer.isDone()) {
+			if (bodyProducer.hasError())
+				result.error(bodyProducer.getError());
+			else
+				sendRequest(request, bodyProducer, connect, result);
 		} else {
-			size = Long.valueOf(0);
-			request.getMIME().setContentLength(0);
+			bodyProducer.thenStart("Send HTTP request", Task.getCurrentPriority(),
+				() -> sendRequest(request, bodyProducer, connect, result), result);
 		}
-		ByteBuffer data = generateCommandAndHeaders(request);
+		return result;
+	}
+	
+	private void sendRequest(
+		HTTPRequest request,
+		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer, Async<IOException> connect,
+		Async<IOException> result
+	) {
+		Long size = bodyProducer.getResult().getValue1();
+		Supplier<List<MimeHeader>> trailerSupplier = request.getTrailerHeadersSuppliers();
+		
+		if (size == null || trailerSupplier != null) {
+			request.setHeader(MimeHeaders.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
+		} else if (size.longValue() > 0 || HTTPRequest.methodMayContainBody(request.getMethod())) {
+			request.getHeaders().setContentLength(size.longValue());
+		}
+
+		// prepare headers
+		ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
+		headers.setNewArrayStringCapacity(4096);
+		HTTP1RequestCommandProducer.generate(request, headers);
+		headers.append("\r\n");
+		request.getHeaders().generateString(headers);
+		ByteBuffer[] buffers = headers.asByteBuffers();
+		
+		AsyncConsumer<ByteBuffer, IOException> clientConsumer = client.asConsumer(3, config.getSendTimeout());
 		
 		connect.onDone(() -> {
-			if (logger.debug()) logger.debug("Connected to server, send headers: " + request);
-			IAsync<IOException> send = client.send(data);
-			if (body == null || (size != null && size.longValue() == 0)) {
-				send.onDone(result);
+			if (logger.debug()) {
+				logger.debug(client.toString() + " connected to server, send headers: " + request);
+			}
+			IAsync<IOException> sendHeaders = clientConsumer.push(Arrays.asList(buffers));
+			if (size != null && size.longValue() == 0) {
+				sendHeaders.onDone(result);
 				return;
 			}
-			sendBody(body, size, request).onDone(result);
+			sendHeaders.onError(result::error);
+			AsyncConsumer<ByteBuffer, IOException> consumer = 
+				size == null || trailerSupplier != null ? new ChunkedTransfer.Sender(clientConsumer, trailerSupplier)
+					: clientConsumer;
+			Async<IOException> sendBody = bodyProducer.getResult().getValue2()
+				.toConsumer(consumer, "Send HTTP request body", Task.getCurrentPriority());
+			sendBody.onDone(result);
 		}, result);
-		return result;
 	}
 	
 	/** Connect to the remote server before to send the given request. */
@@ -283,35 +318,11 @@ public class HTTPClient implements Closeable {
 				//inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
 				if (client instanceof SSLClient) {
 					// we have to create a HTTP tunnel with the proxy
-					if (logger.debug()) logger.debug("Establishing a tunnel connection with proxy " + inet);
-					@SuppressWarnings("squid:S2095") // it is closed
-					TCPClient tunnelClient = new TCPClient();
-					Async<IOException> tunnelConnect =
-						tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-					Async<IOException> connect = new Async<>();
-					// prepare the CONNECT request
-					HTTPRequest connectRequest = new HTTPRequest(Method.CONNECT, hostname + ":" + port);
-					connectRequest.getMIME().addHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
-					ByteBuffer data = generateCommandAndHeaders(connectRequest);
-					tunnelConnect.onDone(
-						() -> tunnelClient.send(data).onDone(
-						() -> HTTPResponse.receive(tunnelClient, config.getReceiveTimeout()).onDone(
-						resp -> {
-							if (resp.getStatusCode() != 200) {
-								tunnelClient.close();
-								connect.error(new HTTPResponseError(resp.getStatusCode(), resp.getStatusMessage()));
-								return;
-							}
-							// tunnel connection established
-							// replace connection of SSLClient by the tunnel
-							((SSLClient)client).tunnelConnected(tunnelClient, connect, config.getReceiveTimeout());
-						}, connect), connect), connect);
-					connect.onErrorOrCancel(tunnelClient::close);
-					return connect;
+					return createHTTPTunnel(inet);
 				}
 				if (logger.debug()) logger.debug("Connecting to proxy " + inet);
 				Async<IOException> connect = client.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-				request.setPath(url);
+				request.setEncodedPath(new ByteArrayStringIso8859Buffer(url));
 				return connect;
 			}
 		}
@@ -321,293 +332,320 @@ public class HTTPClient implements Closeable {
 			new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray());
 	}
 	
-	private static ByteBuffer generateCommandAndHeaders(HTTPRequest request) {
-		return ByteBuffer.wrap(request.generateCommandLineAndHeaders().toUsAsciiBytes());
+	private Async<IOException> createHTTPTunnel(InetSocketAddress inet) {
+		if (logger.debug()) logger.debug("Establishing a tunnel connection with proxy " + inet);
+		@SuppressWarnings("squid:S2095") // it is closed
+		TCPClient tunnelClient = new TCPClient();
+		Async<IOException> tunnelConnect =
+			tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
+		Async<IOException> connect = new Async<>();
+		// prepare the CONNECT request
+		HTTPRequest connectRequest = new HTTPRequest()
+			.setMethod(HTTPRequest.METHOD_CONNECT).setDecodedPath(hostname + ":" + port);
+		connectRequest.addHeader(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
+		ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
+		headers.setNewArrayStringCapacity(4096);
+		HTTP1RequestCommandProducer.generate(connectRequest, headers);
+		headers.append("\r\n");
+		connectRequest.getHeaders().generateString(headers);
+		ByteBuffer[] buffers = headers.asByteBuffers();
+		// once connected, send the headers
+		tunnelConnect.onDone(() -> tunnelClient.asConsumer(2, config.getSendTimeout()).push(Arrays.asList(buffers)).onDone(() -> {
+			// once headers are sent, receive the response status line
+			HTTPResponse response = new HTTPResponse();
+			tunnelClient.getReceiver().consume(
+				new HTTP1ResponseStatusConsumer(response)
+				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
+				4096, config.getReceiveTimeout()).onDone(() -> {
+				// status line received
+				if (!response.isSuccess()) {
+					connect.error(new HTTPResponseError(response));
+					return;
+				}
+				// read headers
+				MimeHeaders responseHeaders = new MimeHeaders();
+				response.setHeaders(responseHeaders);
+				tunnelClient.getReceiver().consume(
+					responseHeaders.createConsumer(config.getMaximumResponseHeadersLength())
+					.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
+					4096, config.getReceiveTimeout()).onDone(
+						// headers received
+						// tunnel connection established
+						// replace connection of SSLClient by the tunnel
+						() -> ((SSLClient)client).tunnelConnected(tunnelClient, connect, config.getReceiveTimeout()),
+					connect);
+			}, connect);
+		}, connect), connect);
+		connect.onErrorOrCancel(tunnelClient::close);
+		return connect;
 	}
 	
-	private IAsync<IOException> sendBody(IO.Readable body, Long size, HTTPRequest request) {
-		if (logger.debug()) logger.debug("Sending request body to server");
-		if (body instanceof IO.KnownSize) {
-			if (body instanceof IO.Readable.Buffered)
-				return IdentityTransfer.send(client, (IO.Readable.Buffered)body);
-			int bufferSize;
-			int maxBuffers;
-			long si = size.longValue();
-			if (si >= 8 * 1024 * 1024) {
-				bufferSize = 1024 * 1024;
-				maxBuffers = 4;
-			} else if (si >= 1024 * 1024) {
-				bufferSize = 512 * 1024;
-				maxBuffers = 6;
-			} else if (si >= 128 * 1024) {
-				bufferSize = 64 * 1024;
-				maxBuffers = 10;
-			} else if (si >= 32 * 1024) {
-				bufferSize = 16 * 1024;
-				maxBuffers = 4;
-			} else {
-				bufferSize = (int)si;
-				maxBuffers = 1;
-			}
-			return IdentityTransfer.send(client, body, bufferSize, maxBuffers);
-		}
-		
-		if (body instanceof IO.Readable.Buffered)
-			return ChunkedTransfer.send(client, (IO.Readable.Buffered)body, request.getTrailerHeadersSuppliers());
-
-		return ChunkedTransfer.send(client, body, 128 * 1024, 8, request.getTrailerHeadersSuppliers());
-	}
-	
-	/** Receive the response headers. */
-	public AsyncSupplier<HTTPResponse, IOException> receiveResponseHeader() {
-		return HTTPResponse.receive(client, config.getReceiveTimeout());
-	}
-	
-	/** Receive the response header and body, and write the body to the given IO.
-	 * The given IO is wrapped into an OutputToInput so we can start reading from it before
-	 * the body has been fully received.
+	/** Receive the response from the server.
+	 * The response is returned as soon as the headers have been received, and the response entity
+	 * is set to a BinaryEntity with an OutputToInput so the body can be read while it is received.
 	 */
-	public <T extends IO.Readable.Seekable & IO.Writable.Seekable> void receiveResponse(
-		String source, T io, int bufferSize,
-		AsyncSupplier<HTTPResponse, IOException> responseHeaderListener,
-		AsyncSupplier<HTTPResponse, IOException> outputReceived
-	) {
-		AsyncSupplier<HTTPResponse, IOException> ondone = new AsyncSupplier<>();
-		Mutable<OutputToInput> o2i = new Mutable<>(null);
-		receiveResponse(
-			responseHeaderListener,
-			response -> {
-				OutputToInput out = new OutputToInput(io, source);
-				o2i.set(out);
-				return new Pair<>(out, Integer.valueOf(bufferSize));
-			},
-			ondone
-		);
-		ondone.onDone(response -> {
-			if (o2i.get() != null)
-				o2i.get().endOfData();
-			outputReceived.unblockSuccess(response);
-		}, error -> {
-			if (o2i.get() != null)
-				o2i.get().signalErrorBeforeEndOfData(error);
-			outputReceived.error(error);
-		}, cancel -> {
-			if (o2i.get() != null)
-				o2i.get().signalErrorBeforeEndOfData(IO.errorCancelled(cancel));
-			outputReceived.cancel(cancel);
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponseHeadersThenBodyAsBinary(int maxBodyInMemory) {
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		Mutable<HTTPResponse> resp = new Mutable<>(null);
+		AsyncSupplier<HTTPResponse, IOException> receive = receiveResponse(null, response -> {
+			resp.set(response);
+			return null;
+		}, (parent, headers) -> {
+			BinaryEntity entity = new BinaryEntity(parent, headers);
+			IOInMemoryOrFile io = new IOInMemoryOrFile(maxBodyInMemory, Task.getCurrentPriority(), "BinaryEntity");
+			entity.setContent(new OutputToInput(io, io.getSourceDescription()));
+			resp.get().setEntity(entity);
+			result.unblockSuccess(resp.get());
+			return entity;
 		});
-	}
-	
-	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> AsyncSupplier<HTTPResponse, IOException> receiveResponse(
-		AsyncSupplier<HTTPResponse,IOException> responseHeaderListener,
-		TIO output, int bufferSize
-	) {
-		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
-		receiveResponse(
-			responseHeaderListener,
-			response -> new Pair<>(output, Integer.valueOf(bufferSize)),
-			result
-		);
-		return result;
-	}
-	
-	/** Receive the response header and body, and write the body to the given IO. */
-	public <TIO extends IO.Writable & IO.Readable> AsyncSupplier<HTTPResponse, IOException> receiveResponse(
-		TIO output, int bufferSize
-	) {
-		return receiveResponse(null, output, bufferSize);
-	}
-	
-	/** Receive the response header, then the body to the IO provided by the provider.
-	 * The provider gives a Writable and a buffer size based on the HTTP response headers received.
-	 * The provider may not be called, and the IO set to null in the response, in case it is detected
-	 * that there will be no body.
-	 * If the provider provides a null pair, the body is not received.
-	 */
-	public <TIO extends IO.Writable & IO.Readable> void receiveResponse(
-		AsyncSupplier<HTTPResponse,IOException> responseHeaderListener,
-		Function<HTTPResponse, Pair<TIO, Integer>> outputProviderOnHeadersReceived,
-		AsyncSupplier<HTTPResponse, IOException> onReceived
-	) {
-		receiveResponseHeader().onDone(
-			response -> {
-				if (logger.debug()) logger.debug("Response headers received, start to receive response body");
-				if (responseHeaderListener != null)
-					responseHeaderListener.unblockSuccess(response);
-				if (!response.isBodyExpected()) {
-					onReceived.unblockSuccess(response);
-					return;
-				}
-				Pair<TIO, Integer> output = outputProviderOnHeadersReceived.apply(response);
-				if (output == null) {
-					onReceived.unblockSuccess(response);
-				} else {
-					Async<IOException> result = receiveBody(response, output.getValue1(), output.getValue2().intValue());
-					result.onDone(() -> onReceived.unblockSuccess(response), onReceived);
-				}
-			},
-			onReceived
-		);
-	}
-	
-	/** Receive the body for the given response for which the headers have been already received. */
-	public <TIO extends IO.Writable & IO.Readable> Async<IOException> receiveBody(
-		HTTPResponse response, TIO out, int bufferSize
-	) {
-		Async<IOException> result = new Async<>();
-		if (!response.isBodyExpected()) {
-			result.unblock();
-			return result;
-		}
-		try {
-			response.getMIME().setBodyReceived(out);
-			TransferReceiver transfer = TransferEncodingFactory.create(response.getMIME(), out);
-			if (!transfer.isExpectingData()) {
-				result.unblock();
-				return result;
-			}
-			receiveBody(transfer, result, bufferSize);
-		} catch (IOException error) {
+		receive.onError(error -> {
+			if (resp.get() != null && resp.get().getEntity() != null)
+				((OutputToInput)((BinaryEntity)resp.get().getEntity()).getContent()).signalErrorBeforeEndOfData(error);
 			result.error(error);
-		}
+		});
+		receive.onSuccess(() -> {
+			if (!result.isDone()) {
+				// empty body, entityFactory was not called
+				BinaryEntity entity = new BinaryEntity(null, resp.get().getHeaders());
+				entity.setContent(new EmptyReadable("empty body", Task.Priority.NORMAL));
+				resp.get().setEntity(entity);
+				result.unblockSuccess(resp.get());
+			}
+		});
 		return result;
 	}
 	
-	private void receiveBody(TransferReceiver transfer, Async<IOException> result, int bufferSize) {
-		client.getReceiver().readAvailableBytes(bufferSize, config.getReceiveTimeout()).onDone(
-		data -> {
-			if (data == null) {
-				result.error(new EOFException("Unexpected end of data"));
+	/** Receive the response from the server, with a body as a BinaryEntity. */
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponseAsBinary() {
+		return receiveResponse(null, null, BinaryEntity::new);
+	}
+	
+	/** Receive the response from the server. */
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponse() {
+		return receiveResponse(null, null, DefaultMimeEntityFactory.getInstance());
+	}
+
+	/**
+	 * Receive the response from the server.
+	 * 
+	 * @param entityFactory called once the headers have been received to create an entity that will receive the response body.
+	 * @return the response or an error
+	 */
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponse(MimeEntityFactory entityFactory) {
+		return receiveResponse(null, null, entityFactory);
+	}
+	
+	/**
+	 * Receive the response from the server.
+	 * 
+	 * @param onStatusReceived (may be null) called once the status line has been received.
+	 *        If it returns null, the process continues. If it returns a boolean the process is stopped and the boolean value indicates
+	 *        if the client must be closed or not.
+	 * @param onHeadersReceived (may be null) called once the headers have been received.
+	 *        If it returns null, the process continues. If it returns a boolean the process is stopped and the boolean value indicates
+	 *        if the client must be closed or not.
+	 * @param entityFactory called once the headers have been received to create an entity that will receive the response body.
+	 *        If null, DefaultMimeEntityFactory.getInstance() is used.
+	 * @return the response or an error
+	 */
+	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
+	public AsyncSupplier<HTTPResponse, IOException> receiveResponse(
+		Function<HTTPResponse, Boolean> onStatusReceived,
+		Function<HTTPResponse, Boolean> onHeadersReceived,
+		MimeEntityFactory entityFactory
+	) {
+		if (logger.trace())
+			logger.trace("Start receiving HTTP response from " + client);
+		HTTPResponse response = new HTTPResponse();
+		PartialAsyncConsumer<ByteBuffer, IOException> statusLineConsumer = new HTTP1ResponseStatusConsumer(response).convert(
+			ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
+		IAsync<IOException> receiveStatusLine = client.getReceiver().consume(statusLineConsumer, 4096, config.getReceiveTimeout());
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		response.setHeaders(new MimeHeaders());
+		MimeEntityFactory ef = entityFactory != null ? entityFactory : DefaultMimeEntityFactory.getInstance();
+		if (receiveStatusLine.isDone())
+			reveiceResponseHeaders(receiveStatusLine, response, result, ef, onStatusReceived, onHeadersReceived);
+		else
+			receiveStatusLine.thenStart("Receive HTTP response", Task.getCurrentPriority(),
+				() -> reveiceResponseHeaders(receiveStatusLine, response, result, ef, onStatusReceived, onHeadersReceived),
+				true);
+		return result;
+	}
+	
+	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
+	private void reveiceResponseHeaders(
+		IAsync<IOException> receiveStatusLine, HTTPResponse response, AsyncSupplier<HTTPResponse, IOException> result,
+		MimeEntityFactory entityFactory, Function<HTTPResponse, Boolean> onStatusReceived,
+		Function<HTTPResponse, Boolean> onHeadersReceived
+	) {
+		if (receiveStatusLine.forwardIfNotSuccessful(result)) {
+			close();
+			return;
+		}
+		if (logger.trace())
+			logger.trace("Received HTTP status line from " + client + ": " + response.getProtocolVersion() + " "
+				+ response.getStatusCode() + " " + response.getStatusMessage());
+		if (onStatusReceived != null) {
+			Boolean close = onStatusReceived.apply(response);
+			if (close != null) {
+				if (close.booleanValue())
+					close();
 				return;
 			}
-			if (logger.trace()) logger.trace("Consuming response body data: " + data.remaining());
-			AsyncSupplier<Boolean,IOException> t = transfer.consume(data);
-			t.onDone(end -> {
-				if (end.booleanValue()) {
-					if (logger.debug()) logger.debug("End of response body");
-					if (data.hasRemaining()) {
-						// TODO it must not happen, but we have to request to the transfer,
-						// how many bytes are expected!
-					}
-					result.unblock();
-					return;
-				}
-				receiveBody(transfer, result, bufferSize);
-			}, result);
-		}, result);
+		}
+		PartialAsyncConsumer<ByteBuffer, IOException> headersConsumer = response.getHeaders()
+			.createConsumer(config.getMaximumResponseHeadersLength()).convert(
+					ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
+		IAsync<IOException> receiveHeaders = client.getReceiver().consume(headersConsumer, 4096, config.getReceiveTimeout());
+		if (receiveHeaders.isDone())
+			reveiceResponseBody(receiveHeaders, response, result, entityFactory, onHeadersReceived);
+		else
+			receiveHeaders.thenStart("Receive HTTP response", Task.getCurrentPriority(),
+				() -> reveiceResponseBody(receiveHeaders, response, result, entityFactory, onHeadersReceived), true);
+	}
+
+	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
+	private void reveiceResponseBody(
+		IAsync<IOException> receiveHeaders, HTTPResponse response, AsyncSupplier<HTTPResponse, IOException> result,
+		MimeEntityFactory entityFactory, Function<HTTPResponse, Boolean> onHeadersReceived
+	) {
+		if (receiveHeaders.forwardIfNotSuccessful(result)) {
+			close();
+			return;
+		}
+		if (logger.trace())
+			logger.trace("Received HTTP response headers from " + client + ":\r\n"
+				+ response.getHeaders().generateString(1024).toString());
+		if (onHeadersReceived != null) {
+			Boolean close = onHeadersReceived.apply(response);
+			if (close != null) {
+				if (close.booleanValue())
+					close();
+				return;
+			}
+		}
+		Long size = response.getHeaders().getContentLength();
+		PartialAsyncConsumer<ByteBuffer, IOException> transfer;
+		try {
+			if (response.isBodyExpected()) {
+				MimeEntity entity = entityFactory.create(null, response.getHeaders());
+				transfer = TransferEncodingFactory.create(response.getHeaders(),
+					entity.createConsumer(response.getHeaders().getContentLength()));
+				response.setEntity(entity);
+			} else {
+				if (logger.trace())
+					logger.trace("No body expected: end of HTTP response from " + client);
+				response.setEntity(new EmptyEntity(null, response.getHeaders()));
+				result.unblockSuccess(response);
+				return;
+			}
+		} catch (Exception e) {
+			close();
+			result.error(IO.error(e));
+			return;
+		}
+		int bufferSize;
+		if (size == null)
+			bufferSize = 8192;
+		else if (size.longValue() <= 1024)
+			bufferSize = 1024;
+		else if (size.longValue() <= 64 * 1024)
+			bufferSize = size.intValue();
+		else
+			bufferSize = 64 * 1024;
+		if (logger.trace())
+			logger.trace("Start receiving HTTP response body from " + client + " with transfer: " + transfer);
+		IAsync<IOException> receiveBody = client.getReceiver().consume(transfer, bufferSize, config.getReceiveTimeout());
+		receiveBody.onDone(() -> result.unblockSuccess(response), result);
 	}
 	
-	/** Send the given request and receive response headers.
-	 * If a body is expected the receiveBody method should be used.
-	 * 
-	 * @param request the request to send
-	 * @return the HTTPResponse with status code and headers, but without body.
-	 */
-	public AsyncSupplier<HTTPResponse, IOException> sendAndReceiveHeaders(HTTPRequest request) {
-		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
-		sendRequest(request).onDone(() -> receiveResponseHeader().forward(result), result);
-		return result;
-	}
 
-	/**
-	 * Send the request and start receiving the response.<br/>
-	 * If the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
-	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
-	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
-	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
-	 * This method is equivalent to sendAndReceive(request, true, false, 0).
-	 * 
-	 * @param request the request to send
-	 * @return the response
+	/** Send the request and receive the response from the server.
+	 * The response is returned as soon as the headers have been received, and the response entity
+	 * is set to a BinaryEntity with an OutputToInput so the body can be read while it is received.
 	 */
-	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request) {
-		return sendAndReceive(request, true, false, 0);
-	}
-
-	/**
-	 * Send the request and start receiving the response.<br/>
-	 * If the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
-	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
-	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
-	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
-	 * This method is equivalent to sendAndReceive(request, true, false, maxRedirect).
-	 * 
-	 * @param request the request to send
-	 * @param maxRedirect maximum number of redirection to follow
-	 * @return the response
-	 */
-	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request, int maxRedirect) {
-		return sendAndReceive(request, true, false, maxRedirect);
-	}
-
-	/**
-	 * Send the request and start receiving the response.<br/>
-	 * If stopOnError is true and the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
-	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
-	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
-	 * a IOInMemoryOrFile is used with 64K in memory.<br/>
-	 * This method is equivalent to sendAndReceive(request, stopOnError, false, 0).
-	 * 
-	 * @param request the request to send
-	 * @param stopOnError true to do not receive the body and return an HTTPResponseError if the response status code is not 2xx.
-	 * @return the response
-	 */
-	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(HTTPRequest request, boolean stopOnError) {
-		return sendAndReceive(request, stopOnError, false, 0);
-	}
-	
-	/**
-	 * Send the request and start receiving the response.<br/>
-	 * If stopOnError is true and the response status is not 2xx, the body is not received and an HTTPResponseError is returned.<br/>
-	 * The body can be read from the response.getMIME().getBodyReceivedAsInput().<br/>
-	 * If the response contains a Content-Length header and the length is not greater than 128K, a ByteArrayIO is used, else
-	 * a IOInMemoryOrFile is used with 64K in memory.
-	 * 
-	 * @param request the request to send
-	 * @param stopOnError true to do not receive the body and return an HTTPResponseError if the response status code is not 2xx.
-	 * @param waitFullBody if true the response is unblocked only once the body has been fully received.
-	 * @param maxRedirect maximum number of redirection to follow
-	 * @return the response
-	 */
-	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(
-		HTTPRequest request, boolean stopOnError, boolean waitFullBody, int maxRedirect
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceiveHeadersThenBodyAsBinary(
+		HTTPRequest request, int maxBodyInMemory, int maxRedirect
 	) {
 		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		Mutable<HTTPResponse> resp = new Mutable<>(null);
+		AsyncSupplier<HTTPResponse, IOException> receive = sendAndReceive(request, response -> {
+			resp.set(response);
+			return null;
+		}, (parent, headers) -> {
+			BinaryEntity entity = new BinaryEntity(parent, headers);
+			IOInMemoryOrFile io = new IOInMemoryOrFile(maxBodyInMemory, Task.getCurrentPriority(), "BinaryEntity");
+			entity.setContent(new OutputToInput(io, io.getSourceDescription()));
+			resp.get().setEntity(entity);
+			result.unblockSuccess(resp.get());
+			return entity;
+		}, maxRedirect);
+		receive.onError(error -> {
+			if (resp.get() != null && resp.get().getEntity() != null)
+				((OutputToInput)((BinaryEntity)resp.get().getEntity()).getContent()).signalErrorBeforeEndOfData(error);
+			result.error(error);
+		});
+		receive.onSuccess(() -> {
+			if (!result.isDone()) {
+				// empty body, entityFactory was not called
+				BinaryEntity entity = new BinaryEntity(null, resp.get().getHeaders());
+				entity.setContent(new EmptyReadable("empty body", Task.Priority.NORMAL));
+				resp.get().setEntity(entity);
+				result.unblockSuccess(resp.get());
+			}
+		});
+		return result;
+	}
+
+	/**
+	 * Send the request and start receiving the response.<br/>
+	 * Equivalent to sendAndReceive(request, onHeadersReceived, entityFactory, 0).
+	 * 
+	 * @param request the request to send
+	 * @param onHeadersReceived (may be null) called once the headers have been received.
+	 *        If it returns null, the process continues. If it returns a boolean the process is stopped and the boolean value indicates
+	 *        if the client must be closed or not.
+	 * @param entityFactory called once the headers have been received to create an entity that will receive the response body.
+	 * @return the response
+	 */
+	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(
+		HTTPRequest request,
+		Function<HTTPResponse, Boolean> onHeadersReceived,
+		MimeEntityFactory entityFactory
+	) {
+		return sendAndReceive(request, onHeadersReceived, entityFactory, 0);
+	}
+	
+	/**
+	 * Send the request and start receiving the response with automatic redirection.<br/>
+	 * 
+	 * @param request the request to send
+	 * @param onHeadersReceived (may be null) called once the headers have been received.
+	 *        If it returns null, the process continues. If it returns a boolean the process is stopped and the boolean value indicates
+	 *        if the client must be closed or not.
+	 * @param entityFactory called once the headers have been received to create an entity that will receive the response body.
+	 * @param maxRedirect maximum number of redirection to follow
+	 * @return the response
+	 */
+	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
+	public AsyncSupplier<HTTPResponse, IOException> sendAndReceive(
+		HTTPRequest request,
+		Function<HTTPResponse, Boolean> onHeadersReceived,
+		MimeEntityFactory entityFactory,
+		int maxRedirect
+	) {
 		Async<IOException> send = sendRequest(request);
-		String description = generateURL(request);
-		send.onDone(() -> receiveResponseHeader().onDone(response -> {
+		AsyncSupplier<HTTPResponse, IOException> result = new AsyncSupplier<>();
+		send.onDone(() -> receiveResponse(null, response -> {
 			if (handleRedirection(request, response, maxRedirect, result,
-				newClient -> newClient.sendAndReceive(request, stopOnError, waitFullBody, maxRedirect - 1).forward(result)))
-				return;
-			if (stopOnError && (response.getStatusCode() / 100) != 2) {
-				result.unblockError(new HTTPResponseError(response));
-				close();
-				return;
-			}
-			if (!response.isBodyExpected()) {
-				result.unblockSuccess(response);
-				return;
-			}
-			Long size = response.getMIME().getContentLength();
-			OutputToInput output = new OutputToInput(initIO(size, description), description);
-			int bufferSize = size != null && size.longValue() < 64 * 1024 ? size.intValue() : 64 * 1024;
-			receiveBody(response, output, bufferSize).onDone(() -> {
-				output.endOfData();
-				if (waitFullBody)
-					result.unblockSuccess(response);
-			}, error -> {
-				output.signalErrorBeforeEndOfData(error);
-				if (waitFullBody)
-					result.error(error);
-			}, cancel -> {
-				output.signalErrorBeforeEndOfData(IO.errorCancelled(cancel));
-				if (waitFullBody)
-					result.cancel(new CancelException("Download has been cancelled", cancel));
-			});
-			if (!waitFullBody)
-				result.unblockSuccess(response);
-		}, result), result);
+				newClient -> newClient.sendAndReceive(request, onHeadersReceived, entityFactory, maxRedirect - 1)
+					.forward(result)))
+				return Boolean.FALSE;
+			if (onHeadersReceived != null)
+				return onHeadersReceived.apply(response);
+			return null;
+		}, entityFactory).forward(result), result);
 		return result;
 	}
 	
@@ -621,11 +659,11 @@ public class HTTPClient implements Closeable {
 		int code = response.getStatusCode();
 		if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308)
 			return false;
-		String location = response.getMIME().getFirstHeaderRawValue(HTTPConstants.Headers.Response.LOCATION);
+		String location = response.getHeaders().getFirstRawValue(HTTPConstants.Headers.Response.LOCATION);
 		if (location == null)
 			return false;
 		try {
-			Long size = response.getMIME().getContentLength();
+			Long size = response.getHeaders().getContentLength();
 			Async<IOException> skipBody;
 			if (size != null && size.longValue() > 0)
 				skipBody = client.getReceiver().skipBytes(size.intValue(), config.getReceiveTimeout());
@@ -656,62 +694,27 @@ public class HTTPClient implements Closeable {
 		return true;
 	}
 	
-	@SuppressWarnings("unchecked")
-	private static <T extends IO.Readable.Seekable & IO.Writable.Seekable> T initIO(Long size, String description) {
-		if (size != null && size.longValue() <= 128 * 1024)
-			return (T)new ByteArrayIO(size.intValue(), description);
-		return (T)new IOInMemoryOrFile(64 * 1024, Task.PRIORITY_NORMAL, description);
-	}
-	
 	/**
 	 * Send the request and download the response into the given file.
 	 * 
 	 * @param request the request to send
 	 * @param file the file to save the response body
 	 * @param maxRedirect maximum number of redirection to follow
-	 * @return the response and the file at position 0. The file may be null if no body has been received.
+	 * @return the response
 	 */
-	public AsyncSupplier<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> download(
+	public AsyncSupplier<HTTPResponse, IOException> download(
 		HTTPRequest request, File file, int maxRedirect
 	) {
-		AsyncSupplier<Pair<HTTPResponse, FileIO.ReadWrite>, IOException> result = new AsyncSupplier<>();
-		Async<IOException> send = sendRequest(request);
-		send.onDone(() -> receiveResponseHeader().onDone(response -> {
-			if (handleRedirection(request, response, maxRedirect, result,
-				newClient -> newClient.download(request, file, maxRedirect - 1).forward(result)))
-				return;
-			if ((response.getStatusCode() / 100) != 2) {
-				result.unblockError(new HTTPResponseError(response));
-				close();
-				return;
-			}
-			if (!response.isBodyExpected()) {
-				result.unblockSuccess(new Pair<>(response, null));
-				return;
-			}
-			FileIO.ReadWrite io = new FileIO.ReadWrite(file, Task.PRIORITY_NORMAL);
-			receiveBody(response, io, 64 * 1024).onDone(() -> {
-				AsyncSupplier<Long, IOException> seek = io.seekAsync(SeekType.FROM_BEGINNING, 0);
-				seek.onDone(() -> result.unblockSuccess(new Pair<>(response, io)), result);
-			});
-			result.onErrorOrCancel(() -> io.closeAsync().thenStart(new RemoveFileTask(file, Task.PRIORITY_NORMAL), true));
-		}, result), result);
-		return result;
+		return sendAndReceive(request, null, (parent, headers) -> {
+			BinaryFileEntity entity = new BinaryFileEntity(parent, headers);
+			entity.setFile(file);
+			return entity;
+		}, maxRedirect);
 	}
 	
 	@Override
 	public void close() {
 		client.close();
-	}
-	
-	/** Utility method to create a client, send a GET request, receive the response, and close the client once the response is done. */
-	public static AsyncSupplier<HTTPResponse, IOException> get(URI uri, int maxRedirect, MimeHeader... headers)
-	throws UnsupportedHTTPProtocolException, GeneralSecurityException {
-		HTTPClient client = HTTPClient.create(uri);
-		AsyncSupplier<HTTPResponse, IOException> send =
-			client.sendAndReceive(new HTTPRequest(Method.GET).setURI(uri).setHeaders(headers), true, true, maxRedirect);
-		send.onDone(client::close);
-		return send;
 	}
 	
 }

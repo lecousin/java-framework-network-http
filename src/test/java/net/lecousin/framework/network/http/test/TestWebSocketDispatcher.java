@@ -17,16 +17,16 @@ import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.http.websocket.WebSocketClient;
-import net.lecousin.framework.network.http.websocket.WebSocketDataFrame;
-import net.lecousin.framework.network.http.websocket.WebSocketDispatcher;
-import net.lecousin.framework.network.http.websocket.WebSocketDispatcher.SingleWebSocketHandler;
-import net.lecousin.framework.network.http.websocket.WebSocketDispatcher.WebSocketHandler;
-import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.websocket.WebSocketClient;
+import net.lecousin.framework.network.websocket.WebSocketDataFrame;
+import net.lecousin.framework.network.websocket.WebSocketDispatcher;
+import net.lecousin.framework.network.websocket.WebSocketServerProtocol;
+import net.lecousin.framework.network.websocket.WebSocketDispatcher.SingleWebSocketHandler;
+import net.lecousin.framework.network.websocket.WebSocketDispatcher.WebSocketHandler;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -68,10 +68,10 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 	@Before
 	public void startServer() throws Exception {
 		server = new TCPServer();
-		HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
+		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket", null));
 		handler = new Handler();
 		WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketDispatcher(new SingleWebSocketHandler(handler)));
-		protocol.enableWebSocket(wsProtocol);
+		protocol.addUpgradeProtocol(wsProtocol);
 		server.setProtocol(protocol);
 		serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 10).blockResult(0);
 	}

@@ -10,6 +10,10 @@ import net.lecousin.framework.network.http.HTTPResponse;
  */
 public class HTTPServerResponse extends HTTPResponse {
 
+	/** Constructor. */
+	public HTTPServerResponse() {
+	}
+	
 	/** Indicates if the connection with the client must be closed once sent. */
 	private boolean forceClose = false;
 	
@@ -17,6 +21,9 @@ public class HTTPServerResponse extends HTTPResponse {
 	 * This may be useful for streaming such as SSE.
 	 */
 	private boolean forceNoContent = false;
+	
+	/** Synchronization point allowing to known when the response is ready to be sent and no further processing should be done. */
+	private Async<Exception> ready = new Async<>();
 	
 	/** SynchronizationPoint allowing to know when the response has been sent to the network. */
 	private Async<IOException> sent = new Async<>();
@@ -32,7 +39,7 @@ public class HTTPServerResponse extends HTTPResponse {
 	}
 
 	/** Indicates that there is no content, so no Content-Length should be sent, no chunked transfer...
-	 * This may be useful for streaming such as SSE.
+	 * This may be useful for streaming such as SSE or tunneling.
 	 */
 	public boolean isForceNoContent() {
 		return forceNoContent;
@@ -45,11 +52,14 @@ public class HTTPServerResponse extends HTTPResponse {
 		this.forceNoContent = forceNoContent;
 	}
 
+	/** Synchronization point allowing to known when the response is ready to be sent and no further processing should be done. */
+	public Async<Exception> getReady() {
+		return ready;
+	}
+	
 	/** SynchronizationPoint allowing to know when the response has been sent to the network. */
 	public Async<IOException> getSent() {
 		return sent;
-	}
-	
-	
+	}	
 	
 }

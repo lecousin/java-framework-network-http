@@ -12,21 +12,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import net.lecousin.framework.concurrent.Task;
-import net.lecousin.framework.concurrent.Threading;
-import net.lecousin.framework.io.FileIO;
+import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.threads.Threading;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOAsInputStream;
 import net.lecousin.framework.io.IOFromInputStream;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
+import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
-import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.HTTPResponse;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.mime.MimeHeader;
+import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity.PartFile;
+import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
 
@@ -58,22 +58,28 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		public void check(HTTPRequest request, HTTPResponse response, IOException error) throws Exception {
 			if (error != null)
 				throw error;
+			if (!response.isSuccess())
+				throw new HTTPResponseError(response);
 			
-			JSONParser parser = new JSONParser();
-			Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(response.getMIME().getBodyReceivedAsInput(), false)));
-			Assert.assertTrue(o instanceof JSONObject);
-			JSONObject json = (JSONObject)o;
-			checkURL(json, request);
-			checkHeaders(json, request);
-			if (formData != null)
-				checkFormData(json, formData);
+			try {
+				JSONParser parser = new JSONParser();
+				Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(((BinaryEntity)response.getEntity()).getContent(), false)));
+				Assert.assertTrue(o instanceof JSONObject);
+				JSONObject json = (JSONObject)o;
+				checkURL(json, request);
+				checkHeaders(json, request);
+				if (formData != null)
+					checkFormData(json, formData);
+			} catch (Exception e) {
+				throw new Exception("Error checking JSON response:\r\n" + response.getHeaders().generateString(1024).asString(), e);
+			}
 		}
 		
 		private static void checkURL(JSONObject json, HTTPRequest request) throws Exception {
 			if (json.containsKey("url")) {
 				String u = (String)json.get("url");
 				URI uri = new URI(u);
-				URI expected = new URI(request.getPath());
+				URI expected = new URI(request.getEncodedPath().asString());
 				Assert.assertEquals(expected.getPath(), uri.getPath());
 			}
 		}
@@ -88,7 +94,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 			for (Object key : headers.keySet())
 				received.put(key.toString().toLowerCase(), (String)headers.get(key));
 			
-			for (MimeHeader header : request.getMIME().getHeaders()) {
+			for (MimeHeader header : request.getHeaders().getHeaders()) {
 				String h = header.getNameLowerCase();
 				if ("content-length".equals(h)) continue;
 				if ("host".equals(h)) continue;
@@ -135,10 +141,9 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		
 		@Override
 		public void check(HTTPRequest request, HTTPResponse response, IOException error) throws Exception {
-			if (error == null)
-				throw new AssertionError("No error returned, expected was status code " + expectedCode);
-			Assert.assertTrue(error instanceof HTTPResponseError);
-			Assert.assertEquals(expectedCode, ((HTTPResponseError)error).getStatusCode());
+			if (error != null)
+				throw error;
+			Assert.assertEquals(expectedCode, response.getStatusCode());
 		}
 		
 	}
@@ -155,8 +160,10 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		public void check(HTTPRequest request, HTTPResponse response, IOException error) throws Exception {
 			if (error != null)
 				throw error;
-			
-			IO.Readable data = response.getMIME().getBodyReceivedAsInput();
+			if (!response.isSuccess())
+				throw new HTTPResponseError(response);
+
+			IO.Readable data = ((BinaryEntity)response.getEntity()).getContent();
 			byte[] buf = new byte[expectedSize + 16384];
 			int nb = data.readFullyAsync(ByteBuffer.wrap(buf)).blockResult(0).intValue();
 			Assert.assertEquals(expectedSize, nb);
@@ -166,42 +173,42 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 
 	@Test
 	public void testGet() throws Exception {
-		testRequest("get", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse());
+		testRequest("get", new HTTPRequest().get().addHeader("X-Test", "a test"), 0, new CheckJSONResponse());
 	}
 
 	@Test
 	public void testGzip() throws Exception {
-		testRequest("gzip", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse());
+		testRequest("gzip", new HTTPRequest().get().addHeader("X-Test", "a test"), 0, new CheckJSONResponse());
 	}
 
 	@Test
 	public void testRedirect1On3() throws Exception {
-		testRequest("redirect/1", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 3, new CheckJSONResponse());
+		testRequest("redirect/1", new HTTPRequest().get().addHeader("X-Test", "a test"), 3, new CheckJSONResponse());
 	}
 
 	@Test
 	public void testRedirect2On3() throws Exception {
-		testRequest("redirect/2", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 3, new CheckJSONResponse());
+		testRequest("redirect/2", new HTTPRequest().get().addHeader("X-Test", "a test"), 3, new CheckJSONResponse());
 	}
 
 	@Test
 	public void testRedirect3On3() throws Exception {
-		testRequest("redirect/3", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 3, new CheckJSONResponse());
+		testRequest("redirect/3", new HTTPRequest().get().addHeader("X-Test", "a test"), 3, new CheckJSONResponse());
 	}
 
 	@Test
 	public void testRedirect4On3() throws Exception {
-		testRequest("redirect/4", new HTTPRequest(Method.GET).setHeaders(new MimeHeader("X-Test", "a test")), 3, new CheckError(302));
+		testRequest("redirect/4", new HTTPRequest().get().addHeader("X-Test", "a test"), 3, new CheckError(302));
 	}
 
 	@Test
 	public void testGetBytes() throws Exception {
-		testRequest("bytes/15000", new HTTPRequest(Method.GET), 0, new CheckDataResponse(15000));
+		testRequest("bytes/15000", new HTTPRequest().get(), 0, new CheckDataResponse(15000));
 	}
 
 	@Test
 	public void testGetBytesChunked() throws Exception {
-		testRequest("stream-bytes/15000", new HTTPRequest(Method.GET), 0, new CheckDataResponse(15000));
+		testRequest("stream-bytes/15000", new HTTPRequest().get(), 0, new CheckDataResponse(15000));
 	}
 	
 	@Test
@@ -209,9 +216,8 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		URI uri = new URI(HTTP_BIN + "stream-bytes/51478");
 		File file = File.createTempFile("test", "download");
 		try (HTTPClient client = HTTPClient.create(uri)) {
-			Pair<HTTPResponse, FileIO.ReadWrite> p = client.download(new HTTPRequest(Method.GET).setURI(uri), file, 0).blockResult(0);
-			Assert.assertEquals(200, p.getValue1().getStatusCode());
-			p.getValue2().close();
+			HTTPResponse response = client.download(new HTTPRequest().get().setURI(uri), file, 0).blockResult(0);
+			Assert.assertEquals(200, response.getStatusCode());
 			Assert.assertEquals(51478, file.length());
 		} finally {
 			file.delete();
@@ -223,7 +229,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		FormDataEntity form = new FormDataEntity();
 		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
 
-		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+		testRequest("post", new HTTPRequest().post(form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form));
 	}
 	
 	@Test
@@ -231,12 +237,16 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		FormDataEntity form = new FormDataEntity();
 		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
 
-		HTTPRequest request = new HTTPRequest(Method.POST).setHeaders(new MimeHeader("X-Test", "a test"));
-		for (MimeHeader h : form.getHeaders())
-			request.getMIME().addHeader(h);
-		InputStream is = IOAsInputStream.get(form.getBodyToSend(), false);
-		IO.Readable io = new IOFromInputStream(is, "test form", Threading.getCPUTaskManager(), Task.PRIORITY_NORMAL);
-		request.getMIME().setBodyToSend(io);
+		HTTPRequest request = new HTTPRequest().post().addHeader("X-Test", "a test");
+		for (MimeHeader h : form.getHeaders().getHeaders())
+			request.addHeader(h);
+		OutputToInput o2i = new OutputToInput(new ByteArrayIO("test"), "test");
+		form.createBodyProducer().blockResult(0).getValue2().toConsumer(o2i.createConsumer(), "test", Task.Priority.NORMAL);
+		InputStream is = IOAsInputStream.get(o2i, false);
+		IO.Readable io = new IOFromInputStream(is, "test form", Threading.getCPUTaskManager(), Task.Priority.NORMAL);
+		BinaryEntity entity = new BinaryEntity(null, request.getHeaders());
+		entity.setContent(io);
+		request.setEntity(entity);
 		testRequest("post", request, 0, new CheckJSONResponse(form));
 	}
 	
@@ -247,7 +257,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		form.addField("toto", "titi", StandardCharsets.US_ASCII);
 		form.addField("hello", "world", StandardCharsets.US_ASCII);
 
-		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+		testRequest("post", new HTTPRequest().post(form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form));
 	}
 	
 	@Test
@@ -255,7 +265,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		FormDataEntity form = new FormDataEntity();
 		form.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 
-		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+		testRequest("post", new HTTPRequest().post(form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form));
 	}
 	
 	@Test
@@ -264,7 +274,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		form.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
 
-		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+		testRequest("post", new HTTPRequest().post(form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form));
 	}
 	
 	@Test
@@ -276,7 +286,7 @@ public class TestHttpClientToHttpBin extends AbstractTestHttpClient {
 		form.addFile("f2", "second.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 		form.addFile("f3", "third.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
 
-		testRequest("post", new HTTPRequest().post(form).setHeaders(new MimeHeader("X-Test", "a test")), 0, new CheckJSONResponse(form));
+		testRequest("post", new HTTPRequest().post(form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form));
 	}
 	
 

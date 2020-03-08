@@ -14,7 +14,7 @@ install:
   - cmd: SET MAVEN_OPTS=-Xmx1024m
   - cmd: SET JAVA_OPTS=-XX:+UseG1GC -Xmx1024m
 build_script:
-  - mvn clean package --batch-mode -DskipTest
+  - mvn clean package --batch-mode -DskipTests
 test_script:
   - mvn test verify --batch-mode
 cache:

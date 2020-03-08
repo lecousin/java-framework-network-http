@@ -9,11 +9,11 @@ public class EnsureHostInterceptor implements HTTPRequestInterceptor {
 
 	@Override
 	public void intercept(HTTPRequest request, String hostname, int port) {
-		if (!request.getMIME().hasHeader(HTTPConstants.Headers.Request.HOST)) {
+		if (!request.getHeaders().has(HTTPConstants.Headers.Request.HOST)) {
 			if (port != 80)
-				request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
+				request.getHeaders().setRawValue(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
 			else
-				request.getMIME().setHeaderRaw(HTTPConstants.Headers.Request.HOST, hostname);
+				request.getHeaders().setRawValue(HTTPConstants.Headers.Request.HOST, hostname);
 		}
 	}
 	

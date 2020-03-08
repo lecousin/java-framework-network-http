@@ -26,6 +26,7 @@ public class HTTPClientConfiguration {
 		
 		defaultConfiguration.setConnectionTimeout(30000);
 		defaultConfiguration.setReceiveTimeout(60000);
+		defaultConfiguration.setSendTimeout(60000);
 		defaultConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
 		defaultConfiguration.appendInterceptor(new ConnectionInterceptor(true));
 		defaultConfiguration.appendInterceptor(new EnsureHostInterceptor());
@@ -41,6 +42,8 @@ public class HTTPClientConfiguration {
 	public HTTPClientConfiguration(HTTPClientConfiguration copy) {
 		this.connectionTimeout = copy.connectionTimeout;
 		this.receiveTimeout = copy.receiveTimeout;
+		this.sendTimeout = copy.sendTimeout;
+		this.maximumResponseHeadersLength = copy.maximumResponseHeadersLength;
 		for (SocketOptionValue<?> so : copy.socketOptions)
 			socketOptions.add(new SocketOptionValue(so.getOption(), so.getValue()));
 		this.interceptors.addAll(copy.getInterceptors());
@@ -50,6 +53,8 @@ public class HTTPClientConfiguration {
 	
 	private int connectionTimeout = 0;
 	private int receiveTimeout = 0;
+	private int sendTimeout = 0;
+	private int maximumResponseHeadersLength = -1;
 	private LinkedList<SocketOptionValue<?>> socketOptions = new LinkedList<>();
 	private LinkedList<HTTPRequestInterceptor> interceptors = new LinkedList<>();
 	private ProxySelector proxySelector;
@@ -69,6 +74,22 @@ public class HTTPClientConfiguration {
 	
 	public void setReceiveTimeout(int timeout) {
 		receiveTimeout = timeout;
+	}
+
+	public int getSendTimeout() {
+		return sendTimeout;
+	}
+
+	public void setSendTimeout(int sendTimeout) {
+		this.sendTimeout = sendTimeout;
+	}
+	
+	public int getMaximumResponseHeadersLength() {
+		return maximumResponseHeadersLength;
+	}
+	
+	public void setMaximumResponseHeadersLength(int max) {
+		maximumResponseHeadersLength = max;
 	}
 
 	public List<SocketOptionValue<?>> getSocketOptions() {

@@ -4,7 +4,7 @@ import net.lecousin.framework.exception.LocalizableException;
 import net.lecousin.framework.locale.ILocalizableString;
 
 /** HTTP exception. */
-public abstract class HTTPException extends LocalizableException {
+public class HTTPException extends LocalizableException {
 
 	private static final long serialVersionUID = 912733618674412618L;
 	

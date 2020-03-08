@@ -19,9 +19,9 @@ import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.Artifact;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.application.Version;
-import net.lecousin.framework.concurrent.Task;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
@@ -32,23 +32,24 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPRequest.Method;
+import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.http.server.HTTPServerProtocol;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.http.websocket.WebSocketClient;
-import net.lecousin.framework.network.http.websocket.WebSocketDataFrame;
-import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol;
-import net.lecousin.framework.network.http.websocket.WebSocketServerProtocol.WebSocketMessageListener;
-import net.lecousin.framework.network.mime.MimeHeader;
-import net.lecousin.framework.network.mime.MimeMessage;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
+import net.lecousin.framework.network.mime.header.MimeHeader;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
+import net.lecousin.framework.network.websocket.WebSocketClient;
+import net.lecousin.framework.network.websocket.WebSocketDataFrame;
+import net.lecousin.framework.network.websocket.WebSocketServerProtocol;
+import net.lecousin.framework.network.websocket.WebSocketServerProtocol.WebSocketMessageListener;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -64,8 +65,9 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public static void main(String[] args) {
 		try {
 			Application.start(new Artifact("net.lecousin.framework.network.http", "websocket.test", new Version("0")), args, true).blockThrow(0);
+			Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestWebSocket.class);
 			TCPServer http_server = new TCPServer();
-			HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
+			HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket", null));
 			WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketMessageListener() {
 				@Override
 				public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) {
@@ -75,14 +77,14 @@ public class TestWebSocket extends AbstractHTTPTest {
 				@Override
 				public void onTextMessage(WebSocketServerProtocol websocket, TCPServerClient client, String message) {
 					System.out.println("WebSocket text message received: "+message);
-					WebSocketServerProtocol.sendTextMessage(client, "Hello World!");
+					WebSocketServerProtocol.sendTextMessage(client, "Hello World!", logger);
 				}
 				@Override
 				public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, Seekable message) {
 					System.out.println("WebSocket binary message received");
 				}
 			});
-			protocol.enableWebSocket(wsProtocol);
+			protocol.addUpgradeProtocol(wsProtocol);
 			http_server.setProtocol(protocol);
 			http_server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 1111), 10).blockThrow(0);
 			Thread.sleep(5*60*1000);
@@ -101,8 +103,9 @@ public class TestWebSocket extends AbstractHTTPTest {
 	@Before
 	public void startServer() throws Exception {
 		server = new TCPServer();
-		HTTPServerProtocol protocol = new HTTPServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket"));
+		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket", null));
 		connected = new MutableInteger(0);
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestWebSocket.class);
 		WebSocketServerProtocol wsProtocol = new WebSocketServerProtocol(new WebSocketMessageListener() {
 			@Override
 			public String onClientConnected(WebSocketServerProtocol websocket, TCPServerClient client, String[] requestedProtocols) throws HTTPResponseError {
@@ -118,7 +121,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 			@Override
 			public void onTextMessage(WebSocketServerProtocol websocket, TCPServerClient client, String message) {
 				System.out.println("WebSocket text message received from client: "+message);
-				WebSocketServerProtocol.sendTextMessage(client, "Hello " + message + "!");
+				WebSocketServerProtocol.sendTextMessage(client, "Hello " + message + "!", logger);
 			}
 			@Override
 			public void onBinaryMessage(WebSocketServerProtocol websocket, TCPServerClient client, Seekable message) {
@@ -133,10 +136,10 @@ public class TestWebSocket extends AbstractHTTPTest {
 				byte[] resp = new byte[nb];
 				for (int i = 0; i < nb; ++i)
 					resp[i] = buf[nb-1-i];
-				WebSocketServerProtocol.sendBinaryMessage(client, new ByteArrayIO(resp, "binary message"));
+				WebSocketServerProtocol.sendBinaryMessage(client, new ByteArrayIO(resp, "binary message"), logger);
 			}
 		});
-		protocol.enableWebSocket(wsProtocol);
+		protocol.addUpgradeProtocol(wsProtocol);
 		server.setProtocol(protocol);
 		serverAddress = server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 10).blockResult(0);
 		
@@ -244,10 +247,12 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		client.sendTextMessage("Test").blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		Assert.assertEquals("Hello Test!", received.get());
 		sp.set(new Async<>());
 		client.sendTextMessage("World").blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		Assert.assertEquals("Hello World!", received.get());
 		client.close();
 	}
@@ -276,6 +281,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		client.sendBinaryMessage(new ByteArrayIO(new byte[] { 0, 1, 2, 3 }, "Test")).blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		ByteBuffer buf = binary.get();
 		buf.flip();
 		byte[] resp = new byte[buf.remaining()];
@@ -311,6 +317,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		for (int i = 0; i < big.length; ++i) big[i] = (byte)((i + 11) % 67);
 		client.sendBinaryMessage(new ByteArrayIO(big, "Test")).blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		ByteBuffer buf = binary.get();
 		buf.flip();
 		byte[] resp = new byte[buf.remaining()];
@@ -338,6 +345,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		client.sendPing().blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		client.close();
 	}
 		
@@ -358,6 +366,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		});
 		client.sendClose().blockThrow(0);
 		sp.get().blockThrow(5000);
+		Assert.assertTrue(sp.get().isDone());
 		client.close();		
 	}
 	
@@ -376,7 +385,9 @@ public class TestWebSocket extends AbstractHTTPTest {
 			else
 				sp.get().unblock();
 		});
-		client.sendMessage(9999, new EmptyReadable("empty", Task.PRIORITY_NORMAL)).blockThrow(0);
+		client.sendMessage(9999, new EmptyReadable("empty", Task.Priority.NORMAL)).blockThrow(0);
+		sp.get().blockThrow(5000);
+		Assert.assertFalse(sp.get().isDone());
 		client.close();
 	}
 
@@ -396,8 +407,8 @@ public class TestWebSocket extends AbstractHTTPTest {
 		TCPServer proxyServer = new TCPServer();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
 		logger.setLevel(Level.TRACE);
-		ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(8192, logger);
-		HTTPServerProtocol protocol = new HTTPServerProtocol(processor);
+		ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(8192, 10000, 10000, logger);
+		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(processor);
 		proxyServer.setProtocol(protocol);
 		SocketAddress proxyAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		int proxyPort = ((InetSocketAddress)proxyAddress).getPort();
@@ -462,100 +473,86 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testErrors() throws Exception {
 		String url = "http://localhost:" + ((InetSocketAddress)serverAddress).getPort() + "/";
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
 					new MimeHeader("Upgrade", "websocket")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(404, e.getStatusCode());
+			Assert.assertEquals(404, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(400, e.getStatusCode());
+			Assert.assertEquals(400, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "unknown")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(404, e.getStatusCode());
+			Assert.assertEquals(404, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket"),
 					new MimeHeader("Sec-WebSocket-Key", "hello")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(400, e.getStatusCode());
+			Assert.assertEquals(400, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket"),
 					new MimeHeader("Sec-WebSocket-Key", "")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(400, e.getStatusCode());
+			Assert.assertEquals(400, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket"),
 					new MimeHeader("Sec-WebSocket-Key", "hello"),
 					new MimeHeader("Sec-WebSocket-Version", "51")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(400, e.getStatusCode());
+			Assert.assertEquals(400, resp.getStatusCode());
 		}
 		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			client.sendAndReceive(
-				new HTTPRequest(Method.GET)
-				.setHeaders(
-					new MimeHeader(MimeMessage.CONNECTION, "Upgrade"),
+			HTTPResponse resp = client.sendAndReceive(
+				new HTTPRequest().get("/test")
+				.setHeaders(new MimeHeaders(
+					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
 					new MimeHeader("Upgrade", "websocket"),
 					new MimeHeader("Sec-WebSocket-Key", "hello"),
 					new MimeHeader("Sec-WebSocket-Version", "")
-				),
-				true, false, 0
+				)),
+				null, null
 			).blockResult(0);
-			throw new AssertionError("Error should be thrown");
-		} catch (HTTPResponseError e) {
-			Assert.assertEquals(400, e.getStatusCode());
+			Assert.assertEquals(400, resp.getStatusCode());
 		}
 	}
 }
