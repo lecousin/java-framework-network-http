@@ -3,17 +3,17 @@ package net.lecousin.framework.network.http.test;
 import java.net.URI;
 import java.nio.ByteBuffer;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFromURI;
-import net.lecousin.framework.network.http.test.old.AbstractHTTPTest;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 
-public class TestHTTPIOProvider extends AbstractHTTPTest {
+import org.junit.Assert;
+import org.junit.Test;
+
+public class TestHTTPIOProvider extends LCCoreAbstractTest {
 
 	@Test
 	public void test() throws Exception {

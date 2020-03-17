@@ -1,13 +1,13 @@
 package net.lecousin.framework.network.http.test;
 
+import net.lecousin.framework.core.test.LCCoreAbstractTest;
+import net.lecousin.framework.network.http.exception.HTTPError;
+import net.lecousin.framework.network.http.exception.HTTPResponseError;
+
 import org.junit.Assert;
 import org.junit.Test;
 
-import net.lecousin.framework.network.http.exception.HTTPError;
-import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.http.test.old.AbstractHTTPTest;
-
-public class TestExceptions extends AbstractHTTPTest {
+public class TestExceptions extends LCCoreAbstractTest {
 
 	@Test
 	public void test() {
