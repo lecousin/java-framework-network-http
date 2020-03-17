@@ -73,7 +73,7 @@ public class WebSocketClient implements Closeable {
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		connect.getValue2().thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
 			() -> upgradeConnection(connect.getValue1(), hostname, port, secure, path, config, protocols, result), result);
-		result.onErrorOrCancel(connect.getValue1()::close);
+		result.onErrorOrCancel(() -> connect.getValue1().close());
 		return result;
 
 	}

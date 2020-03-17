@@ -468,7 +468,7 @@ public final class HTTP1ClientUtil {
 		}
 		sendAndReceive(client.getValue1(), client.getValue2(), request, response, maxRedirections,
 			onStatusReceived, onHeadersReceived, entityFactory, config, logger);
-		response.getTrailersReceived().onDone(client.getValue1()::close);
+		response.getTrailersReceived().onDone(() -> client.getValue1().close());
 	}
 
 	/** Send request and receive response. */
@@ -535,7 +535,7 @@ public final class HTTP1ClientUtil {
 				openConnection(u.getHost(), u.getPort(), HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(u.getScheme()), u.getPath(),
 					config, logger);
 			skipBody.onDone(() -> doRedirection.accept(newClient));
-			response.getTrailersReceived().onDone(newClient.getValue1()::close);
+			response.getTrailersReceived().onDone(() -> newClient.getValue1().close());
 		} catch (URISyntaxException e) {
 			response.getHeadersReceived().error(new IOException("Invalid redirect location: " + location, e));
 		}
