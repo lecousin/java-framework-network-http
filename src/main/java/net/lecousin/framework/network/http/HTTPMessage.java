@@ -21,6 +21,19 @@ public abstract class HTTPMessage<ME extends HTTPMessage<ME>> extends AbstractAt
 	protected MimeHeaders headers;
 	protected MimeEntity entity;
 	protected Map<String, Supplier<String>> trailerHeaderSuppliers = null;
+	
+	/** Constructor. */
+	public HTTPMessage() {
+		// nothing
+	}
+	
+	/** Constructor copying the given message. */
+	public HTTPMessage(HTTPMessage<ME> copy) {
+		protocolVersion = copy.getProtocolVersion();
+		entity = copy.getEntity();
+		if (entity == null)
+			headers = new MimeHeaders(copy.getHeaders().getHeaders());
+	}
 
 	/** Set the protocol version. */
 	@SuppressWarnings("unchecked")

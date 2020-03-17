@@ -10,12 +10,14 @@ import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.provider.IOProvider;
 import net.lecousin.framework.io.provider.IOProviderFromURI;
+import net.lecousin.framework.network.http.test.old.AbstractHTTPTest;
+import net.lecousin.framework.network.http.test.requests.HttpBin;
 
 public class TestHTTPIOProvider extends AbstractHTTPTest {
 
 	@Test
 	public void test() throws Exception {
-		IOProvider p = IOProviderFromURI.getInstance().get(new URI(HTTP_BIN + "get"));
+		IOProvider p = IOProviderFromURI.getInstance().get(new URI("http://" + HttpBin.HTTP_BIN_DOMAIN + "/get"));
 		Assert.assertTrue(p instanceof IOProvider.Readable);
 		p.getDescription();
 		IO.Readable io = ((IOProvider.Readable)p).provideIOReadable(Task.Priority.NORMAL);

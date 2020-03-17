@@ -4,6 +4,7 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.server.errorhandler.HTTPErrorHandler;
 import net.lecousin.framework.network.server.TCPServerClient;
 
+/** Context for processing a request. */
 public class HTTPRequestContext {
 
 	private TCPServerClient client;
@@ -11,6 +12,7 @@ public class HTTPRequestContext {
 	private HTTPServerResponse response;
 	private HTTPErrorHandler errorHandler;
 	
+	/** Constructor. */
 	public HTTPRequestContext(TCPServerClient client, HTTPRequest request, HTTPServerResponse response, HTTPErrorHandler errorHandler) {
 		this.client = client;
 		this.request = request;
@@ -37,7 +39,5 @@ public class HTTPRequestContext {
 	public HTTPServerResponse getResponse() {
 		return response;
 	}
-	
-	
 	
 }

@@ -3,6 +3,7 @@ package net.lecousin.framework.network.http.client;
 import java.net.ProxySelector;
 import java.net.SocketOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -10,86 +11,188 @@ import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.network.SocketOptionValue;
 import net.lecousin.framework.network.http.HTTPConstants;
-import net.lecousin.framework.network.http.client.interceptors.ConnectionInterceptor;
-import net.lecousin.framework.network.http.client.interceptors.EnsureHostInterceptor;
-import net.lecousin.framework.network.http.client.interceptors.UserAgentInterceptor;
+import net.lecousin.framework.network.http.client.filters.EnsureHostFilter;
+import net.lecousin.framework.network.http.client.filters.UserAgentFilter;
 
-/** Configuration for an HTTP client. */
+/** HTTP client configuration. */
 public class HTTPClientConfiguration {
 
-	public static final HTTPClientConfiguration basicConfiguration = new HTTPClientConfiguration();
-	public static final HTTPClientConfiguration defaultConfiguration = new HTTPClientConfiguration();
-	
-	static {
-		basicConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
-		basicConfiguration.appendInterceptor(new EnsureHostInterceptor());
+	/** HTTP client timeout configuration. */
+	public static class Timeouts {
 		
-		defaultConfiguration.setConnectionTimeout(30000);
-		defaultConfiguration.setReceiveTimeout(60000);
-		defaultConfiguration.setSendTimeout(60000);
-		defaultConfiguration.appendInterceptor(new UserAgentInterceptor(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
-		defaultConfiguration.appendInterceptor(new ConnectionInterceptor(true));
-		defaultConfiguration.appendInterceptor(new EnsureHostInterceptor());
-		defaultConfiguration.setProxySelector(ProxySelector.getDefault());
+		private int connection = 30000;
+		private int receive = 60000;
+		private int send = 30000;
+		private int idle = 3 * 60000;
+		
+		/** Constructor. */
+		public Timeouts() {
+			// nothing
+		}
+		
+		/** Copy from existing configuration. */
+		public Timeouts(Timeouts copy) {
+			connection = copy.connection;
+			receive = copy.receive;
+			send = copy.send;
+			idle = copy.idle;
+		}
+		
+		public int getConnection() {
+			return connection;
+		}
+		
+		public void setConnection(int connection) {
+			this.connection = connection;
+		}
+		
+		public int getReceive() {
+			return receive;
+		}
+		
+		public void setReceive(int receive) {
+			this.receive = receive;
+		}
+		
+		public int getSend() {
+			return send;
+		}
+		
+		public void setSend(int send) {
+			this.send = send;
+		}
+		
+		public int getIdle() {
+			return idle;
+		}
+		
+		public void setIdle(int idle) {
+			this.idle = idle;
+		}
+		
 	}
+	
+	/** HTTP client limitations. */
+	public static class Limits {
+		
+		private int headersLength = 128 * 1024;
+		private int bodyLength = -1;
+		
+		private int openConnections = 20;
+		private int connectionsToServer = 10;
+		private int connectionsToProxy = 20;
+		
+		/** Constructor. */
+		public Limits() {
+			// nothing
+		}
+		
+		/** Copy from existing configuration. */
+		public Limits(Limits copy) {
+			this.headersLength = copy.headersLength;
+			this.bodyLength = copy.bodyLength;
+			this.openConnections = copy.openConnections;
+			this.connectionsToServer = copy.connectionsToServer;
+			this.connectionsToProxy = copy.connectionsToProxy;
+		}
+		
+		public int getHeadersLength() {
+			return headersLength;
+		}
+		
+		public void setHeadersLength(int headersLength) {
+			this.headersLength = headersLength;
+		}
+		
+		public int getBodyLength() {
+			return bodyLength;
+		}
+		
+		public void setBodyLength(int bodyLength) {
+			this.bodyLength = bodyLength;
+		}
+		
+		public int getOpenConnections() {
+			return openConnections;
+		}
+		
+		public void setOpenConnections(int openConnections) {
+			this.openConnections = openConnections;
+		}
+		
+		public int getConnectionsToServer() {
+			return connectionsToServer;
+		}
+		
+		public void setConnectionsToServer(int connectionsToServer) {
+			this.connectionsToServer = connectionsToServer;
+		}
+		
+		public int getConnectionsToProxy() {
+			return connectionsToProxy;
+		}
+		
+		public void setConnectionsToProxy(int connectionsToProxy) {
+			this.connectionsToProxy = connectionsToProxy;
+		}
+		
+	}
+	
+	/** HTTP client allowed protocols. */
+	public enum Protocol {
+		HTTP1,
+		HTTP1S,
+		H2C,
+		H2
+	}
+	
+	private Timeouts timeouts = new Timeouts();
+	private Limits limits = new Limits();
+	private LinkedList<SocketOptionValue<?>> socketOptions = new LinkedList<>();
+	private LinkedList<HTTPClientRequestFilter> filters = new LinkedList<>();
+	private ProxySelector proxySelector;
+	private SSLContext sslContext = null;
+	private LinkedList<Protocol> allowedProtocols;
 	
 	/** Constructor. */
 	public HTTPClientConfiguration() {
+		this.allowedProtocols = new LinkedList<>(Arrays.asList(Protocol.values()));
+		this.filters.add(new UserAgentFilter(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
+		this.filters.add(new EnsureHostFilter());
+		try {
+			this.sslContext = SSLContext.getDefault();
+		} catch (Exception e) {
+			// ignore
+		}
 	}
 	
-	/** Copy constructor. */
+	/** Copy from existing configuration. */
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public HTTPClientConfiguration(HTTPClientConfiguration copy) {
-		this.connectionTimeout = copy.connectionTimeout;
-		this.receiveTimeout = copy.receiveTimeout;
-		this.sendTimeout = copy.sendTimeout;
-		this.maximumResponseHeadersLength = copy.maximumResponseHeadersLength;
+		this.timeouts = new Timeouts(copy.timeouts);
+		this.limits = new Limits(copy.limits);
 		for (SocketOptionValue<?> so : copy.socketOptions)
 			socketOptions.add(new SocketOptionValue(so.getOption(), so.getValue()));
-		this.interceptors.addAll(copy.getInterceptors());
+		this.filters.addAll(copy.filters);
 		this.proxySelector = copy.proxySelector;
 		this.sslContext = copy.sslContext;
-	}
-	
-	private int connectionTimeout = 0;
-	private int receiveTimeout = 0;
-	private int sendTimeout = 0;
-	private int maximumResponseHeadersLength = -1;
-	private LinkedList<SocketOptionValue<?>> socketOptions = new LinkedList<>();
-	private LinkedList<HTTPRequestInterceptor> interceptors = new LinkedList<>();
-	private ProxySelector proxySelector;
-	private SSLContext sslContext = null;
-	
-	public int getConnectionTimeout() {
-		return connectionTimeout;
-	}
-	
-	public void setConnectionTimeout(int timeout) {
-		connectionTimeout = timeout;
-	}
-	
-	public int getReceiveTimeout() {
-		return receiveTimeout;
-	}
-	
-	public void setReceiveTimeout(int timeout) {
-		receiveTimeout = timeout;
+		this.allowedProtocols = new LinkedList<>(copy.allowedProtocols);
 	}
 
-	public int getSendTimeout() {
-		return sendTimeout;
+	public Timeouts getTimeouts() {
+		return timeouts;
 	}
 
-	public void setSendTimeout(int sendTimeout) {
-		this.sendTimeout = sendTimeout;
+	public void setTimeouts(Timeouts timeouts) {
+		this.timeouts = timeouts;
 	}
-	
-	public int getMaximumResponseHeadersLength() {
-		return maximumResponseHeadersLength;
+
+	public Limits getLimits() {
+		return limits;
 	}
-	
-	public void setMaximumResponseHeadersLength(int max) {
-		maximumResponseHeadersLength = max;
+
+	public void setLimits(Limits limits) {
+		this.limits = limits;
 	}
 
 	public List<SocketOptionValue<?>> getSocketOptions() {
@@ -139,24 +242,24 @@ public class HTTPClientConfiguration {
 		sslContext = context;
 	}
 	
-	/** Return the list of interceptors. */
-	public List<HTTPRequestInterceptor> getInterceptors() {
-		synchronized (interceptors) {
-			return new ArrayList<>(interceptors);
+	/** Return the list of filters. */
+	public List<HTTPClientRequestFilter> getFilters() {
+		synchronized (filters) {
+			return new ArrayList<>(filters);
 		}
 	}
 	
-	/** Add an interceptor. */
-	public void appendInterceptor(HTTPRequestInterceptor interceptor) {
-		synchronized (interceptors) {
-			interceptors.addLast(interceptor);
+	/** Add a filter. */
+	public void appendFilter(HTTPClientRequestFilter interceptor) {
+		synchronized (filters) {
+			filters.addLast(interceptor);
 		}
 	}
 
-	/** Add an interceptor. */
-	public void insertInterceptorFirst(HTTPRequestInterceptor interceptor) {
-		synchronized (interceptors) {
-			interceptors.addFirst(interceptor);
+	/** Add a filter. */
+	public void insertFilterFirst(HTTPClientRequestFilter interceptor) {
+		synchronized (filters) {
+			filters.addFirst(interceptor);
 		}
 	}
 	
@@ -166,6 +269,14 @@ public class HTTPClientConfiguration {
 	
 	public void setProxySelector(ProxySelector selector) {
 		proxySelector = selector;
+	}
+
+	public LinkedList<Protocol> getAllowedProtocols() {
+		return allowedProtocols;
+	}
+
+	public void setAllowedProtocols(List<Protocol> allowedProtocols) {
+		this.allowedProtocols = new LinkedList<>(allowedProtocols);
 	}
 	
 }

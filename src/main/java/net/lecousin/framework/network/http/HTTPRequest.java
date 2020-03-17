@@ -11,7 +11,6 @@ import java.util.Map;
 import net.lecousin.framework.encoding.URLEncoding;
 import net.lecousin.framework.io.data.CharsFromString;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
-import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.text.ByteArrayStringIso8859;
@@ -43,6 +42,14 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	/** Constructor. */
 	public HTTPRequest() {
 		this.protocolVersion = new HTTPProtocolVersion((byte)1, (byte)1);
+	}
+	
+	/** Constructor copying the given request. */
+	public HTTPRequest(HTTPRequest copy) {
+		super(copy);
+		method = copy.getMethod();
+		setEncodedPath(new ByteArrayStringIso8859Buffer(copy.getEncodedPath().copy()));
+		setEncodedQueryString(new ByteArrayStringIso8859Buffer(copy.getEncodedQueryString().copy()));
 	}
 	
 	public String getMethod() {
@@ -223,66 +230,6 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 		return setEncodedPathAndQuery((ByteArrayStringIso8859Buffer)uri);
 	}
 	
-	/** Set method GET. */
-	public HTTPRequest get() {
-		return setMethod(METHOD_GET);
-	}
-	
-	/** Set method GET with given path and query string. */
-	public HTTPRequest get(CharSequence uri) {
-		return setMethod(METHOD_GET).setURI(uri);
-	}
-	
-	/** Set method POST. */
-	public HTTPRequest post() {
-		return setMethod(METHOD_POST);
-	}
-
-	/** Set method POST with given entity. */
-	public HTTPRequest post(MimeEntity entity) {
-		return setMethod(METHOD_POST).setEntity(entity);
-	}
-
-	/** Set method POST with given path and query string. */
-	public HTTPRequest post(CharSequence uri) {
-		return setMethod(METHOD_POST).setURI(uri);
-	}
-	
-	/** Set method POST with given path and query string and entity. */
-	public HTTPRequest post(CharSequence uri, MimeEntity entity) {
-		return setMethod(METHOD_POST).setURI(uri).setEntity(entity);
-	}
-	
-	/** Set method PUT. */
-	public HTTPRequest put() {
-		return setMethod(METHOD_PUT);
-	}
-	
-	/** Set method PUT with given entity. */
-	public HTTPRequest put(MimeEntity entity) {
-		return setMethod(METHOD_PUT).setEntity(entity);
-	}
-
-	/** Set method PUT with given path and query string. */
-	public HTTPRequest put(CharSequence uri) {
-		return setMethod(METHOD_PUT).setURI(uri);
-	}
-	
-	/** Set method PUT with given path and query string and entity. */
-	public HTTPRequest put(CharSequence uri, MimeEntity entity) {
-		return setMethod(METHOD_PUT).setURI(uri).setEntity(entity);
-	}
-	
-	/** Set method DELETE. */
-	public HTTPRequest delete() {
-		return setMethod(METHOD_DELETE);
-	}
-
-	/** Set method DELETE with given path and query string. */
-	public HTTPRequest delete(CharSequence uri) {
-		return setMethod(METHOD_DELETE).setURI(uri);
-	}
-
 	/** Return true if this is a valid character for a method. */
 	public static boolean isValidMethodChar(byte b) {
 		if (b < 0x21) return false;
@@ -347,7 +294,7 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	/** Return true if the connection should be persistent. */
 	public boolean isConnectionPersistent() {
 		if (getProtocolVersion() != null && getProtocolVersion().getMajor() == 1 && getProtocolVersion().getMinor() == 1) {
-			String s = getHeaders().getFirstRawValue(HTTPConstants.Headers.Request.CONNECTION);
+			String s = getHeaders().getFirstRawValue(HTTPConstants.Headers.CONNECTION);
 			return s == null || !s.equalsIgnoreCase("close");
 		}
 		return false;

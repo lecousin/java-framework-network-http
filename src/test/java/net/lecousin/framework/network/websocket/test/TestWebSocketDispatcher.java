@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http.test;
+package net.lecousin.framework.network.websocket.test;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
@@ -24,9 +25,9 @@ import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.websocket.WebSocketClient;
 import net.lecousin.framework.network.websocket.WebSocketDataFrame;
 import net.lecousin.framework.network.websocket.WebSocketDispatcher;
-import net.lecousin.framework.network.websocket.WebSocketServerProtocol;
 import net.lecousin.framework.network.websocket.WebSocketDispatcher.SingleWebSocketHandler;
 import net.lecousin.framework.network.websocket.WebSocketDispatcher.WebSocketHandler;
+import net.lecousin.framework.network.websocket.WebSocketServerProtocol;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -36,7 +37,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
 
 @RunWith(BlockJUnit4ClassRunner.class)
-public class TestWebSocketDispatcher extends AbstractHTTPTest {
+public class TestWebSocketDispatcher extends LCCoreAbstractTest {
 
 	private static class Handler extends WebSocketHandler {
 
@@ -90,7 +91,7 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 		// try text messages
 		Assert.assertEquals(0, handler.getNbClients());
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test_proto");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test_proto");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, handler.getNbClients());
 		Assert.assertEquals("test_proto", selected);
@@ -120,7 +121,7 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 		// try text messages
 		Assert.assertEquals(0, handler.getNbClients());
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test_proto");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test_proto");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, handler.getNbClients());
 		Assert.assertEquals("test_proto", selected);
@@ -149,7 +150,7 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 	public void testPing() throws Exception {
 		// test ping
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test_proto");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test_proto");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, handler.getNbClients());
 		Assert.assertEquals("test_proto", selected);
@@ -169,7 +170,7 @@ public class TestWebSocketDispatcher extends AbstractHTTPTest {
 	public void testClose() throws Exception {
 		// test close
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test_proto");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test_proto");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, handler.getNbClients());
 		Assert.assertEquals("test_proto", selected);

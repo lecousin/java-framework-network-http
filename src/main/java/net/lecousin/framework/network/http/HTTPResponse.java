@@ -125,4 +125,9 @@ public class HTTPResponse extends HTTPMessage<HTTPResponse> {
 		setHeader("Location", location);
 	}
 	
+	/** Return true if the given status code means a redirection. */
+	public static boolean isRedirectionStatusCode(int code) {
+		return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+	}
+	
 }

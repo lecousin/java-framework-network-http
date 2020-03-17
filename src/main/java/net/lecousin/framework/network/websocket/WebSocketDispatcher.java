@@ -1,7 +1,5 @@
 package net.lecousin.framework.network.websocket;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLDecoder;
 import java.util.ArrayList;
 
 import net.lecousin.framework.application.LCCore;

@@ -2,19 +2,13 @@ package net.lecousin.framework.network.websocket;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.net.ProxySelector;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Random;
 import java.util.function.Consumer;
-
-import javax.net.ssl.SSLContext;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.CancelException;
@@ -26,23 +20,17 @@ import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
-import net.lecousin.framework.io.data.ByteArray;
 import net.lecousin.framework.io.util.EmptyReadable;
 import net.lecousin.framework.log.Logger;
-import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
-import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
-import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.exception.HTTPResponseError;
-import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
-import net.lecousin.framework.network.http1.HTTP1ResponseStatusConsumer;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
+import net.lecousin.framework.network.http.client.HTTPClientResponse;
+import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
 import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
-import net.lecousin.framework.network.mime.header.MimeHeaders;
-import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.DebugUtil;
+import net.lecousin.framework.util.Pair;
 
 /** Client for web socket protocol. */
 public class WebSocketClient implements Closeable {
@@ -77,138 +65,32 @@ public class WebSocketClient implements Closeable {
 	public AsyncSupplier<String, IOException> connect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
-		ProxySelector proxySelector = config.getProxySelector();
-		if (proxySelector == null)
-			return directConnect(hostname, port, path, secure, config, protocols);
-		StringBuilder url = new StringBuilder(128);
-		url.append(secure ? "https://" : "http://");
-		url.append(hostname).append(':').append(port);
-		url.append(path);
-		URI uri = null;
-		Proxy proxy = null;
-		try {
-			uri = new URI(url.toString());
-			List<Proxy> proxies = proxySelector.select(uri);
-			for (Proxy p : proxies) {
-				if (Proxy.Type.HTTP.equals(p.type())) {
-					proxy = p;
-					break;
-				}
-			}
-		} catch (Exception e) {
-			// ignore
-		}
-		if (proxy != null)
-			return proxyConnect(proxy, hostname, port, path, secure, config, protocols);
-		return directConnect(hostname, port, path, secure, config, protocols);
-	}
-	
-	private AsyncSupplier<String, IOException> proxyConnect(
-		Proxy proxy, String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String[] protocols
-	) {
-		// we have to create a HTTP tunnel with the proxy
-		InetSocketAddress inet = (InetSocketAddress)proxy.address();
-		inet = new InetSocketAddress(inet.getHostName(), inet.getPort());
-		@SuppressWarnings("squid:S2095") // it is closed
-		TCPClient tunnelClient = new TCPClient();
-		Async<IOException> tunnelConnect =
-			tunnelClient.connect(inet, config.getConnectionTimeout(), config.getSocketOptionsArray());
-		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
-		// prepare the CONNECT request
-		HTTPRequest connectRequest = new HTTPRequest().setMethod(HTTPRequest.METHOD_CONNECT)
-			.setEncodedPath(new ByteArrayStringIso8859Buffer(hostname + ":" + port));
-		connectRequest.addHeader(HTTPConstants.Headers.Request.HOST, hostname + ":" + port);
-		ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
-		headers.setNewArrayStringCapacity(4096);
-		HTTP1RequestCommandProducer.generate(connectRequest, headers);
-		headers.append("\r\n");
-		connectRequest.getHeaders().generateString(headers);
-		ByteBuffer[] buffers = headers.asByteBuffers();
-		tunnelConnect.onDone(() -> tunnelClient.asConsumer(1, config.getSendTimeout()).push(Arrays.asList(buffers)).onDone(() -> {
-			// once headers are sent, receive the response status line
-			HTTPResponse response = new HTTPResponse();
-			tunnelClient.getReceiver().consume(
-				new HTTP1ResponseStatusConsumer(response)
-				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
-				4096, config.getReceiveTimeout()).onDone(() -> {
-				// status line received
-				if (!response.isSuccess()) {
-					result.error(new HTTPResponseError(response));
-					return;
-				}
-				// read headers
-				MimeHeaders responseHeaders = new MimeHeaders();
-				response.setHeaders(responseHeaders);
-				tunnelClient.getReceiver().consume(
-					responseHeaders.createConsumer(config.getMaximumResponseHeadersLength())
-					.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
-					4096, config.getReceiveTimeout()).onDone(() -> {
-						// headers received
-						// tunnel connection established
-						if (secure) {
-							SSLContext ctx = config.getSSLContext();
-							SSLClient ssl;
-							if (ctx != null)
-								ssl = new SSLClient(ctx);
-							else
-								try { ssl = new SSLClient(); }
-								catch (Exception t) {
-									result.error(new IOException("Error initializing SSL connection", t));
-									return;
-								}
-							Async<IOException> ready = new Async<>();
-							ssl.tunnelConnected(tunnelClient, ready, config.getReceiveTimeout());
-							ready.thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
-								() -> upgradeConnection(ssl, hostname, port, path, config, protocols, result),
-								result);
-						} else {
-							Task.cpu(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL, t -> {
-								upgradeConnection(tunnelClient, hostname, port, path, config, protocols, result);
-								return null;
-							}).start();
-						}
-					}, result);
-			}, result);
-		}, result), result);
-		result.onErrorOrCancel(tunnelClient::close);
-		return result;
-	}
-	
-	@SuppressWarnings("squid:S2095") // client is closed
-	private AsyncSupplier<String, IOException> directConnect(
-		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String[] protocols
-	) {
-		TCPClient client;
-		if (secure) {
-			SSLContext ctx = config.getSSLContext();
-			if (ctx != null)
-				client = new SSLClient(ctx);
-			else
-				try { client = new SSLClient(); }
-				catch (Exception t) {
-					return new AsyncSupplier<>(null, new IOException("Error initializing SSL connection", t));
-				}
-		} else {
-			client = new TCPClient();
+		Pair<? extends TCPClient, IAsync<IOException>> connect;
+		try { connect = HTTP1ClientUtil.openConnection(hostname, port, secure, path, config, logger); }
+		catch (URISyntaxException e) {
+			return new AsyncSupplier<>(null, IO.error(e));
 		}
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
-		client.connect(new InetSocketAddress(hostname, port), config.getConnectionTimeout(), config.getSocketOptionsArray())
-			.thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
-				() -> upgradeConnection(client, hostname, port, path, config, protocols, result), result);
-		result.onErrorOrCancel(client::close);
+		connect.getValue2().thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
+			() -> upgradeConnection(connect.getValue1(), hostname, port, secure, path, config, protocols, result), result);
+		result.onErrorOrCancel(connect.getValue1()::close);
 		return result;
-	}
 
-	@SuppressWarnings("squid:S2119") // we save the Random
+	}
+	
+	@SuppressWarnings({
+		"java:S2119", // we save the Random
+		"java:S107" // number of parameters
+	})
 	private void upgradeConnection(
-		TCPClient client, String hostname, int port, String path, HTTPClientConfiguration config,
+		TCPClient client, String hostname, int port, boolean secure, String path, HTTPClientConfiguration config,
 		String[] protocols, AsyncSupplier<String, IOException> result
 	) {
-		@SuppressWarnings("resource")
-		HTTPClient httpClient = new HTTPClient(client, hostname, port, config);
-		HTTPRequest request = new HTTPRequest().get(path);
+		if (logger.debug())
+			logger.debug("Connected to HTTP server " + hostname + ", upgrading protocol to WebSocket");
+		HTTPClientRequest request = new HTTPClientRequest(hostname, port, secure).get(path);
 		// Upgrade connection
-		request.addHeader(HTTPConstants.Headers.Request.CONNECTION, HTTPConstants.Headers.Request.CONNECTION_VALUE_UPGRADE);
+		request.addHeader(HTTPConstants.Headers.CONNECTION, HTTPConstants.Headers.CONNECTION_VALUE_UPGRADE);
 		request.addHeader(HTTPConstants.Headers.Request.UPGRADE, "websocket");
 		// Generate random key
 		Random rand = LCCore.getApplication().getInstance(Random.class);
@@ -231,7 +113,8 @@ public class WebSocketClient implements Closeable {
 		request.addHeader("Sec-WebSocket-Version", "13");
 		
 		// send HTTP request
-		Async<IOException> send = httpClient.sendRequest(request);
+		HTTPClientResponse response = new HTTPClientResponse();
+		Async<IOException> send = HTTP1ClientUtil.send(client, new Async<>(true), request, response, config, logger);
 		
 		// calculate the expected accept key
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -246,7 +129,9 @@ public class WebSocketClient implements Closeable {
 		}
 		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
-		send.onDone(() -> httpClient.receiveResponse(null, response -> {
+		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, response, null, resp -> {
+			if (logger.debug())
+				logger.debug("Response received to upgrade request: " + response.getStatusCode());
 			if (response.getStatusCode() != 101) {
 				result.error(new IOException("Server does not support websocket on this address, response received is "
 					+ response.getStatusCode()));
@@ -271,7 +156,7 @@ public class WebSocketClient implements Closeable {
 			conn = client;
 			result.unblockSuccess(protocol);
 			return Boolean.FALSE;
-		}, DefaultMimeEntityFactory.getInstance()), result);
+		}, DefaultMimeEntityFactory.getInstance(), config, logger), result);
 	}
 
 	private WebSocketDataFrame currentFrame = null;

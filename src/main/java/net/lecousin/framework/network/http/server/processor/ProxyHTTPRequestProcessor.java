@@ -11,7 +11,7 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
@@ -29,9 +29,9 @@ import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 
 	/** Constructor. */
-	public ProxyHTTPRequestProcessor(int bufferSize, int clientSendTimeout, int remoteSendTimeout, Logger logger) {
+	public ProxyHTTPRequestProcessor(HTTPClient client, int bufferSize, int clientSendTimeout, int remoteSendTimeout, Logger logger) {
 		this.logger = logger;
-		forwarder = new HTTPRequestForwarder(logger, HTTPClientConfiguration.defaultConfiguration);
+		forwarder = new HTTPRequestForwarder(logger, client);
 		tunnelProtocol = new TunnelProtocol(bufferSize, clientSendTimeout, remoteSendTimeout, logger);
 	}
 	
@@ -55,11 +55,6 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 	protected LinkedArrayList<Filter> proxyFilters = new LinkedArrayList<>(10);
 	protected LinkedArrayList<HTTPRequestFilter> requestFilters = new LinkedArrayList<>(10);
 	protected LinkedArrayList<LocalMapping> localPathMapping = new LinkedArrayList<>(10);
-	
-	/** Set how to configure HTTP clients used to forward the requests. */
-	public void setHTTPForwardClientConfiguration(HTTPClientConfiguration config) {
-		forwarder.setClientConfiguration(config);
-	}
 	
 	/** Specifies if the CONNECT method is allowed or not. */
 	public void allowConnectMethod(boolean allowed) {
@@ -159,10 +154,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 			if (path.startsWith(m.localPath)) {
 				// forward
 				ctx.getRequest().setDecodedPath(m.path + path.substring(m.localPath.length()));
-				if (!m.secure)
-					forwarder.forward(ctx, m.hostname, m.port);
-				else
-					forwarder.forwardSSL(ctx, m.hostname, m.port);
+				forwarder.forward(ctx, m.hostname, m.port, m.secure);
 				return;
 			}
 		}
@@ -201,10 +193,7 @@ public class ProxyHTTPRequestProcessor implements HTTPRequestProcessor {
 				return;
 		}
 		
-		if (ssl)
-			forwarder.forwardSSL(ctx, host, port);
-		else
-			forwarder.forward(ctx, host, port);
+		forwarder.forward(ctx, host, port, ssl);
 	}
 	
 	protected void openTunnel(HTTPRequestContext ctx) {

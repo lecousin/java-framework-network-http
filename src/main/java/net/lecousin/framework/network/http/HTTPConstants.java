@@ -10,25 +10,29 @@ public final class HTTPConstants {
 	public static final int DEFAULT_HTTP_PORT = 80;
 	public static final int DEFAULT_HTTPS_PORT = 443;
 	
+	public static final String HTTP_SCHEME = "http";
+	public static final String HTTPS_SCHEME = "https";
+	
 	/** Constants for HTTP headers. */
 	public static class Headers {
 		
 		private Headers() { /* no instance */ }
-		
+
+		public static final String CONNECTION = "Connection";
+
+		public static final String CONNECTION_VALUE_KEEP_ALIVE = "Keep-Alive";
+		public static final String CONNECTION_VALUE_CLOSE = "Close";
+		public static final String CONNECTION_VALUE_UPGRADE = "Upgrade";
+
 		/** Constants for HTTP headers specific to clients. */
 		public static class Request extends Headers {
 
 			private Request() { /* no instance */ }
 
-			public static final String CONNECTION = "Connection";
 			public static final String HOST = "Host";
 			public static final String RANGE = "Range";
 			public static final String UPGRADE = "Upgrade";
 			public static final String USER_AGENT = "User-Agent";
-
-			public static final String CONNECTION_VALUE_KEEP_ALIVE = "Keep-Alive";
-			public static final String CONNECTION_VALUE_CLOSE = "Close";
-			public static final String CONNECTION_VALUE_UPGRADE = "Upgrade";
 
 			public static final String DEFAULT_USER_AGENT = "net.lecousin.framework.network.http.client/" + LibraryVersion.VERSION;
 			

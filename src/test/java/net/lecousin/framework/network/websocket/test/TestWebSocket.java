@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http.test;
+package net.lecousin.framework.network.websocket.test;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -33,19 +33,21 @@ import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableInteger;
 import net.lecousin.framework.network.http.HTTPConstants;
-import net.lecousin.framework.network.http.HTTPRequest;
-import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
+import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
+import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
+import net.lecousin.framework.network.test.AbstractNetworkTest;
 import net.lecousin.framework.network.websocket.WebSocketClient;
 import net.lecousin.framework.network.websocket.WebSocketDataFrame;
 import net.lecousin.framework.network.websocket.WebSocketServerProtocol;
@@ -59,7 +61,7 @@ import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
 
 @RunWith(BlockJUnit4ClassRunner.class)
-public class TestWebSocket extends AbstractHTTPTest {
+public class TestWebSocket extends AbstractNetworkTest {
 
 	@SuppressWarnings("resource")
 	public static void main(String[] args) {
@@ -102,6 +104,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	
 	@Before
 	public void startServer() throws Exception {
+		deactivateNetworkTraces();
 		server = new TCPServer();
 		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test/websocket", null));
 		connected = new MutableInteger(0);
@@ -167,7 +170,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		// try a wrong protocol
 		Assert.assertEquals(0, connected.get());
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "hello", "world");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "hello", "world");
 		conn.block(0);
 		client.close();
 		Assert.assertEquals(1, connected.get());
@@ -178,7 +181,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testCorrectProtocol() throws Exception {
 		// try a correct protocol
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -189,7 +192,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testNoProtocol() throws Exception {
 		// try a correct protocol
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration);
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration());
 		try {
 			conn.blockResult(0);
 			throw new AssertionError("No protocol must raise an error");
@@ -201,7 +204,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testRejectedProtocol() throws Exception {
 		// try a correct protocol
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test_error", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test_error", "test3");
 		try {
 			conn.blockResult(0);
 			throw new AssertionError("Connection with protocol test_error must fail");
@@ -216,7 +219,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testSSL() throws Exception {
 		// try a correct protocol
 		WebSocketClient client = new WebSocketClient();
-		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		HTTPClientConfiguration config = new HTTPClientConfiguration(new HTTPClientConfiguration());
 		config.setSSLContext(sslTest);
 		AsyncSupplier<String, IOException> conn = client.connect(getSSLServerURI(), config, "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
@@ -229,7 +232,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testTextMessages() throws Exception {
 		// try text messages
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -261,7 +264,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testBinaryMessages() throws Exception {
 		// try binary message
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -295,7 +298,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
 		// try binary message
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -332,7 +335,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testPing() throws Exception {
 		// test ping
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -353,7 +356,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	public void testClose() throws Exception {
 		// test close
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -374,7 +377,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	@Test
 	public void testInvalidMessage() throws Exception {
 		WebSocketClient client = new WebSocketClient();
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), HTTPClientConfiguration.defaultConfiguration, "test1", "test2", "test3");
+		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), new HTTPClientConfiguration(), "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
 		Assert.assertEquals(1, connected.get());
 		Assert.assertEquals("test2", selected);
@@ -395,7 +398,7 @@ public class TestWebSocket extends AbstractHTTPTest {
 	@Test
 	public void testProxyConfigurations() throws Exception {
 		WebSocketClient client = new WebSocketClient();
-		HTTPClientConfiguration config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		config.setProxySelector(null);
 		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
 		String selected = conn.blockResult(0);
@@ -404,47 +407,45 @@ public class TestWebSocket extends AbstractHTTPTest {
 		client.close();
 		
 		// start proxy server
-		TCPServer proxyServer = new TCPServer();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
 		logger.setLevel(Level.TRACE);
-		ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(8192, 10000, 10000, logger);
-		HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(processor);
-		proxyServer.setProtocol(protocol);
-		SocketAddress proxyAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
-		int proxyPort = ((InetSocketAddress)proxyAddress).getPort();
-		config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
+		config = new HTTPClientConfiguration(new HTTPClientConfiguration());
 		config.setSSLContext(SSLContext.getDefault());
-		processor.setHTTPForwardClientConfiguration(config);
-		
-		// test websocket through proxy
-		config = new HTTPClientConfiguration(HTTPClientConfiguration.defaultConfiguration);
-		config.setProxySelector(new ProxySelector() {
-			private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", proxyPort));
-			@Override
-			public List<Proxy> select(URI uri) {
-				return Collections.singletonList(proxy);
-			}
+		try (TCPServer proxyServer = new TCPServer(); HTTPClient proxyClient = new HTTPClient(config)) {
+			ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(proxyClient, 8192, 10000, 10000, logger);
+			HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(processor);
+			proxyServer.setProtocol(protocol);
+			SocketAddress proxyAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+			int proxyPort = ((InetSocketAddress)proxyAddress).getPort();
 			
-			@Override
-			public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
-			}
-		});
-		conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(2, connected.get());
-		Assert.assertEquals("test2", selected);
-		client.close();
-		
-		// test with HTTPS
-		config.setSSLContext(sslTest);
-		conn = client.connect(getSSLServerURI(), config, "test1", "test2", "test3");
-		selected = conn.blockResult(0);
-		Assert.assertEquals(3, connected.get());
-		Assert.assertEquals("test2", selected);
-		client.close();
-
-		// stop proxy
-		proxyServer.close();
+			// test websocket through proxy
+			config = new HTTPClientConfiguration(new HTTPClientConfiguration());
+			config.setProxySelector(new ProxySelector() {
+				private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", proxyPort));
+				@Override
+				public List<Proxy> select(URI uri) {
+					return Collections.singletonList(proxy);
+				}
+				
+				@Override
+				public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+				}
+			});
+			conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
+			selected = conn.blockResult(0);
+			Assert.assertEquals(2, connected.get());
+			Assert.assertEquals("test2", selected);
+			client.close();
+			
+			// test with HTTPS
+			config.setSSLContext(sslTest);
+			conn = client.connect(getSSLServerURI(), config, "test1", "test2", "test3");
+			selected = conn.blockResult(0);
+			Assert.assertEquals(3, connected.get());
+			Assert.assertEquals("test2", selected);
+			client.close();
+		}
+		// proxy server stopped
 		
 		// test wrong proxy
 		config.setProxySelector(new ProxySelector() {
@@ -471,88 +472,76 @@ public class TestWebSocket extends AbstractHTTPTest {
 	
 	@Test
 	public void testErrors() throws Exception {
-		String url = "http://localhost:" + ((InetSocketAddress)serverAddress).getPort() + "/";
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader("Upgrade", "websocket")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(404, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "websocket")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(400, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "unknown")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(404, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "websocket"),
-					new MimeHeader("Sec-WebSocket-Key", "hello")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(400, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "websocket"),
-					new MimeHeader("Sec-WebSocket-Key", "")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(400, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "websocket"),
-					new MimeHeader("Sec-WebSocket-Key", "hello"),
-					new MimeHeader("Sec-WebSocket-Version", "51")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(400, resp.getStatusCode());
-		}
-		try (HTTPClient client = HTTPClient.create(new URI(url))) {
-			HTTPResponse resp = client.sendAndReceive(
-				new HTTPRequest().get("/test")
-				.setHeaders(new MimeHeaders(
-					new MimeHeader(HTTPConstants.Headers.Request.CONNECTION, "Upgrade"),
-					new MimeHeader("Upgrade", "websocket"),
-					new MimeHeader("Sec-WebSocket-Key", "hello"),
-					new MimeHeader("Sec-WebSocket-Version", "")
-				)),
-				null, null
-			).blockResult(0);
-			Assert.assertEquals(400, resp.getStatusCode());
-		}
+		int port = ((InetSocketAddress)serverAddress).getPort();
+		HTTPClientConfiguration config = new HTTPClientConfiguration();
+		HTTPClientRequest request;
+		HTTPClientResponse response;
+		
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader("Upgrade", "websocket")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(404, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "websocket")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(400, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "unknown")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(404, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "websocket"),
+			new MimeHeader("Sec-WebSocket-Key", "hello")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(400, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "websocket"),
+			new MimeHeader("Sec-WebSocket-Key", "")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(400, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "websocket"),
+			new MimeHeader("Sec-WebSocket-Key", "hello"),
+			new MimeHeader("Sec-WebSocket-Version", "51")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
+		Assert.assertEquals(400, response.getStatusCode());
+
+		request = new HTTPClientRequest("localhost", port, false);
+		request.get("/test").setHeaders(new MimeHeaders(
+			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
+			new MimeHeader("Upgrade", "websocket"),
+			new MimeHeader("Sec-WebSocket-Key", "hello"),
+			new MimeHeader("Sec-WebSocket-Version", "")
+		));
+		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response.getHeadersReceived().blockThrow(0);
 	}
 }

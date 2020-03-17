@@ -5,6 +5,7 @@ import org.junit.Test;
 
 import net.lecousin.framework.network.http.exception.HTTPError;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
+import net.lecousin.framework.network.http.test.old.AbstractHTTPTest;
 
 public class TestExceptions extends AbstractHTTPTest {
 
