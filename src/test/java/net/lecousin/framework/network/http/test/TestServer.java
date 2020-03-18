@@ -238,13 +238,13 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientResponse resp5 = new HTTPClientResponse();
 		HTTPClientResponse resp6 = new HTTPClientResponse();
 		HTTPClientResponse resp7 = new HTTPClientResponse();
-		HTTP1ClientUtil.send(client, connection, req1, resp1, config, logger);
-		HTTP1ClientUtil.send(client, connection, req2, resp2, config, logger);
-		HTTP1ClientUtil.send(client, connection, req3, resp3, config, logger);
-		HTTP1ClientUtil.send(client, connection, req4, resp4, config, logger);
-		HTTP1ClientUtil.send(client, connection, req5, resp5, config, logger);
-		HTTP1ClientUtil.send(client, connection, req6, resp6, config, logger);
-		HTTP1ClientUtil.send(client, connection, req7, resp7, config, logger);
+		HTTP1ClientUtil.send(client, connection, req1, resp1, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req2, resp2, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req3, resp3, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req4, resp4, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req5, resp5, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req6, resp6, config, logger).blockThrow(0);
+		HTTP1ClientUtil.send(client, connection, req7, resp7, config, logger).blockThrow(0);
 		String multiRequest =
 			"GET /test/get?status=608 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
 			"GET /test/get?status=609 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
@@ -369,13 +369,16 @@ public class TestServer extends AbstractNetworkTest {
 				return;
 			}
 			ctx.getResponse().setStatus(HttpURLConnection.HTTP_OK);
+			ReadableToSeekable io = null;
 			try {
-				ctx.getResponse().setEntity(new BinaryEntity(new ReadableToSeekable(input, 256)));
+				io = new ReadableToSeekable(input, 256);
+				ctx.getResponse().setEntity(new BinaryEntity(io));
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
 			ctx.getResponse().getReady().unblock();
-			ctx.getResponse().getSent().onDone(input::closeAsync);
+			if (io != null)
+				ctx.getResponse().getSent().onDone(io::closeAsync);
 		}
 	}
 	

@@ -241,6 +241,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		}
 	}
 	
+	@SuppressWarnings("java:S2095")
 	private HTTPClientConnection tryToConnect(HTTPClientRequestContext reservedFor) {
 		if (closed) {
 			reservedFor.getRequestSent().cancel(new CancelException("HTTPClient closed"));
@@ -373,7 +374,12 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			return true; // error or cancel
 		connection.send(ctx).onDone(taken -> {
 			if (!taken.booleanValue())
-				retryToConnect(ctx);
+				Task.cpu("HTTP client retry to connect", Priority.NORMAL, t -> {
+					synchronized (connectionManagers) {
+						retryToConnect(ctx);
+					}
+					return null;
+				}).start();
 		});
 		return true;
 	}

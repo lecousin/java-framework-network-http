@@ -131,108 +131,150 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		r.headers.onDone(this::doNextJob);
 	}
 	
-	@SuppressWarnings("java:S3776") // complexity
+	private Task<Void, NoException> nextJobTask = null;
+	private Task<Void, NoException> currentJobTask = null;
+	private Object nextJobTaskLock = new Object();
+	
 	private void doNextJob() {
-		synchronized (requests) {
-			if (!connect.isDone())
+		synchronized (nextJobTaskLock) {
+			if (nextJobTask != null)
 				return;
-			Request r = null;
-			Request previous = null;
-			for (Iterator<Request> it = requests.iterator(); it.hasNext(); previous = r) {
-				r = it.next();
-				// if only reserved, do nothing
-				if (r.result == null)
-					break;
-				
-				// if stopping, cancel requests
-				if (stopping) {
-					if (!r.result.isDone())
-						r.result.unblockSuccess(Boolean.FALSE);
-					it.remove();
+			nextJobTask = Task.cpu("Process HTTP/1 client requests", Priority.NORMAL, (Task<Void, NoException> t) -> {
+				synchronized (nextJobTaskLock) {
+					currentJobTask = t;
+					nextJobTask = null;
+				}
+				synchronized (requests) {
+					if (!connect.isDone())
+						return null;
+					nextJob();
+				}
+				return null;
+			});
+			if (currentJobTask != null)
+				nextJobTask.startAfter(currentJobTask);
+			else
+				nextJobTask.start();
+		}
+	}
+	
+	@SuppressWarnings("java:S3776") // complexity
+	private void nextJob() {
+		Request r = null;
+		Request previous = null;
+		for (Iterator<Request> it = requests.iterator(); it.hasNext(); previous = r) {
+			r = it.next();
+			// if only reserved, do nothing
+			if (r.result == null)
+				break;
+			
+			// if stopping, cancel requests
+			if (stopping) {
+				if (!r.result.isDone())
+					unblockResult(r, Boolean.FALSE);
+				it.remove();
+				continue;
+			}
+			
+			// if headers are not ready, do nothing
+			if (!r.headers.isDone())
+				break;
+
+			// if we don't know yet if a subsequent request can be sent, wait 
+			if (previous != null && !previous.nextRequestCanBeSent)
+				break;
+
+			// if headers are not yet sent, send them
+			if (r.headersSent == null) {
+				sendHeaders(r);
+				unblockResult(r, Boolean.TRUE);
+				break;
+			}
+			
+			// if we are still sending headers, wait
+			if (!r.headersSent.isDone())
+				break;
+			
+			// if sending headers failed, stop
+			if (!r.headersSent.isSuccessful()) {
+				stopping = true;
+				if (!r.result.isDone())
+					unblockResult(r, Boolean.FALSE);
+				else {
+					final Request req = r;
+					Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, t -> {
+						req.headersSent.forwardIfNotSuccessful(req.ctx.getRequestSent());
+						return null;
+					}).start();
+				}
+				it.remove();
+				continue; // cancel remaining pending requests
+			}
+			
+			// if we didn't start to send body yet
+			if (r.ctx.getRequestBody() != null) {
+				if (!r.result.isDone()) unblockResult(r, Boolean.TRUE);
+				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
+				r.ctx.setRequestBody(null);
+				if (!r.ctx.getRequest().isExpectingBody() ||
+					(body.getValue1() != null && body.getValue1().longValue() == 0)) {
+					r.ctx.getRequestSent().unblock();
+					final Request req = r;
+					if (previous == null) {
+						Task.cpu("Received HTTP/1 response", Priority.NORMAL, t -> {
+							receiveResponse(req);
+							return null;
+						}).start();
+					} else {
+						previous.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
+					}
 					continue;
 				}
 				
-				// if headers are not ready, do nothing
-				if (!r.headers.isDone())
-					break;
-
-				// if we don't know yet if a subsequent request can be sent, wait 
-				if (previous != null && !previous.nextRequestCanBeSent)
-					break;
-
-				// if headers are not yet sent, send them
-				if (r.headersSent == null) {
-					sendHeaders(r);
-					r.result.unblockSuccess(Boolean.TRUE);
-					break;
-				}
-				
-				// if we are still sending headers, wait
-				if (!r.headersSent.isDone())
-					break;
-				
-				// if sending headers failed, stop
-				if (!r.headersSent.isSuccessful()) {
-					stopping = true;
-					if (!r.result.isDone())
-						r.result.unblockSuccess(Boolean.FALSE);
-					else
-						r.headersSent.forwardIfNotSuccessful(r.ctx.getRequestSent());
-					it.remove();
-					continue; // cancel remaining pending requests
-				}
-				
-				// if we didn't start to send body yet
-				if (r.ctx.getRequestBody() != null) {
-					if (!r.result.isDone()) r.result.unblockSuccess(Boolean.TRUE);
-					Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
-					r.ctx.setRequestBody(null);
-					if (!r.ctx.getRequest().isExpectingBody() ||
-						(body.getValue1() != null && body.getValue1().longValue() == 0)) {
-						r.ctx.getRequestSent().unblock();
-						if (previous == null) {
-							receiveResponse(r);
-						} else {
-							final Request req = r;
-							previous.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
-						}
-						continue;
-					}
-					
-					// send body
+				// send body
+				final Request req = r;
+				final Request prev = previous;
+				Task.cpu("Send HTTP/1 request body",  Priority.NORMAL, t -> {
 					AsyncConsumer<ByteBuffer, IOException> consumer = 
-						body.getValue1() == null || r.ctx.getRequest().getTrailerHeadersSuppliers() != null
-						? new ChunkedTransfer.Sender(clientConsumer, r.ctx.getRequest().getTrailerHeadersSuppliers())
+						body.getValue1() == null || req.ctx.getRequest().getTrailerHeadersSuppliers() != null
+						? new ChunkedTransfer.Sender(clientConsumer, req.ctx.getRequest().getTrailerHeadersSuppliers())
 						: clientConsumer;
 					Async<IOException> sendBody = body.getValue2()
 						.toConsumer(consumer, "Send HTTP request body", Task.getCurrentPriority());
-					final Request req = r;
-					if (previous == null) {
-						receiveResponse(r);
+					if (prev == null) {
+						receiveResponse(req);
 					} else {
-						previous.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
+						prev.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
 					}
 					sendBody.onErrorOrCancel(() -> {
 						sendBody.forwardIfNotSuccessful(req.ctx.getRequestSent());
 						stop(req);
 					});
-					sendBody.onSuccess(r.ctx.getRequestSent()::unblock);
-				}
-			}
-			
-			if (requests.isEmpty()) {
-				int idle = config.getTimeouts().getIdle();
-				if (idle <= 0) {
-					stopping = true;
-					tcp.close();
-				} else {
-					idleStart = System.currentTimeMillis();
-					Task.cpu("Check HTTP1ClientConnection idle", new CheckIdle()).executeAt(idleStart + idle).start();
-				}
-			} else {
-				idleStart = -1;
+					sendBody.onSuccess(req.ctx.getRequestSent()::unblock);
+					return null;
+				}).start();
 			}
 		}
+		
+		if (requests.isEmpty()) {
+			int idle = config.getTimeouts().getIdle();
+			if (idle <= 0) {
+				stopping = true;
+				tcp.close();
+			} else {
+				idleStart = System.currentTimeMillis();
+				Task.cpu("Check HTTP1ClientConnection idle", new CheckIdle()).executeAt(idleStart + idle).start();
+			}
+		} else {
+			idleStart = -1;
+		}
+	}
+	
+	private static void unblockResult(Request r, Boolean result) {
+		Task.cpu("Signal HTTP/1 request handling", Priority.RATHER_IMPORTANT, t -> {
+			r.result.unblockSuccess(result);
+			return null;
+		}).start();
 	}
 	
 	private class CheckIdle implements Executable<Void, NoException> {
