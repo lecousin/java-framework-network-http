@@ -246,7 +246,7 @@ public class WebSocketClient implements Closeable {
 					isLast = nbRead.intValue() < buffer.length;
 				byte[] b = WebSocketDataFrame.createMessageStart(isLast, pos, nbRead.intValue(), type);
 				conn.send(ByteBuffer.wrap(b), 30000);
-				IAsync<IOException> send = conn.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()), 30000);
+				IAsync<IOException> send = conn.send(ByteBuffer.wrap(buffer, 0, nbRead.intValue()).asReadOnlyBuffer(), 30000);
 				if (!isLast) {
 					send.thenStart("Sending WebSocket message", Task.Priority.NORMAL,
 						() -> sendMessagePart(type, content, size, buffer, pos + nbRead.intValue(), ondone), ondone);

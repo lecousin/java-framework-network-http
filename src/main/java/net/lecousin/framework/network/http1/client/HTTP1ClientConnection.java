@@ -216,25 +216,24 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				if (!r.result.isDone()) unblockResult(r, Boolean.TRUE);
 				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
 				r.ctx.setRequestBody(null);
-				if (!r.ctx.getRequest().isExpectingBody() ||
-					(body.getValue1() != null && body.getValue1().longValue() == 0)) {
-					r.ctx.getRequestSent().unblock();
-					final Request req = r;
-					if (previous == null) {
-						Task.cpu("Received HTTP/1 response", Priority.NORMAL, t -> {
-							receiveResponse(req);
-							return null;
-						}).start();
-					} else {
-						previous.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
-					}
-					continue;
-				}
-				
 				// send body
 				final Request req = r;
 				final Request prev = previous;
 				Task.cpu("Send HTTP/1 request body",  Priority.NORMAL, t -> {
+					if (!req.ctx.getRequest().isExpectingBody() ||
+						(body.getValue1() != null && body.getValue1().longValue() == 0)) {
+						req.ctx.getRequestSent().unblock();
+						if (prev == null) {
+							Task.cpu("Received HTTP/1 response", Priority.NORMAL, task -> {
+								receiveResponse(req);
+								return null;
+							}).start();
+						} else {
+							prev.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
+						}
+						return null;
+					}
+
 					AsyncConsumer<ByteBuffer, IOException> consumer = 
 						body.getValue1() == null || req.ctx.getRequest().getTrailerHeadersSuppliers() != null
 						? new ChunkedTransfer.Sender(clientConsumer, req.ctx.getRequest().getTrailerHeadersSuppliers())

@@ -310,7 +310,7 @@ public class TestServer extends AbstractNetworkTest {
 		for (int i = 0; i < buf.length; i += 10) {
 			int len = 10;
 			if (i + len > buf.length) len = buf.length - i;
-			client.send(ByteBuffer.wrap(buf, i, len), 10000);
+			client.send(ByteBuffer.wrap(buf, i, len).asReadOnlyBuffer(), 10000);
 			Thread.sleep(100);
 		}
 		HTTPClientResponse resp = new HTTPClientResponse();

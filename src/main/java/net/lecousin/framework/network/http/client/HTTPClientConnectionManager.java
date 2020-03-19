@@ -9,6 +9,8 @@ import java.util.LinkedList;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
@@ -155,28 +157,33 @@ class HTTPClientConnectionManager {
 		openConnections.add(connection);
 		connection.reserve(reservedFor);
 		connect.onErrorOrCancel(() -> {
-			boolean hasOpen = false;
-			synchronized (openConnections) {
-				for (HTTPClientConnection c : openConnections)
-					if (c.isConnected()) {
-						hasOpen = true;
-						break;
-					}
+			lastNewConnectionFailed = System.currentTimeMillis();
+			Task.cpu("Connection failed", Priority.RATHER_IMPORTANT, t -> {
+				boolean hasOpen = false;
+				synchronized (openConnections) {
+					for (HTTPClientConnection c : openConnections)
+						if (c.isConnected()) {
+							hasOpen = true;
+							break;
+						}
+					if (!hasOpen)
+						lastConnectionFailed = System.currentTimeMillis();
+				}
 				if (hasOpen)
-					lastNewConnectionFailed = System.currentTimeMillis();
-				else
-					lastConnectionFailed = System.currentTimeMillis();
-			}
-			if (hasOpen)
-				reservedFor.getRemoteAddresses().add(serverAddress);
-			client.retryConnection(reservedFor);
+					reservedFor.getRemoteAddresses().add(serverAddress);
+				client.retryConnection(reservedFor);
+				return null;
+			}).start();
 		});
-		tcp.onclosed(() -> {
-			synchronized (openConnections) {
-				openConnections.remove(connection);
-			}
-			client.connectionClosed();
-		});
+		tcp.onclosed(() ->
+			Task.cpu("Connection closed", Priority.RATHER_IMPORTANT, t -> {
+				synchronized (openConnections) {
+					openConnections.remove(connection);
+				}
+				client.connectionClosed();
+				return null;
+			}).start()
+		);
 		return connection;
 	}
 	
