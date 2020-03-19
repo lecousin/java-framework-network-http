@@ -393,6 +393,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				r.ctx.getResponse().getHeadersReceived().unblock();
 			} else {
 				response.setEntity(new EmptyEntity(null, response.getHeaders()));
+				requestDone(r);
 				r.ctx.getResponse().getHeadersReceived().unblock();
 				r.ctx.getResponse().getBodyReceived().unblock();
 				r.ctx.getResponse().getTrailersReceived().unblock();
@@ -415,9 +416,9 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			bufferSize = 64 * 1024;
 		IAsync<IOException> receiveBody = tcp.getReceiver().consume(transfer, bufferSize, config.getTimeouts().getReceive());
 		receiveBody.onSuccess(() -> {
+			requestDone(r);
 			r.ctx.getResponse().getBodyReceived().unblock();
 			r.ctx.getResponse().getTrailersReceived().unblock();
-			requestDone(r);
 		});
 		receiveBody.onErrorOrCancel(() -> {
 			stop(r);

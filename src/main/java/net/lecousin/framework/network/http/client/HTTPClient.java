@@ -334,21 +334,23 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	
 	private void connectionUsed(HTTPClientConnectionManager manager, HTTPClientRequestContext ctx) {
 		ctx.getRemoteAddresses().remove(manager.getAddress());
-		ctx.getRequestSent().onDone(() -> {
-			synchronized (connectionManagers) {
-				if (queue.isEmpty())
+		ctx.getResponse().getTrailersReceived().thenStart("Dequeue HTTP request", Priority.NORMAL, () -> dequeueRequest(manager), true);
+	}
+	
+	private void dequeueRequest(HTTPClientConnectionManager manager) {
+		synchronized (connectionManagers) {
+			if (queue.isEmpty())
+				return;
+			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
+				HTTPClientRequestContext c = it.next();
+				if (!c.getRemoteAddresses().contains(manager.getAddress()))
+					continue;
+				if (retryToConnect(c)) {
+					it.remove();
 					return;
-				for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
-					HTTPClientRequestContext c = it.next();
-					if (!c.getRemoteAddresses().contains(manager.getAddress()))
-						continue;
-					if (retryToConnect(c)) {
-						it.remove();
-						return;
-					}
 				}
 			}
-		});
+		}
 	}
 	
 	/** Called by HTTPClientConnectionManager to signal a connection has been closed. */
