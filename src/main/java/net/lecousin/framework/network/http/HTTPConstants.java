@@ -29,6 +29,7 @@ public final class HTTPConstants {
 
 			private Request() { /* no instance */ }
 
+			public static final String ACCEPT_ENCODING = "Accept-Encoding";
 			public static final String HOST = "Host";
 			public static final String RANGE = "Range";
 			public static final String UPGRADE = "Upgrade";

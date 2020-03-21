@@ -34,6 +34,13 @@ public abstract class HTTPMessage<ME extends HTTPMessage<ME>> extends AbstractAt
 		if (entity == null)
 			headers = new MimeHeaders(copy.getHeaders().getHeaders());
 	}
+	
+	public void reset() {
+		protocolVersion = null;
+		headers = null;
+		entity = null;
+		trailerHeaderSuppliers = null;
+	}
 
 	/** Set the protocol version. */
 	@SuppressWarnings("unchecked")

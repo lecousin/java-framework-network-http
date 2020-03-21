@@ -82,6 +82,7 @@ public class HTTPClientRequestContext {
 		throughProxy = false;
 		requestSent = new Async<>();
 		maxRedirections--;
+		response.reset();
 		client.send(this);
 	}
 
@@ -171,6 +172,11 @@ public class HTTPClientRequestContext {
 
 	public void setOnHeadersReceived(Function<HTTPClientResponse, Boolean> onHeadersReceived) {
 		this.onHeadersReceived = onHeadersReceived;
+	}
+	
+	@Override
+	public String toString() {
+		return "HTTPClientRequestContext: " + request;
 	}
 
 }

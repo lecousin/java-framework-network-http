@@ -87,6 +87,9 @@ public class HTTPClientRequest extends HTTPRequest {
 	
 	/** Generate the URI to which this request has to be sent. */
 	public URI generateURI() throws URISyntaxException {
+		String path = getEncodedPath().asString();
+		if (path.contains("://"))
+			return new URI(path + '?' + getEncodedQueryString().asString());
 		return new URI(secure ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME, null, hostname, port,
 			getEncodedPath().asString(), getEncodedQueryString().asString(), null);
 	}

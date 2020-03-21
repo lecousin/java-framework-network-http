@@ -40,6 +40,13 @@ public class HTTPResponse extends HTTPMessage<HTTPResponse> {
 	
 	public String getStatusMessage() { return statusMessage; }
 	
+	@Override
+	public void reset() {
+		statusCode = -1;
+		statusMessage = null;
+		super.reset();
+	}
+	
 	/** Add a cookie.
 	 * @param expiration 0 for none
 	 */

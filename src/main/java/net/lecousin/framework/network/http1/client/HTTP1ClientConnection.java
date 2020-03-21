@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
 
+import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.Executable;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
@@ -19,6 +20,7 @@ import net.lecousin.framework.concurrent.util.PartialAsyncConsumer;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.data.ByteArray;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
@@ -47,6 +49,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		super(client, connect);
 		this.maxPendingRequests = maxPendingRequests;
 		this.config = config;
+		this.logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ClientConnection.class);
 		connect.onDone(() -> {
 			if (connect.isSuccessful())
 				 clientConsumer = client.asConsumer(3, config.getTimeouts().getSend());
@@ -60,6 +63,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		});
 	}
 	
+	private Logger logger;
 	private int maxPendingRequests;
 	private HTTPClientConfiguration config;
 	private AsyncConsumer<ByteBuffer, IOException> clientConsumer;
@@ -186,6 +190,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 
 			// if headers are not yet sent, send them
 			if (r.headersSent == null) {
+				if (logger.debug()) logger.debug("Send headers for request " + r.ctx);
 				sendHeaders(r);
 				unblockResult(r, Boolean.TRUE);
 				break;
@@ -198,6 +203,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			// if sending headers failed, stop
 			if (!r.headersSent.isSuccessful()) {
 				stopping = true;
+				if (logger.debug()) logger.debug("Error sending headers, stop connection", r.headersSent.getError());
 				if (!r.result.isDone())
 					unblockResult(r, Boolean.FALSE);
 				else {
@@ -217,6 +223,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
 				r.ctx.setRequestBody(null);
 				// send body
+				if (logger.debug()) logger.debug("Send body for request " + r.ctx);
 				final Request req = r;
 				final Request prev = previous;
 				Task.cpu("Send HTTP/1 request body",  Priority.NORMAL, t -> {
@@ -333,9 +340,11 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	private void reveiceResponseHeaders(Request r) {
 		if (r.receiveStatusLine.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
+			if (logger.debug()) logger.debug("Receive status line error, stop connection", r.receiveStatusLine.getError());
 			stop(r);
 			return;
 		}
+		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode());
 		if (r.ctx.getOnStatusReceived() != null) {
 			Boolean close = r.ctx.getOnStatusReceived().apply(r.ctx.getResponse());
 			if (close != null) {
@@ -356,9 +365,11 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 
 	private void reveiceResponseBody(Request r) {
 		if (r.receiveHeaders.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
+			if (logger.debug()) logger.debug("Receive headers error, stop connection", r.receiveHeaders.getError());
 			stop(r);
 			return;
 		}
+		if (logger.debug()) logger.debug("Headers received");
 		HTTPClientResponse response = r.ctx.getResponse();
 		if (r.ctx.getOnHeadersReceived() != null) {
 			Boolean close = r.ctx.getOnHeadersReceived().apply(response);
@@ -392,6 +403,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				response.setEntity(entity);
 				r.ctx.getResponse().getHeadersReceived().unblock();
 			} else {
+				if (logger.debug()) logger.debug("No body expected, end of request");
 				response.setEntity(new EmptyEntity(null, response.getHeaders()));
 				requestDone(r);
 				r.ctx.getResponse().getHeadersReceived().unblock();
@@ -405,6 +417,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			r.ctx.getResponse().getBodyReceived().error(IO.error(e));
 			return;
 		}
+		if (logger.debug()) logger.debug("Start receiving body");
 		int bufferSize;
 		if (size == null)
 			bufferSize = 8192;
@@ -416,6 +429,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			bufferSize = 64 * 1024;
 		IAsync<IOException> receiveBody = tcp.getReceiver().consume(transfer, bufferSize, config.getTimeouts().getReceive());
 		receiveBody.onSuccess(() -> {
+			if (logger.debug()) logger.debug("Body received, end of request");
 			requestDone(r);
 			r.ctx.getResponse().getBodyReceived().unblock();
 			r.ctx.getResponse().getTrailersReceived().unblock();
@@ -429,35 +443,48 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	private boolean handleRedirection(Request r) {
 		HTTPClientResponse response = r.ctx.getResponse();
-		if (r.ctx.getMaxRedirections() <= 0 || !HTTPResponse.isRedirectionStatusCode(response.getStatusCode()))
+		if (!HTTPResponse.isRedirectionStatusCode(response.getStatusCode()))
 			return false;
+		if (r.ctx.getMaxRedirections() <= 0) {
+			if (logger.debug()) logger.debug("No more redirection allowed, handle the response");
+			return false;
+		}
 		
 		String location = response.getHeaders().getFirstRawValue(HTTPConstants.Headers.Response.LOCATION);
-		if (location == null)
+		if (location == null) {
+			if (logger.warn()) logger.warn("No location given for redirection");
 			return false;
+		}
 		
 		if (response.isConnectionClose()) {
-			stopping = true;
 			stop(r);
 		} else {
 			Long size = response.getHeaders().getContentLength();
-			Async<IOException> skipBody;
-			if (size != null && size.longValue() > 0)
-				skipBody = tcp.getReceiver().skipBytes(size.intValue(), config.getTimeouts().getReceive());
-			else
-				skipBody = new Async<>(true);
-			
-			r.nextRequestCanBeSent = true;
-			skipBody.onSuccess(() -> requestDone(r));
-			skipBody.onErrorOrCancel(() -> stop(r));
+			if (size != null && size.longValue() > 0 && size.longValue() < 65536) {
+				Async<IOException> skipBody = tcp.getReceiver().skipBytes(size.intValue(), config.getTimeouts().getReceive());
+				r.nextRequestCanBeSent = true;
+				if (logger.debug()) logger.debug("Skip body of redirection");
+				skipBody.onSuccess(() -> requestDone(r));
+				skipBody.onErrorOrCancel(() -> stop(r));
+			} else if (size != null && size.longValue() == 0) {
+				r.nextRequestCanBeSent = true;
+				requestDone(r);
+			} else {
+				if (logger.debug()) logger.debug("Stop connection to avoid receiving body before redirection");
+				stop(r);
+			}
 		}
-			
-		try {
-			r.ctx.redirectTo(location);
-		} catch (URISyntaxException e) {
-			IOException error = new IOException("Invalid redirect location: " + location, e);
-			r.ctx.getResponse().getHeadersReceived().error(error);
-		}
+		
+		if (logger.debug()) logger.debug("Redirect to " + location);
+		Task.cpu("Redirect HTTP request", Priority.NORMAL, t -> {
+			try {
+				r.ctx.redirectTo(location);
+			} catch (URISyntaxException e) {
+				IOException error = new IOException("Invalid redirect location: " + location, e);
+				r.ctx.getResponse().getHeadersReceived().error(error);
+			}
+			return null;
+		}).start();
 		return true;
 	}
 

@@ -23,7 +23,6 @@ public class HTTP1ResponseStatusConsumer extends PartialAsyncConsumer.ConsumerQu
 		nextConsumer();
 	}
 	
-	private static final HTTPException PROTOCOL_VERSION_ERROR = new HTTPException("Invalid protocol version");
 	private static final byte[] PROTOCOL_VERSION_EXPECTED = new byte[] { 'H', 'T', 'T', 'P', '/' };
 
 	private class ProtocolVersionConsumer implements PartialAsyncConsumer<Bytes.Readable, HTTPException> {
@@ -39,21 +38,21 @@ public class HTTP1ResponseStatusConsumer extends PartialAsyncConsumer.ConsumerQu
 				switch (pos) {
 				case 5:
 					major = (byte)(b - '0');
-					if (major < 0 || major > 9) return new AsyncSupplier<>(null, PROTOCOL_VERSION_ERROR);
+					if (major < 0 || major > 9) return new AsyncSupplier<>(null, error());
 					break;
 				case 6:
-					if (b != '.') return new AsyncSupplier<>(null, PROTOCOL_VERSION_ERROR);
+					if (b != '.') return new AsyncSupplier<>(null, error());
 					break;
 				case 7:
 					minor = (byte)(b - '0');
-					if (minor < 0 || minor > 9) return new AsyncSupplier<>(null, PROTOCOL_VERSION_ERROR);
+					if (minor < 0 || minor > 9) return new AsyncSupplier<>(null, error());
 					break;
 				case 8:
-					if (b != ' ') return new AsyncSupplier<>(null, PROTOCOL_VERSION_ERROR);
+					if (b != ' ') return new AsyncSupplier<>(null, error());
 					response.setProtocolVersion(new HTTPProtocolVersion(major, minor));
 					return new AsyncSupplier<>(Boolean.TRUE, null);
 				default:
-					if (b != PROTOCOL_VERSION_EXPECTED[pos]) return new AsyncSupplier<>(null, PROTOCOL_VERSION_ERROR);
+					if (b != PROTOCOL_VERSION_EXPECTED[pos]) return new AsyncSupplier<>(null, error());
 					break;
 				}
 				pos++;
@@ -64,6 +63,10 @@ public class HTTP1ResponseStatusConsumer extends PartialAsyncConsumer.ConsumerQu
 		@Override
 		public boolean isExpectingData() {
 			return pos < 9;
+		}
+		
+		private HTTPException error() {
+			return new HTTPException("Invalid protocol version");
 		}
 		
 	}

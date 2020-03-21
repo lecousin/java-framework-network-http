@@ -8,12 +8,12 @@ import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
+import net.lecousin.framework.network.http.client.filters.AcceptEncodingFilter;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
-import net.lecousin.framework.network.mime.transfer.ContentDecoderFactory;
 
 /**
  * Forwards HTTP requests to another server, can be typically used by an HTTP proxy.
@@ -33,26 +33,23 @@ public class HTTPRequestForwarder {
 	public void forward(HTTPRequestContext ctx, String host, int port, boolean useSSL) {
 		if (logger.debug())
 			logger.debug("Forward request " + ctx.getRequest().getDecodedPath() + " to " + host + ":" + port);
-		HTTPClientRequest request = prepareRequest(ctx, host, port, useSSL);
-		doForward(request, ctx);
-	}
-	
-	protected HTTPClientRequest prepareRequest(HTTPRequestContext ctx, String host, int port, boolean secure) {
-		HTTPClientRequest request = new HTTPClientRequest(host, port, secure, ctx.getRequest());
-		StringBuilder s = new StringBuilder(128);
-		for (String encoding : ContentDecoderFactory.getSupportedEncoding()) {
-			if (s.length() > 0) s.append(", ");
-			s.append(encoding);
+		HTTPClientRequest request = new HTTPClientRequest(host, port, useSSL, ctx.getRequest());
+		if (ctx.getRequest().getEntity() == null) {
+			BinaryEntity entity = new BinaryEntity(null, ctx.getRequest().getHeaders());
+			// TODO if size is known, we should be able to send it instead of doing chunked transfer
+			entity.setContent(new OutputToInputBuffers(true, 8, Priority.NORMAL));
+			ctx.getRequest().setEntity(entity);
+			request.setEntity(entity);
 		}
-		request.setHeader("Accept-Encoding", s.toString());
-		return request;
+		new AcceptEncodingFilter().filter(request, null);
+		doForward(request, ctx);
 	}
 	
 	protected void doForward(HTTPClientRequest request, HTTPRequestContext ctx) {
 		HTTPServerResponse response = ctx.getResponse();
 		HTTPClientRequestContext clientCtx = new HTTPClientRequestContext(client, request);
 		clientCtx.setEntityFactory((parent, headers) -> {
-			// TODO if size is known, we should be able to send it
+			// TODO if size is known, we should be able to send it instead of doing chunked transfer
 			BinaryEntity entity = new BinaryEntity(parent, headers);
 			OutputToInputBuffers o2i = new OutputToInputBuffers(true, 8, Priority.NORMAL);
 			entity.setContent(o2i);
@@ -82,8 +79,13 @@ public class HTTPRequestForwarder {
 		});
 		clientResponse.getBodyReceived().onError(error -> {
 			response.getReady().error(error);
-			if (response.getEntity() != null) {
+			if (response.getEntity() instanceof BinaryEntity) {
 				((IO.OutputToInput)((BinaryEntity)response.getEntity()).getContent()).signalErrorBeforeEndOfData(error);
+			}
+		});
+		clientResponse.getBodyReceived().onSuccess(() -> {
+			if (!(response.getEntity() instanceof BinaryEntity)) {
+				response.getReady().unblock();
 			}
 		});
 		client.send(clientCtx);

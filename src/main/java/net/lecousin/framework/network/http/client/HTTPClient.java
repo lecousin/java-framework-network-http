@@ -26,6 +26,7 @@ import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.exception.NoException;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.IMemoryManageable;
 import net.lecousin.framework.memory.MemoryManager;
 import net.lecousin.framework.mutable.MutableInteger;
@@ -57,10 +58,13 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	/** Constructor. */
 	public HTTPClient(HTTPClientConfiguration config) {
 		this.config = config;
-		LCCore.getApplication().toClose(0, this);
+		Application app = LCCore.getApplication();
+		app.toClose(0, this);
+		logger = app.getLoggerFactory().getLogger(HTTPClient.class);
 		MemoryManager.register(this);
 	}
 	
+	private Logger logger;
 	private HTTPClientConfiguration config;
 	private Map<InetSocketAddress, HTTPClientConnectionManager> connectionManagers = new HashMap<>();
 	private MutableInteger nbOpenConnections = new MutableInteger(0);
@@ -152,6 +156,9 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	public void send(HTTPClientRequestContext ctx) {
 		ctx.setClient(this);
 		
+		if (logger.debug())
+			logger.debug("Request to send: " + ctx);
+		
 		// apply filters
 		for (HTTPClientRequestFilter filter : config.getFilters())
 			filter.filter(ctx.getRequest(), ctx.getResponse());
@@ -193,8 +200,8 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel
 			connection.getResult().send(ctx).onDone(taken -> {
-				if (!taken.booleanValue())
-					retryToConnect(ctx);
+				if (!taken.booleanValue() && !retryToConnect(ctx))
+					queue.addFirst(ctx);
 			});
 			return null;
 		}, ctx.getRequestSent());
@@ -253,6 +260,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			if (manager == null) continue;
 			HTTPClientConnection connection = manager.reuseAvailableConnection(reservedFor);
 			if (connection != null) {
+				if (logger.debug()) logger.debug("Reuse available connection on " + addr + " for " + reservedFor);
 				connectionUsed(manager, reservedFor);
 				return connection;
 			}
@@ -266,6 +274,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 					connectionManagers.put(addr, manager);
 					HTTPClientConnection connection = manager.createConnection(reservedFor);
 					nbOpenConnections.inc();
+					if (logger.debug()) logger.debug("New connection on " + addr + " for " + reservedFor);
 					connectionUsed(manager, reservedFor);
 					return connection;
 				}
@@ -275,6 +284,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 				HTTPClientConnection connection = manager.createConnection(reservedFor);
 				if (connection != null) {
 					nbOpenConnections.inc();
+					if (logger.debug()) logger.debug("Add connection on " + addr + " for " + reservedFor);
 					connectionUsed(manager, reservedFor);
 					return connection;
 				}
@@ -286,6 +296,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			if (manager == null) continue;
 			HTTPClientConnection connection = manager.reuseConnectionIfPossible(reservedFor);
 			if (connection != null) {
+				if (logger.debug()) logger.debug("Reuse connection on " + addr + " for " + reservedFor);
 				connectionUsed(manager, reservedFor);
 				return connection;
 			}
@@ -369,6 +380,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	}
 	
 	private boolean retryToConnect(HTTPClientRequestContext ctx) {
+		if (logger.debug()) logger.debug("Retry to connect to send " + ctx);
 		HTTPClientConnection connection = tryToConnect(ctx);
 		if (connection == null)
 			return false;
@@ -378,7 +390,8 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			if (!taken.booleanValue())
 				Task.cpu("HTTP client retry to connect", Priority.NORMAL, t -> {
 					synchronized (connectionManagers) {
-						retryToConnect(ctx);
+						if (!retryToConnect(ctx))
+							queue.addFirst(ctx);
 					}
 					return null;
 				}).start();
