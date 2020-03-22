@@ -502,6 +502,15 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 					return;
 				}
 			}
+			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
+				HTTPClientRequestContext c = it.next();
+				if (c.getRemoteAddresses().contains(manager.getAddress()))
+					continue;
+				if (retryToConnect(c)) {
+					it.remove();
+					return;
+				}
+			}
 		}
 	}
 	
