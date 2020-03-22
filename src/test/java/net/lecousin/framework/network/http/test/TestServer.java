@@ -42,6 +42,7 @@ import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 import net.lecousin.framework.network.test.AbstractNetworkTest;
 import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.Triple;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -225,7 +226,7 @@ public class TestServer extends AbstractNetworkTest {
 		// open connection
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		Pair<? extends TCPClient, IAsync<IOException>> conn = HTTP1ClientUtil.openConnection(
+		Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientUtil.openConnection(
 			"localhost", serverPort, false, "/test/get?status=200&test=hello", config, logger);
 		TCPClient client = conn.getValue1();
 		IAsync<IOException> connection = conn.getValue2();
@@ -263,25 +264,25 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientRequest req10 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=610");
 		HTTPClientResponse resp10 = new HTTPClientResponse();
 		
-		HTTP1ClientUtil.receiveResponse(client, req1, resp1, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req1, resp1, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp1.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req2, resp2, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req2, resp2, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp2.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req3, resp3, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req3, resp3, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp3.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req4, resp4, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req4, resp4, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp4.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req5, resp5, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req5, resp5, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp5.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req6, resp6, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req6, resp6, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp6.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req7, resp7, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req7, resp7, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp7.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req8, resp8, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req8, resp8, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp8.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req9, resp9, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req9, resp9, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp9.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req10, resp10, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req10, resp10, conn.getValue3().booleanValue(), null, null, null, config, logger);
 		resp10.getTrailersReceived().blockThrow(0);
 		client.close();
 		
@@ -325,7 +326,7 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientResponse resp = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), resp, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), resp, false, null, null, null, config, logger);
 		resp.getTrailersReceived().blockThrow(0);
 		client.close();
 		
@@ -359,7 +360,7 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientResponse response = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), response, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), response, false, null, null, null, config, logger);
 		response.getTrailersReceived().blockThrow(0);
 		client.close();
 		Assert.assertEquals(expectedStatus, response.getStatusCode());
@@ -402,7 +403,7 @@ public class TestServer extends AbstractNetworkTest {
 			// open connection
 			HTTPClientConfiguration config = new HTTPClientConfiguration();
 			Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-			Pair<? extends TCPClient, IAsync<IOException>> conn = HTTP1ClientUtil.openConnection(
+			Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientUtil.openConnection(
 				"localhost", serverAddress.getPort(), false, "/", config, logger);
 			IAsync<IOException> connection = conn.getValue2();
 			
@@ -413,7 +414,7 @@ public class TestServer extends AbstractNetworkTest {
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=-2");
 				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, request, response, 0, null, null, null, config, logger);
+				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				String s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -422,7 +423,7 @@ public class TestServer extends AbstractNetworkTest {
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=3-6");
 				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, request, response, 0, null, null, null, config, logger);
+				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -431,7 +432,7 @@ public class TestServer extends AbstractNetworkTest {
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=12-");
 				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, request, response, 0, null, null, null, config, logger);
+				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -440,7 +441,7 @@ public class TestServer extends AbstractNetworkTest {
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=3-6,12-");
 				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, request, response, 0, null, null, null, config, logger);
+				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				Assert.assertEquals(MultipartEntity.class, response.getEntity().getClass());

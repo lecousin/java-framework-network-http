@@ -66,66 +66,71 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	public static final String HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE = "HTTP-alternative-services";
 	
 	@SuppressWarnings("unchecked")
-	public static void addKnowledgeFromResponseHeaders(HTTPClientRequest request, HTTPClientResponse response, InetSocketAddress serverAddress) {
+	public static void addKnowledgeFromResponseHeaders(
+		HTTPClientRequest request, HTTPClientResponse response,
+		InetSocketAddress serverAddress, boolean throughProxy
+	) {
 		HostPortKnowledge k = HostKnowledgeCache.get().getOrCreateKnowledge(serverAddress);
 		k.used();
 		HostProtocol p = k.getOrCreateProtocolByName("HTTP");
 		MimeHeaders headers = response.getHeaders();
-		if (p.getImplementation() == null && headers.has(HTTPConstants.Headers.Response.SERVER))
+		if (!throughProxy && p.getImplementation() == null && headers.has(HTTPConstants.Headers.Response.SERVER))
 			p.setImplementation(headers.getFirstRawValue(HTTPConstants.Headers.Response.SERVER));
 		Version v = new Version("" + response.getProtocolVersion().getMajor() + '.' + response.getProtocolVersion().getMinor());
 		if (!p.getVersions().contains(v))
 			p.addVersion(v);
-		try {
-			List<AlternativeServices> alts = headers.getValues(AlternativeService.HEADER, AlternativeServices.class);
-			if (!alts.isEmpty()) {
-				Map<String, List<Pair<AlternativeService, Long>>> map;
-				synchronized (p) {
-					map = (Map<String, List<Pair<AlternativeService, Long>>>)
-						p.getAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE);
-					if (map == null) {
-						map = new HashMap<>(5);
-						p.setAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE, map);
+		if (!throughProxy) {
+			try {
+				List<AlternativeServices> alts = headers.getValues(AlternativeService.HEADER, AlternativeServices.class);
+				if (!alts.isEmpty()) {
+					Map<String, List<Pair<AlternativeService, Long>>> map;
+					synchronized (p) {
+						map = (Map<String, List<Pair<AlternativeService, Long>>>)
+							p.getAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE);
+						if (map == null) {
+							map = new HashMap<>(5);
+							p.setAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE, map);
+						}
 					}
-				}
-				synchronized (map) {
-					List<Pair<AlternativeService, Long>> known = map.get(request.getHostname());
-					if (known == null) {
-						known = new LinkedList<>();
-						map.put(request.getHostname(), known);
-					}
-					// clear expired
-					long now = System.currentTimeMillis();
-					for (Iterator<Pair<AlternativeService, Long>> it = known.iterator(); it.hasNext(); ) {
-						Pair<AlternativeService, Long> service = it.next();
-						if (service.getValue1().getMaxAge() > 0 &&
-							now - service.getValue2().longValue() > service.getValue1().getMaxAge())
-							it.remove();
-					}
-					// add new advertised services
-					for (AlternativeServices services : alts) {
-						for (AlternativeService service : services.getValues()) {
-							if ("clear".equals(service.getProtocolId()))
-								known.clear();
-							else {
-								boolean found = false;
-								for (Pair<AlternativeService, Long> s : known) {
-									if (s.getValue1().isSame(service)) {
-										found = true;
-										s.getValue1().setMaxAge(service.getMaxAge());
-										s.setValue2(Long.valueOf(now));
-										break;
+					synchronized (map) {
+						List<Pair<AlternativeService, Long>> known = map.get(request.getHostname());
+						if (known == null) {
+							known = new LinkedList<>();
+							map.put(request.getHostname(), known);
+						}
+						// clear expired
+						long now = System.currentTimeMillis();
+						for (Iterator<Pair<AlternativeService, Long>> it = known.iterator(); it.hasNext(); ) {
+							Pair<AlternativeService, Long> service = it.next();
+							if (service.getValue1().getMaxAge() > 0 &&
+								now - service.getValue2().longValue() > service.getValue1().getMaxAge())
+								it.remove();
+						}
+						// add new advertised services
+						for (AlternativeServices services : alts) {
+							for (AlternativeService service : services.getValues()) {
+								if ("clear".equals(service.getProtocolId()))
+									known.clear();
+								else {
+									boolean found = false;
+									for (Pair<AlternativeService, Long> s : known) {
+										if (s.getValue1().isSame(service)) {
+											found = true;
+											s.getValue1().setMaxAge(service.getMaxAge());
+											s.setValue2(Long.valueOf(now));
+											break;
+										}
 									}
+									if (!found)
+										known.add(new Pair<>(service, Long.valueOf(now)));
 								}
-								if (!found)
-									known.add(new Pair<>(service, Long.valueOf(now)));
 							}
 						}
 					}
 				}
+			} catch (MimeException e) {
+				LCCore.getApplication().getLoggerFactory().getLogger(HTTPClient.class).error("Error parsing alternative services", e);
 			}
-		} catch (MimeException e) {
-			LCCore.getApplication().getLoggerFactory().getLogger(HTTPClient.class).error("Error parsing alternative services", e);
 		}
 	}
 	
@@ -286,15 +291,18 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		AsyncSupplier<HTTPClientConnection, IOException> result = new AsyncSupplier<>();
 		proxy.onDone(list -> {
 			if (list != null) {
+				if (logger.debug()) logger.debug("Using proxy to connect to " + ctx.getRequest().getHostname());
 				getConnection(list, true, ctx, result);
 				return;
 			}
+			if (logger.debug()) logger.debug("Using direct connexion to " + ctx.getRequest().getHostname());
 			AsyncSupplier<List<Resolution>, IOException> dns = NameService.resolveName(ctx.getRequest().getHostname());
 			dns.thenStart("Get best connection for HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
 				List<InetSocketAddress> addresses = new ArrayList<>(dns.getResult().size());
 				int port = ctx.getRequest().getPort();
 				for (Resolution r : dns.getResult())
 					addresses.add(new InetSocketAddress(r.getIp(), port));
+				if (logger.debug()) logger.debug("Host " + ctx.getRequest().getHostname() + " resolved into " + addresses);
 				getConnection(addresses, false, ctx, result);
 				return null;
 			}, ctx.getRequestSent());
@@ -409,7 +417,31 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 				return connection;
 			}
 		}
+		// if no open connection to one if the addresses, try to close an idle connection
+		if (nbOpenConnections.get() >= config.getLimits().getOpenConnections()) {
+			for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+				HTTPClientConnectionManager manager = connectionManagers.get(addr);
+				if (manager != null) continue;
+				// we have one address without connection
+				for (Map.Entry<InetSocketAddress, HTTPClientConnectionManager> entry : connectionManagers.entrySet()) {
+					manager = entry.getValue();
+					if (manager.closeOneIdleConnection()) {
+						if (logger.debug()) logger.debug("Close idle connection on " + manager.getAddress()
+							+ " to open a new one on " + addr);
+						nbOpenConnections.dec();
+						manager = new HTTPClientConnectionManager(this, addr, reservedFor.isThroughProxy(), config);
+						connectionManagers.put(addr, manager);
+						HTTPClientConnection connection = manager.createConnection(reservedFor);
+						nbOpenConnections.inc();
+						if (logger.debug()) logger.debug("New connection on " + addr + " for " + reservedFor);
+						connectionUsed(manager, reservedFor);
+						return connection;
+					}
+				}
+			}
+		}
 		// nothing available
+		if (logger.debug()) logger.debug("No connection available for " + reservedFor);
 		return null;
 	}
 	
@@ -457,6 +489,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	}
 	
 	private void dequeueRequest(HTTPClientConnectionManager manager) {
+		if (logger.debug()) logger.debug("Dequeue request for " + manager.getAddress());
 		synchronized (connectionManagers) {
 			if (queue.isEmpty())
 				return;

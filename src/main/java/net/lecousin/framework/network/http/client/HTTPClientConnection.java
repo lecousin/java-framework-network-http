@@ -53,5 +53,7 @@ public abstract class HTTPClientConnection implements AutoCloseable, Closeable {
 	 * @return true if the request is handled, false if it has not been sent and must be sent to another connection.
 	 */
 	public abstract AsyncSupplier<Boolean, NoException> sendReserved(HTTPClientRequestContext ctx);
+	
+	public abstract String getDescription();
 
 }

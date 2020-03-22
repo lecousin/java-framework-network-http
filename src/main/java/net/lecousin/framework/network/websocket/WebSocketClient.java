@@ -30,7 +30,7 @@ import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
 import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
 import net.lecousin.framework.util.DebugUtil;
-import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.Triple;
 
 /** Client for web socket protocol. */
 public class WebSocketClient implements Closeable {
@@ -65,14 +65,15 @@ public class WebSocketClient implements Closeable {
 	public AsyncSupplier<String, IOException> connect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
-		Pair<? extends TCPClient, IAsync<IOException>> connect;
+		Triple<? extends TCPClient, IAsync<IOException>, Boolean> connect;
 		try { connect = HTTP1ClientUtil.openConnection(hostname, port, secure, path, config, logger); }
 		catch (URISyntaxException e) {
 			return new AsyncSupplier<>(null, IO.error(e));
 		}
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
 		connect.getValue2().thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
-			() -> upgradeConnection(connect.getValue1(), hostname, port, secure, path, config, protocols, result), result);
+			() -> upgradeConnection(connect.getValue1(), hostname, port, secure, connect.getValue3().booleanValue(),
+				path, config, protocols, result), result);
 		result.onErrorOrCancel(() -> connect.getValue1().close());
 		return result;
 
@@ -83,7 +84,7 @@ public class WebSocketClient implements Closeable {
 		"java:S107" // number of parameters
 	})
 	private void upgradeConnection(
-		TCPClient client, String hostname, int port, boolean secure, String path, HTTPClientConfiguration config,
+		TCPClient client, String hostname, int port, boolean secure, boolean isUsingProxy, String path, HTTPClientConfiguration config,
 		String[] protocols, AsyncSupplier<String, IOException> result
 	) {
 		if (logger.debug())
@@ -129,7 +130,7 @@ public class WebSocketClient implements Closeable {
 		}
 		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
-		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, request, response, null, resp -> {
+		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, request, response, isUsingProxy, null, resp -> {
 			if (logger.debug())
 				logger.debug("Response received to upgrade request: " + response.getStatusCode());
 			if (response.getStatusCode() != 101) {

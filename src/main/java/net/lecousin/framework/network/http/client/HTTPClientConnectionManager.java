@@ -54,7 +54,14 @@ class HTTPClientConnectionManager {
 	}
 	
 	String getDescription() {
-		return "Connection to " + serverAddress + ": " + openConnections.size();
+		StringBuilder s = new StringBuilder(256);
+		s.append("Connection to ").append(serverAddress).append(": ");
+		synchronized (openConnections) {
+			s.append(openConnections.size());
+			for (HTTPClientConnection c : openConnections)
+				s.append("\n    - ").append(c.getDescription());
+		}
+		return s.toString();
 	}
 	
 	boolean isUsed() {
@@ -62,6 +69,18 @@ class HTTPClientConnectionManager {
 			for (HTTPClientConnection c : openConnections) {
 				if (c.getIdleTime() <= 0)
 					return true;
+			}
+		}
+		return false;
+	}
+	
+	boolean closeOneIdleConnection() {
+		synchronized (openConnections) {
+			for (HTTPClientConnection c : openConnections) {
+				if (c.getIdleTime() > 0) {
+					c.close();
+					return true;
+				}
 			}
 		}
 		return false;

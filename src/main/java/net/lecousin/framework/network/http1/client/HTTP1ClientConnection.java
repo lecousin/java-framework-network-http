@@ -98,6 +98,37 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	public long getIdleTime() {
 		return idleStart;
 	}
+	
+	@Override
+	public String getDescription() {
+		StringBuilder s = new StringBuilder(128);
+		if (idleStart > 0) {
+			s.append("idle since ").append((System.currentTimeMillis() - idleStart) / 1000).append("s.");
+			return s.toString();
+		}
+		synchronized (requests) {
+			s.append(requests.size()).append(" pending requests");
+			if (!requests.isEmpty()) {
+				Request r = requests.getFirst();
+				s.append(", first: ");
+				if (!r.headersSent.isDone())
+					s.append("waiting to send headers");
+				else if (r.ctx.getRequestBody() != null)
+					s.append("waiting to send body");
+				else if (!r.receiveStatusLine.isDone())
+					s.append("waiting for response status line");
+				else if (!r.receiveHeaders.isDone())
+					s.append("waiting for response headers");
+				else if (!r.ctx.getResponse().getBodyReceived().isDone())
+					s.append("waiting for response body");
+				else if (!r.ctx.getResponse().getTrailersReceived().isDone())
+					s.append("waiting for response trailers");
+				else
+					s.append("done");
+			}
+		}
+		return s.toString();
+	}
 
 	@Override
 	public void reserve(HTTPClientRequestContext reservedFor) {
@@ -446,7 +477,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	private boolean handleHeaders(Request r) {
 		try {
 			HTTPClient.addKnowledgeFromResponseHeaders(r.ctx.getRequest(), r.ctx.getResponse(),
-				(InetSocketAddress)tcp.getRemoteAddress());
+				(InetSocketAddress)tcp.getRemoteAddress(), r.ctx.isThroughProxy());
 		} catch (Exception e) {
 			logger.error("Unexpected error", e);
 		}

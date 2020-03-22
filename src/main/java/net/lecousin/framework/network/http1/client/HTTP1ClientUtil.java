@@ -47,6 +47,7 @@ import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.Triple;
 
 /**
  * HTTP/1 utility methods to interact with a HTTP/1 server directly.
@@ -57,23 +58,25 @@ public final class HTTP1ClientUtil {
 		// no instance
 	}
 
-	/** Open a connection, possibly through a proxy, to the given HTTP/1 server. 
+	/** Open a connection, possibly through a proxy, to the given HTTP/1 server.
+	 * It returns the TCPClient (which may be a SSLClient), the connection result, and a boolean indicating
+	 * if the connection is done through a proxy. 
 	 * @throws URISyntaxException if the path is relative
 	 */
-	public static Pair<? extends TCPClient, IAsync<IOException>> openConnection(
+	public static Triple<? extends TCPClient, IAsync<IOException>, Boolean> openConnection(
 		String hostname, int port, boolean isSecure, String path, HTTPClientConfiguration config, Logger logger
 	) throws URISyntaxException {
 		if (port <= 0) port = isSecure ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
 		ProxySelector proxySelector = config.getProxySelector();
 		if (proxySelector == null)
-			return openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger);
+			return triple(openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger), false);
 		URI uri = new URI(isSecure ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME, null, hostname, port, path, null, null);
 		List<Proxy> proxies = proxySelector.select(uri);
 		Proxy proxy = null;
 		for (Proxy p : proxies) {
 			switch (p.type()) {
 			case DIRECT:
-				return openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger);
+				return triple(openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger), false);
 			case HTTP:
 				if (proxy == null && p.address() instanceof InetSocketAddress)
 					proxy = p;
@@ -82,8 +85,14 @@ public final class HTTP1ClientUtil {
 			}
 		}
 		if (proxy == null)
-			return openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger);
-		return openTunnelOnProxy((InetSocketAddress)proxy.address(), hostname, port, isSecure, config, logger);
+			return triple(openDirectConnection(new InetSocketAddress(hostname, port), hostname, isSecure, config, logger), false);
+		return triple(openTunnelOnProxy((InetSocketAddress)proxy.address(), hostname, port, isSecure, config, logger), true);
+	}
+	
+	private static Triple<? extends TCPClient, IAsync<IOException>, Boolean> triple(
+		Pair<? extends TCPClient, IAsync<IOException>> pair, boolean isUsingProxy
+	) {
+		return new Triple<>(pair.getValue1(), pair.getValue2(), Boolean.valueOf(isUsingProxy));
 	}
 	
 	/** Open a direct connection to a HTTP/1 server. */
@@ -295,6 +304,7 @@ public final class HTTP1ClientUtil {
 		TCPClient client,
 		HTTPClientRequest request,
 		HTTPClientResponse response,
+		boolean isUsingProxy,
 		Function<HTTPClientResponse, Boolean> onStatusReceived,
 		Function<HTTPClientResponse, Boolean> onHeadersReceived,
 		MimeEntityFactory entityFactory,
@@ -307,10 +317,11 @@ public final class HTTP1ClientUtil {
 		response.setHeaders(new MimeHeaders());
 		MimeEntityFactory ef = entityFactory != null ? entityFactory : DefaultMimeEntityFactory.getInstance();
 		if (receiveStatusLine.isDone())
-			reveiceResponseHeaders(client, request, response, receiveStatusLine, ef, onStatusReceived, onHeadersReceived, config, logger);
+			reveiceResponseHeaders(client, request, response, isUsingProxy, receiveStatusLine, ef, onStatusReceived, onHeadersReceived,
+				config, logger);
 		else
 			receiveStatusLine.thenStart("Receive HTTP response", Task.getCurrentPriority(),
-				() -> reveiceResponseHeaders(client, request, response, receiveStatusLine, ef,
+				() -> reveiceResponseHeaders(client, request, response, isUsingProxy, receiveStatusLine, ef,
 					onStatusReceived, onHeadersReceived, config, logger),
 				true);
 	}
@@ -320,7 +331,7 @@ public final class HTTP1ClientUtil {
 		"java:S107" // number of parameters
 	})
 	private static void reveiceResponseHeaders(
-		TCPClient client, HTTPClientRequest request, HTTPClientResponse response,
+		TCPClient client, HTTPClientRequest request, HTTPClientResponse response, boolean isUsingProxy,
 		IAsync<IOException> receiveStatusLine,
 		MimeEntityFactory entityFactory,
 		Function<HTTPClientResponse, Boolean> onStatusReceived,
@@ -349,10 +360,11 @@ public final class HTTP1ClientUtil {
 					ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
 		IAsync<IOException> receiveHeaders = client.getReceiver().consume(headersConsumer, 4096, config.getTimeouts().getReceive());
 		if (receiveHeaders.isDone())
-			reveiceResponseBody(client, request, response, receiveHeaders, entityFactory, onHeadersReceived, config, logger);
+			reveiceResponseBody(client, request, response, isUsingProxy, receiveHeaders, entityFactory, onHeadersReceived, config,
+				logger);
 		else
 			receiveHeaders.thenStart("Receive HTTP response", Task.getCurrentPriority(),
-				() -> reveiceResponseBody(client, request, response, receiveHeaders, entityFactory, onHeadersReceived,
+				() -> reveiceResponseBody(client, request, response, isUsingProxy, receiveHeaders, entityFactory, onHeadersReceived,
 					config, logger), true);
 	}
 
@@ -362,6 +374,7 @@ public final class HTTP1ClientUtil {
 	})
 	private static void reveiceResponseBody(
 		TCPClient client, HTTPClientRequest request, HTTPClientResponse response,
+		boolean isUsingProxy,
 		IAsync<IOException> receiveHeaders,
 		MimeEntityFactory entityFactory,
 		Function<HTTPClientResponse, Boolean> onHeadersReceived,
@@ -385,7 +398,7 @@ public final class HTTP1ClientUtil {
 		}
 		
 		try {
-			HTTPClient.addKnowledgeFromResponseHeaders(request, response, (InetSocketAddress)client.getRemoteAddress());
+			HTTPClient.addKnowledgeFromResponseHeaders(request, response, (InetSocketAddress)client.getRemoteAddress(), isUsingProxy);
 		} catch (Exception e) {
 			logger.error("Unexpected error", e);
 		}
@@ -467,7 +480,7 @@ public final class HTTP1ClientUtil {
 		HTTPClientConfiguration config,
 		Logger logger
 	) {
-		Pair<? extends TCPClient, IAsync<IOException>> client;
+		Triple<? extends TCPClient, IAsync<IOException>, Boolean> client;
 		try {
 			client = openConnection(request.getHostname(), request.getPort(), request.isSecure(), request.getEncodedPath().asString(),
 				config, logger);
@@ -475,7 +488,7 @@ public final class HTTP1ClientUtil {
 			response.getHeadersReceived().error(IO.error(e));
 			return;
 		}
-		sendAndReceive(client.getValue1(), client.getValue2(), request, response, maxRedirections,
+		sendAndReceive(client.getValue1(), client.getValue2(), client.getValue3().booleanValue(), request, response, maxRedirections,
 			onStatusReceived, onHeadersReceived, entityFactory, config, logger);
 		response.getTrailersReceived().onDone(() -> client.getValue1().close());
 	}
@@ -483,7 +496,7 @@ public final class HTTP1ClientUtil {
 	/** Send request and receive response. */
 	@SuppressWarnings("java:S107") // number of parameters
 	public static void sendAndReceive(
-		TCPClient client, IAsync<IOException> connect,
+		TCPClient client, IAsync<IOException> connect, boolean isUsingProxy,
 		HTTPClientRequest request,
 		HTTPClientResponse response,
 		int maxRedirections,
@@ -494,10 +507,10 @@ public final class HTTP1ClientUtil {
 		Logger logger
 	) {
 		send(client, connect, request, response, config, logger).thenStart("Receive HTTP/1 response", Task.getCurrentPriority(), () ->
-			receiveResponse(client, request, response, onStatusReceived, resp -> {
-				if (handleRedirection(client, request, response, maxRedirections, config, logger,
+			receiveResponse(client, request, response, isUsingProxy, onStatusReceived, resp -> {
+				if (handleRedirection(client, isUsingProxy, request, response, maxRedirections, config, logger,
 					newClient -> sendAndReceive(
-						newClient.getValue1(), newClient.getValue2(),
+						newClient.getValue1(), newClient.getValue2(), newClient.getValue3().booleanValue(),
 						request, response, maxRedirections - 1,
 						onStatusReceived, onHeadersReceived, entityFactory, config, logger)))
 						return Boolean.FALSE;
@@ -509,11 +522,11 @@ public final class HTTP1ClientUtil {
 	
 	@SuppressWarnings({"java:S1141", "java:S107"}) // nested try and number of parameters
 	private static boolean handleRedirection(
-		TCPClient client,
+		TCPClient client, boolean isUsingProxy,
 		HTTPClientRequest request, HTTPClientResponse response, int maxRedirect,
 		HTTPClientConfiguration config,
 		Logger logger,
-		Consumer<Pair<? extends TCPClient, IAsync<IOException>>> doRedirection
+		Consumer<Triple<? extends TCPClient, IAsync<IOException>, Boolean>> doRedirection
 	) {
 		if (maxRedirect <= 0)
 			return false;
@@ -537,10 +550,10 @@ public final class HTTP1ClientUtil {
 			}
 			request.setURI(u);
 			if (isCompatible(u, client, request.getHostname(), request.getPort())) {
-				skipBody.onDone(() -> doRedirection.accept(new Pair<>(client, new Async<>(true))));
+				skipBody.onDone(() -> doRedirection.accept(new Triple<>(client, new Async<>(true), Boolean.valueOf(isUsingProxy))));
 				return true;
 			}
-			Pair<? extends TCPClient, IAsync<IOException>> newClient =
+			Triple<? extends TCPClient, IAsync<IOException>, Boolean> newClient =
 				openConnection(u.getHost(), u.getPort(), HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(u.getScheme()), u.getPath(),
 					config, logger);
 			skipBody.onDone(() -> doRedirection.accept(newClient));
