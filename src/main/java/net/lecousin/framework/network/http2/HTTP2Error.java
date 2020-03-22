@@ -32,7 +32,9 @@ public class HTTP2Error extends Exception {
 	/** HTTP/2 error codes defined by specification. */
 	public static final class Codes {
 		
-		private Codes() { /* no instance */ }
+		private Codes() {
+			/* no instance */
+		}
 		
 		public static final int NO_ERROR				= 0x00000000;
 		public static final int PROTOCOL_ERROR			= 0x00000001;

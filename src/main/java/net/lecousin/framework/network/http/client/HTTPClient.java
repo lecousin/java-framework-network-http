@@ -2,12 +2,10 @@ package net.lecousin.framework.network.http.client;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.rmi.ConnectException;
 import java.util.ArrayList;
@@ -20,6 +18,7 @@ import java.util.function.Supplier;
 
 import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.LCCore;
+import net.lecousin.framework.application.Version;
 import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.threads.Task;
@@ -30,11 +29,20 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.IMemoryManageable;
 import net.lecousin.framework.memory.MemoryManager;
 import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.cache.HostKnowledgeCache;
+import net.lecousin.framework.network.cache.HostPortKnowledge;
+import net.lecousin.framework.network.cache.HostProtocol;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
+import net.lecousin.framework.network.http.header.AlternativeService;
+import net.lecousin.framework.network.http.header.AlternativeServices;
+import net.lecousin.framework.network.mime.MimeException;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
+import net.lecousin.framework.network.name.NameService;
+import net.lecousin.framework.network.name.NameService.Resolution;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 
@@ -53,6 +61,72 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			 app.setInstance(HTTPClient.class, client);
 		 }
 		 return client;
+	}
+	
+	public static final String HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE = "HTTP-alternative-services";
+	
+	@SuppressWarnings("unchecked")
+	public static void addKnowledgeFromResponseHeaders(HTTPClientRequest request, HTTPClientResponse response, InetSocketAddress serverAddress) {
+		HostPortKnowledge k = HostKnowledgeCache.get().getOrCreateKnowledge(serverAddress);
+		k.used();
+		HostProtocol p = k.getOrCreateProtocolByName("HTTP");
+		MimeHeaders headers = response.getHeaders();
+		if (p.getImplementation() == null && headers.has(HTTPConstants.Headers.Response.SERVER))
+			p.setImplementation(headers.getFirstRawValue(HTTPConstants.Headers.Response.SERVER));
+		Version v = new Version("" + response.getProtocolVersion().getMajor() + '.' + response.getProtocolVersion().getMinor());
+		if (!p.getVersions().contains(v))
+			p.addVersion(v);
+		try {
+			List<AlternativeServices> alts = headers.getValues(AlternativeService.HEADER, AlternativeServices.class);
+			if (!alts.isEmpty()) {
+				Map<String, List<Pair<AlternativeService, Long>>> map;
+				synchronized (p) {
+					map = (Map<String, List<Pair<AlternativeService, Long>>>)
+						p.getAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE);
+					if (map == null) {
+						map = new HashMap<>(5);
+						p.setAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE, map);
+					}
+				}
+				synchronized (map) {
+					List<Pair<AlternativeService, Long>> known = map.get(request.getHostname());
+					if (known == null) {
+						known = new LinkedList<>();
+						map.put(request.getHostname(), known);
+					}
+					// clear expired
+					long now = System.currentTimeMillis();
+					for (Iterator<Pair<AlternativeService, Long>> it = known.iterator(); it.hasNext(); ) {
+						Pair<AlternativeService, Long> service = it.next();
+						if (service.getValue1().getMaxAge() > 0 &&
+							now - service.getValue2().longValue() > service.getValue1().getMaxAge())
+							it.remove();
+					}
+					// add new advertised services
+					for (AlternativeServices services : alts) {
+						for (AlternativeService service : services.getValues()) {
+							if ("clear".equals(service.getProtocolId()))
+								known.clear();
+							else {
+								boolean found = false;
+								for (Pair<AlternativeService, Long> s : known) {
+									if (s.getValue1().isSame(service)) {
+										found = true;
+										s.getValue1().setMaxAge(service.getMaxAge());
+										s.setValue2(Long.valueOf(now));
+										break;
+									}
+								}
+								if (!found)
+									known.add(new Pair<>(service, Long.valueOf(now)));
+							}
+						}
+					}
+				}
+			}
+		} catch (MimeException e) {
+			LCCore.getApplication().getLoggerFactory().getLogger(HTTPClient.class).error("Error parsing alternative services", e);
+		}
 	}
 	
 	/** Constructor. */
@@ -199,7 +273,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		connection.thenStart("Send HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel
-			connection.getResult().send(ctx).onDone(taken -> {
+			connection.getResult().sendReserved(ctx).onDone(taken -> {
 				if (!taken.booleanValue() && !retryToConnect(ctx))
 					queue.addFirst(ctx);
 			});
@@ -215,28 +289,62 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 				getConnection(list, true, ctx, result);
 				return;
 			}
-			Task.unmanaged("DNS resolution", Priority.NORMAL, t -> {
-				try {
-					InetAddress[] ips = InetAddress.getAllByName(ctx.getRequest().getHostname());
-					int port = ctx.getRequest().getPort();
-					List<InetSocketAddress> addresses = new ArrayList<>(ips.length);
-					for (InetAddress ip : ips)
-						addresses.add(new InetSocketAddress(ip, port));
-					getConnection(addresses, false, ctx, result);
-				} catch (UnknownHostException e) {
-					ctx.getRequestSent().error(e);
-				}
+			AsyncSupplier<List<Resolution>, IOException> dns = NameService.resolveName(ctx.getRequest().getHostname());
+			dns.thenStart("Get best connection for HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
+				List<InetSocketAddress> addresses = new ArrayList<>(dns.getResult().size());
+				int port = ctx.getRequest().getPort();
+				for (Resolution r : dns.getResult())
+					addresses.add(new InetSocketAddress(r.getIp(), port));
+				getConnection(addresses, false, ctx, result);
 				return null;
-			}).start();
+			}, ctx.getRequestSent());
 		}, ctx.getRequestSent());
 		return result;
 	}
 	
+	@SuppressWarnings("unchecked")
 	private void getConnection(
 		List<InetSocketAddress> list, boolean isProxy,
 		HTTPClientRequestContext ctx,
 		AsyncSupplier<HTTPClientConnection, IOException> result
 	) {
+		HostKnowledgeCache kcache = HostKnowledgeCache.get();
+		for (InetSocketAddress addr : list) {
+			HostPortKnowledge hp = kcache.getOrCreateKnowledge(addr);
+			HostProtocol p = hp.getProtocolByName("HTTP");
+			if (p != null) {
+				hp.used();
+				Map<String, List<Pair<AlternativeService, Long>>> map;
+				synchronized (p) {
+					map = (Map<String, List<Pair<AlternativeService, Long>>>)
+						p.getAttribute(HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE);
+				}
+				List<AlternativeService> alternatives = new LinkedList<>();
+				if (map != null) {
+					synchronized (map) {
+						List<Pair<AlternativeService, Long>> known = map.get(ctx.getRequest().getHostname());
+						if (known != null) {
+							// clear expired
+							long now = System.currentTimeMillis();
+							for (Iterator<Pair<AlternativeService, Long>> it = known.iterator(); it.hasNext(); ) {
+								Pair<AlternativeService, Long> service = it.next();
+								if (service.getValue1().getMaxAge() > 0 &&
+									now - service.getValue2().longValue() > service.getValue1().getMaxAge())
+									it.remove();
+								else
+									alternatives.add(service.getValue1());
+							}
+						}
+					}
+				}
+				// TODO handle alternatives
+				if (logger.debug())
+					logger.debug("Host " + addr + " is known to be implemented by "
+						+ p.getImplementation() + " with HTTP versions "
+						+ p.getVersions() + " having alternative services "
+						+ alternatives);
+			}
+		}
 		ctx.setRemoteAddresses(list);
 		ctx.setThroughProxy(isProxy);
 		synchronized (connectionManagers) {
@@ -386,7 +494,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			return false;
 		if (ctx.getRequestSent().isDone())
 			return true; // error or cancel
-		connection.send(ctx).onDone(taken -> {
+		connection.sendReserved(ctx).onDone(taken -> {
 			if (!taken.booleanValue())
 				Task.cpu("HTTP client retry to connect", Priority.NORMAL, t -> {
 					synchronized (connectionManagers) {

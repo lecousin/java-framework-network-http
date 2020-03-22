@@ -1,6 +1,7 @@
 package net.lecousin.framework.network.http1.client;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -25,6 +26,7 @@ import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
@@ -107,7 +109,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	}
 
 	@Override
-	public AsyncSupplier<Boolean, NoException> send(HTTPClientRequestContext ctx) {
+	public AsyncSupplier<Boolean, NoException> sendReserved(HTTPClientRequestContext ctx) {
 		synchronized (requests) {
 			if (stopping)
 				return new AsyncSupplier<>(Boolean.FALSE, null);
@@ -380,7 +382,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			}
 		}
 		
-		if (handleRedirection(r))
+		if (handleHeaders(r))
 			return;
 		
 		r.ctx.getResponse().getHeadersReceived().unblock();
@@ -439,6 +441,17 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			receiveBody.forwardIfNotSuccessful(r.ctx.getResponse().getBodyReceived());
 		});
 		doNextJob();
+	}
+	
+	private boolean handleHeaders(Request r) {
+		try {
+			HTTPClient.addKnowledgeFromResponseHeaders(r.ctx.getRequest(), r.ctx.getResponse(),
+				(InetSocketAddress)tcp.getRemoteAddress());
+		} catch (Exception e) {
+			logger.error("Unexpected error", e);
+		}
+		
+		return handleRedirection(r);
 	}
 	
 	private boolean handleRedirection(Request r) {

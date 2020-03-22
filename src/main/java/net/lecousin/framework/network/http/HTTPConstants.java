@@ -16,7 +16,9 @@ public final class HTTPConstants {
 	/** Constants for HTTP headers. */
 	public static class Headers {
 		
-		private Headers() { /* no instance */ }
+		private Headers() {
+			/* no instance */
+		}
 
 		public static final String CONNECTION = "Connection";
 
@@ -27,7 +29,9 @@ public final class HTTPConstants {
 		/** Constants for HTTP headers specific to clients. */
 		public static class Request extends Headers {
 
-			private Request() { /* no instance */ }
+			private Request() {
+				/* no instance */
+			}
 
 			public static final String ACCEPT_ENCODING = "Accept-Encoding";
 			public static final String HOST = "Host";
@@ -42,7 +46,9 @@ public final class HTTPConstants {
 		/** Constants for HTTP headers specific to servers. */
 		public static class Response extends Headers {
 
-			private Response() { /* no instance */ }
+			private Response() {
+				/* no instance */
+			}
 			
 			public static final String ACCEPT_RANGES = "Accept-Ranges";
 			public static final String CACHE_CONTROL = "Cache-Control";

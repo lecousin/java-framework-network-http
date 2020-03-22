@@ -8,7 +8,9 @@ import net.lecousin.framework.text.IString;
 /** Produce HTTP/1 request command line. */
 public final class HTTP1RequestCommandProducer {
 	
-	private HTTP1RequestCommandProducer() { /* no instance. */ }
+	private HTTP1RequestCommandProducer() {
+		/* no instance. */
+	}
 
 	/** Generate the command line. */
 	public static void generate(HTTPRequest request, IString s) {

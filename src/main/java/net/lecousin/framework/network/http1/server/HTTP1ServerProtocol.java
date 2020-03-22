@@ -29,6 +29,8 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.exception.HTTPError;
 import net.lecousin.framework.network.http.exception.HTTPException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
+import net.lecousin.framework.network.http.header.AlternativeService;
+import net.lecousin.framework.network.http.header.AlternativeServices;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
@@ -90,7 +92,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	private int maximumPendingRequestsByClient = 8;
 	private int maximumRequestProcessingTime = 60000;
 	private HTTPErrorHandler errorHandler = DefaultErrorHandler.getInstance();
-	private List<String> alternativeServices = new LinkedList<>(); // TODO max-age + persist
+	private List<AlternativeService> alternativeServices = new LinkedList<>();
 	
 	public HTTPRequestProcessor getProcessor() { return processor; }
 	
@@ -155,8 +157,8 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	}
 	
 	/** Add an alternative service to be sent to clients using Alt-Svc header on first response. */
-	public void addAlternativeService(String protocolId, String hostname, int port) {
-		alternativeServices.add(protocolId + "=" + "\"" + (hostname != null ? hostname : "") + ":" + port + "\"");
+	public void addAlternativeService(AlternativeService alternative) {
+		alternativeServices.add(alternative);
 	}
 	
 	@Override
@@ -383,14 +385,9 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 			if (first) {
 				first = false;
 				if (!alternativeServices.isEmpty()) {
-					StringBuilder alternatives = new StringBuilder();
-					for (String alt : alternativeServices) {
-						if (alternatives.length() > 0)
-							alternatives.append(',');
-						alternatives.append(alt);
-					}
-					alternatives.append("; ma=3600");
-					response.getHeaders().addRawValue("Alt-Svc", alternatives.toString());
+					AlternativeServices alt = new AlternativeServices();
+					alt.getValues().addAll(alternativeServices);
+					response.getHeaders().set(AlternativeService.HEADER, alt);
 				}
 			}
 			HTTPRequestContext ctx = new HTTPRequestContext(client, request, response, errorHandler);
@@ -428,11 +425,11 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		HTTP1ServerUpgradeProtocol proto = null;
 		
 		if (request.getHeaders().has(HTTPConstants.Headers.Request.UPGRADE)) {
-			String conn = request.getHeaders().getFirstRawValue(HTTPConstants.Headers.Request.CONNECTION);
+			String conn = request.getHeaders().getFirstRawValue(HTTPConstants.Headers.CONNECTION);
 			boolean isUpgrade = false;
 			if (conn != null)
 				for (String str : conn.split(","))
-					if (str.equalsIgnoreCase(HTTPConstants.Headers.Request.CONNECTION_VALUE_UPGRADE)) {
+					if (str.equalsIgnoreCase(HTTPConstants.Headers.CONNECTION_VALUE_UPGRADE)) {
 						isUpgrade = true;
 						break;
 					}

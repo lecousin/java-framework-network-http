@@ -6,7 +6,9 @@ import net.lecousin.framework.text.IString;
 /** Produce HTTP/1 response status line. */
 public final class HTTP1ResponseStatusProducer {
 	
-	private HTTP1ResponseStatusProducer() { /* no instance. */ }
+	private HTTP1ResponseStatusProducer() {
+		/* no instance. */
+	}
 
 	/** Generate the status line with protocol version, status, and message, without ending CRLF. */
 	public static void generate(HTTPResponse response, IString s) {

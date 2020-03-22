@@ -29,6 +29,7 @@ import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
+import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestFilter;
@@ -292,6 +293,7 @@ public final class HTTP1ClientUtil {
 	@SuppressWarnings("java:S4276") // we want a Boolean not a boolean
 	public static void receiveResponse(
 		TCPClient client,
+		HTTPClientRequest request,
 		HTTPClientResponse response,
 		Function<HTTPClientResponse, Boolean> onStatusReceived,
 		Function<HTTPClientResponse, Boolean> onHeadersReceived,
@@ -305,10 +307,10 @@ public final class HTTP1ClientUtil {
 		response.setHeaders(new MimeHeaders());
 		MimeEntityFactory ef = entityFactory != null ? entityFactory : DefaultMimeEntityFactory.getInstance();
 		if (receiveStatusLine.isDone())
-			reveiceResponseHeaders(client, response, receiveStatusLine, ef, onStatusReceived, onHeadersReceived, config, logger);
+			reveiceResponseHeaders(client, request, response, receiveStatusLine, ef, onStatusReceived, onHeadersReceived, config, logger);
 		else
 			receiveStatusLine.thenStart("Receive HTTP response", Task.getCurrentPriority(),
-				() -> reveiceResponseHeaders(client, response, receiveStatusLine, ef,
+				() -> reveiceResponseHeaders(client, request, response, receiveStatusLine, ef,
 					onStatusReceived, onHeadersReceived, config, logger),
 				true);
 	}
@@ -318,7 +320,7 @@ public final class HTTP1ClientUtil {
 		"java:S107" // number of parameters
 	})
 	private static void reveiceResponseHeaders(
-		TCPClient client, HTTPClientResponse response,
+		TCPClient client, HTTPClientRequest request, HTTPClientResponse response,
 		IAsync<IOException> receiveStatusLine,
 		MimeEntityFactory entityFactory,
 		Function<HTTPClientResponse, Boolean> onStatusReceived,
@@ -347,10 +349,11 @@ public final class HTTP1ClientUtil {
 					ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
 		IAsync<IOException> receiveHeaders = client.getReceiver().consume(headersConsumer, 4096, config.getTimeouts().getReceive());
 		if (receiveHeaders.isDone())
-			reveiceResponseBody(client, response, receiveHeaders, entityFactory, onHeadersReceived, config, logger);
+			reveiceResponseBody(client, request, response, receiveHeaders, entityFactory, onHeadersReceived, config, logger);
 		else
 			receiveHeaders.thenStart("Receive HTTP response", Task.getCurrentPriority(),
-				() -> reveiceResponseBody(client, response, receiveHeaders, entityFactory, onHeadersReceived, config, logger), true);
+				() -> reveiceResponseBody(client, request, response, receiveHeaders, entityFactory, onHeadersReceived,
+					config, logger), true);
 	}
 
 	@SuppressWarnings({
@@ -358,7 +361,7 @@ public final class HTTP1ClientUtil {
 		"java:S107" // number of parameters
 	})
 	private static void reveiceResponseBody(
-		TCPClient client, HTTPClientResponse response,
+		TCPClient client, HTTPClientRequest request, HTTPClientResponse response,
 		IAsync<IOException> receiveHeaders,
 		MimeEntityFactory entityFactory,
 		Function<HTTPClientResponse, Boolean> onHeadersReceived,
@@ -379,6 +382,12 @@ public final class HTTP1ClientUtil {
 					client.close();
 				return;
 			}
+		}
+		
+		try {
+			HTTPClient.addKnowledgeFromResponseHeaders(request, response, (InetSocketAddress)client.getRemoteAddress());
+		} catch (Exception e) {
+			logger.error("Unexpected error", e);
 		}
 		
 		response.getHeadersReceived().unblock();
@@ -485,7 +494,7 @@ public final class HTTP1ClientUtil {
 		Logger logger
 	) {
 		send(client, connect, request, response, config, logger).thenStart("Receive HTTP/1 response", Task.getCurrentPriority(), () ->
-			receiveResponse(client, response, onStatusReceived, resp -> {
+			receiveResponse(client, request, response, onStatusReceived, resp -> {
 				if (handleRedirection(client, request, response, maxRedirections, config, logger,
 					newClient -> sendAndReceive(
 						newClient.getValue1(), newClient.getValue2(),

@@ -21,7 +21,9 @@ public abstract class HTTP2Settings implements HTTP2Frame {
 	/** Identifier values for a setting. */
 	public static final class Identifiers {
 		
-		private Identifiers() { /* no instance */ }
+		private Identifiers() {
+			/* no instance */
+		}
 		
 		public static final int HEADER_TABLE_SIZE		= 0x0001;
 		public static final int ENABLE_PUSH				= 0x0002;
@@ -38,7 +40,9 @@ public abstract class HTTP2Settings implements HTTP2Frame {
 	/** Initial values for settings. */
 	public static final class DefaultValues {
 		
-		private DefaultValues() { /* no instance */ }
+		private DefaultValues() {
+			/* no instance */
+		}
 
 		public static final long HEADER_TABLE_SIZE		= 4096;
 		public static final long ENABLE_PUSH			= 1;

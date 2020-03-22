@@ -51,8 +51,8 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     
     <lc.core.version>0.20.4</lc.core.version>
-    <net.core.version>0.7.1</net.core.version>
-    <mime.version>0.5.1</mime.version>
+    <net.core.version>0.7.2</net.core.version>
+    <mime.version>0.5.2</mime.version>
     
     <sonar.test.exclusions>**/src/test/**/*</sonar.test.exclusions>
   </properties>

@@ -44,6 +44,7 @@ import net.lecousin.framework.network.test.AbstractNetworkTest;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
@@ -97,6 +98,11 @@ public class TestServer extends AbstractNetworkTest {
 			
 			ctx.getResponse().getReady().unblock();
 		}
+	}
+	
+	@Before
+	public void deactivateTraces() {
+		deactivateNetworkTraces();
 	}
 	
 	@Test
@@ -250,29 +256,32 @@ public class TestServer extends AbstractNetworkTest {
 			"GET /test/get?status=609 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
 			"GET /test/get?status=610 HTTP/1.1\r\nHost: localhost\r\n\r\n";
 		client.send(ByteBuffer.wrap(multiRequest.getBytes(StandardCharsets.US_ASCII)), 15000);
+		HTTPClientRequest req8 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=608");
 		HTTPClientResponse resp8 = new HTTPClientResponse();
+		HTTPClientRequest req9 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=609");
 		HTTPClientResponse resp9 = new HTTPClientResponse();
+		HTTPClientRequest req10 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=610");
 		HTTPClientResponse resp10 = new HTTPClientResponse();
 		
-		HTTP1ClientUtil.receiveResponse(client, resp1, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req1, resp1, null, null, null, config, logger);
 		resp1.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp2, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req2, resp2, null, null, null, config, logger);
 		resp2.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp3, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req3, resp3, null, null, null, config, logger);
 		resp3.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp4, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req4, resp4, null, null, null, config, logger);
 		resp4.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp5, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req5, resp5, null, null, null, config, logger);
 		resp5.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp6, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req6, resp6, null, null, null, config, logger);
 		resp6.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp7, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req7, resp7, null, null, null, config, logger);
 		resp7.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp8, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req8, resp8, null, null, null, config, logger);
 		resp8.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp9, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req9, resp9, null, null, null, config, logger);
 		resp9.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, resp10, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, req10, resp10, null, null, null, config, logger);
 		resp10.getTrailersReceived().blockThrow(0);
 		client.close();
 		
@@ -316,7 +325,7 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientResponse resp = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, resp, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), resp, null, null, null, config, logger);
 		resp.getTrailersReceived().blockThrow(0);
 		client.close();
 		
@@ -350,7 +359,7 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientResponse response = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, response, null, null, null, config, logger);
+		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), response, null, null, null, config, logger);
 		response.getTrailersReceived().blockThrow(0);
 		client.close();
 		Assert.assertEquals(expectedStatus, response.getStatusCode());

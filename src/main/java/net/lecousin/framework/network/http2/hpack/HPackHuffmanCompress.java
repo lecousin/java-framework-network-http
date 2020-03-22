@@ -7,7 +7,9 @@ import net.lecousin.framework.io.data.BytesBitsBuffer;
 /** HPack huffman compression. */
 public final class HPackHuffmanCompress {
 
-	private HPackHuffmanCompress() { /* no instance. */ }
+	private HPackHuffmanCompress() {
+		/* no instance. */
+	}
 	
 	/** Compress the given string into the buffer. */
 	public static void compress(CharSequence str, Bytes.Writable buffer) {

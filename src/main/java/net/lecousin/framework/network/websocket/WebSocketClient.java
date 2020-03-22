@@ -129,7 +129,7 @@ public class WebSocketClient implements Closeable {
 		}
 		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
-		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, response, null, resp -> {
+		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, request, response, null, resp -> {
 			if (logger.debug())
 				logger.debug("Response received to upgrade request: " + response.getStatusCode());
 			if (response.getStatusCode() != 101) {
