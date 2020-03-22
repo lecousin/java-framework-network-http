@@ -253,6 +253,9 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		else
 			bodyProducer = new AsyncSupplier<>(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()), null);
 		
+		// once request is done we can try to dequeue a request
+		ctx.getResponse().getTrailersReceived().thenStart("Dequeue HTTP request", Priority.NORMAL, () -> dequeueRequest(), true);
+		
 		bodyProducer.thenStart("Prepare HTTP request", Task.getCurrentPriority(), (Task<Void, NoException> t) -> {
 			sendRequest(ctx, connection, bodyProducer);
 			return null;
@@ -483,29 +486,17 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		return result;
 	}
 	
-	private void connectionUsed(HTTPClientConnectionManager manager, HTTPClientRequestContext ctx) {
+	private static void connectionUsed(HTTPClientConnectionManager manager, HTTPClientRequestContext ctx) {
 		ctx.getRemoteAddresses().remove(manager.getAddress());
-		ctx.getResponse().getTrailersReceived().thenStart("Dequeue HTTP request", Priority.NORMAL, () -> dequeueRequest(manager), true);
 	}
 	
-	private void dequeueRequest(HTTPClientConnectionManager manager) {
-		if (logger.debug()) logger.debug("Dequeue request for " + manager.getAddress());
+	private void dequeueRequest() {
+		if (logger.debug()) logger.debug("Dequeue request");
 		synchronized (connectionManagers) {
 			if (queue.isEmpty())
 				return;
 			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
 				HTTPClientRequestContext c = it.next();
-				if (!c.getRemoteAddresses().contains(manager.getAddress()))
-					continue;
-				if (retryToConnect(c)) {
-					it.remove();
-					return;
-				}
-			}
-			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
-				HTTPClientRequestContext c = it.next();
-				if (c.getRemoteAddresses().contains(manager.getAddress()))
-					continue;
 				if (retryToConnect(c)) {
 					it.remove();
 					return;

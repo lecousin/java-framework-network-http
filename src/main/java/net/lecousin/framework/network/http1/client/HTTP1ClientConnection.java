@@ -163,6 +163,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			HTTP1RequestCommandProducer.generate(request, headers);
 			headers.append("\r\n");
 			request.getHeaders().generateString(headers);
+			r.ctx.getRequestSent().onDone(this::doNextJob);
 			return headers.asByteBuffers();
 		}).start().getOutput();
 		r.headers.onDone(this::doNextJob);
@@ -218,7 +219,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				break;
 
 			// if we don't know yet if a subsequent request can be sent, wait 
-			if (previous != null && !previous.nextRequestCanBeSent)
+			if (previous != null && (!previous.nextRequestCanBeSent || !previous.ctx.getRequestSent().isDone()))
 				break;
 
 			// if headers are not yet sent, send them
@@ -237,22 +238,17 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			if (!r.headersSent.isSuccessful()) {
 				stopping = true;
 				if (logger.debug()) logger.debug("Error sending headers, stop connection", r.headersSent.getError());
-				if (!r.result.isDone())
-					unblockResult(r, Boolean.FALSE);
-				else {
-					final Request req = r;
-					Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, t -> {
-						req.headersSent.forwardIfNotSuccessful(req.ctx.getRequestSent());
-						return null;
-					}).start();
-				}
+				final Request req = r;
+				Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, t -> {
+					req.headersSent.forwardIfNotSuccessful(req.ctx.getRequestSent());
+					return null;
+				}).start();
 				it.remove();
 				continue; // cancel remaining pending requests
 			}
 			
 			// if we didn't start to send body yet
 			if (r.ctx.getRequestBody() != null) {
-				if (!r.result.isDone()) unblockResult(r, Boolean.TRUE);
 				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
 				r.ctx.setRequestBody(null);
 				// send body
