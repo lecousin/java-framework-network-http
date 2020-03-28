@@ -148,4 +148,50 @@ public class HTTP2FrameHeader {
 		buffer[offset] = (byte)(streamId & 0xFF);
 	}
 	
+	@Override
+	public String toString() {
+		StringBuilder s = new StringBuilder(128);
+		s.append('[');
+		s.append("stream ").append(streamId);
+		s.append(", type ").append(type).append(" = ");
+		switch (type) {
+		case TYPE_DATA:
+			s.append("DATA");
+			break;
+		case TYPE_HEADERS:
+			s.append("HEADERS");
+			break;
+		case TYPE_PRIORITY:
+			s.append("PRIORITY");
+			break;
+		case TYPE_RST_STREAM:
+			s.append("RST_STREAM");
+			break;
+		case TYPE_SETTINGS:
+			s.append("SETTINGS");
+			break;
+		case TYPE_PUSH_PROMISE:
+			s.append("PUSH_PROMISE");
+			break;
+		case TYPE_PING:
+			s.append("PING");
+			break;
+		case TYPE_GOAWAY:
+			s.append("GOAWAY");
+			break;
+		case TYPE_WINDOW_UPDATE:
+			s.append("WINDOW_UPDATE");
+			break;
+		case TYPE_CONTINUATION:
+			s.append("CONTINUATION");
+			break;
+		default:
+			s.append("unknown");
+			break;
+		}
+		s.append(", flags = ").append(flags);
+		s.append(", payload = ").append(payloadLength);
+		s.append(']');
+		return s.toString();
+	}
 }

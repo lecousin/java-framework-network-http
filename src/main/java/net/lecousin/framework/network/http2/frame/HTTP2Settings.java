@@ -9,9 +9,21 @@ import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.http2.HTTP2Error;
 
 /** Settings frame. */
-public abstract class HTTP2Settings implements HTTP2Frame {
+public class HTTP2Settings implements HTTP2Frame {
 	
 	public static final byte FLAG_ACK = 0x01;
+	
+	public HTTP2Settings() {
+	}
+	
+	public HTTP2Settings(HTTP2Settings copy) {
+		this.headerTableSize = copy.headerTableSize;
+		this.enablePush = copy.enablePush;
+		this.maxConcurrentStreams = copy.maxConcurrentStreams;
+		this.windowSize = copy.windowSize;
+		this.maxFrameSize = copy.maxFrameSize;
+		this.maxHeaderListSize = copy.maxHeaderListSize;
+	}
 	
 	@Override
 	public byte getType() {
@@ -77,48 +89,54 @@ public abstract class HTTP2Settings implements HTTP2Frame {
 		return headerTableSize != null ? headerTableSize.longValue() : DefaultValues.HEADER_TABLE_SIZE;
 	}
 	
-	public void setHeaderTableSize(long headerTableSize) {
+	public HTTP2Settings setHeaderTableSize(long headerTableSize) {
 		this.headerTableSize = Long.valueOf(headerTableSize);
+		return this;
 	}
 	
 	public boolean isEnablePush() {
 		return enablePush != null ? enablePush.booleanValue() : DefaultValues.ENABLE_PUSH != 0;
 	}
 	
-	public void setEnablePush(boolean enablePush) {
+	public HTTP2Settings setEnablePush(boolean enablePush) {
 		this.enablePush = Boolean.valueOf(enablePush);
+		return this;
 	}
 	
 	public long getMaxConcurrentStreams() {
 		return maxConcurrentStreams != null ? maxConcurrentStreams.longValue() : DefaultValues.MAX_CONCURRENT_STREAMS;
 	}
 	
-	public void setMaxConcurrentStreams(long maxConcurrentStreams) {
+	public HTTP2Settings setMaxConcurrentStreams(long maxConcurrentStreams) {
 		this.maxConcurrentStreams = Long.valueOf(maxConcurrentStreams);
+		return this;
 	}
 	
 	public long getWindowSize() {
 		return windowSize != null ? windowSize.longValue() : DefaultValues.INITIAL_WINDOW_SIZE;
 	}
 	
-	public void setWindowSize(long windowSize) {
+	public HTTP2Settings setWindowSize(long windowSize) {
 		this.windowSize = Long.valueOf(windowSize);
+		return this;
 	}
 	
 	public long getMaxFrameSize() {
 		return maxFrameSize != null ? maxFrameSize.longValue() : DefaultValues.MAX_FRAME_SIZE;
 	}
 	
-	public void setMaxFrameSize(long maxFrameSize) {
+	public HTTP2Settings setMaxFrameSize(long maxFrameSize) {
 		this.maxFrameSize = Long.valueOf(maxFrameSize);
+		return this;
 	}
 	
 	public long getMaxHeaderListSize() {
 		return maxHeaderListSize != null ? maxHeaderListSize.longValue() : DefaultValues.MAX_HEADER_LIST_SIZE;
 	}
 
-	public void setMaxHeaderListSize(long maxHeaderListSize) {
+	public HTTP2Settings setMaxHeaderListSize(long maxHeaderListSize) {
 		this.maxHeaderListSize = Long.valueOf(maxHeaderListSize);
+		return this;
 	}
 	
 	/** Return the value of the given identifier, or -2 if unknown. */
@@ -225,6 +243,10 @@ public abstract class HTTP2Settings implements HTTP2Frame {
 		}
 		
 	}
+	
+	public Writer writer() {
+		return new Writer(this);
+	}
 
 	/** HTTP/2 settings frame writer. */
 	public static class Writer extends HTTP2Settings implements HTTP2Frame.Writer {
@@ -233,7 +255,22 @@ public abstract class HTTP2Settings implements HTTP2Frame {
 		private boolean produced = false;
 		
 		/** Constructor. */
+		public Writer() {
+		}
+		
+		/** Constructor. */
+		public Writer(HTTP2Settings copy) {
+			super(copy);
+		}
+		
+		/** Constructor. */
 		public Writer(boolean onlyNonDefaultValue) {
+			this.onlyNonDefaultValue = onlyNonDefaultValue;
+		}
+		
+		/** Constructor. */
+		public Writer(HTTP2Settings copy, boolean onlyNonDefaultValue) {
+			super(copy);
 			this.onlyNonDefaultValue = onlyNonDefaultValue;
 		}
 		

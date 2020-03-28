@@ -17,6 +17,7 @@ import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.AsyncSupplier.Listener;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
@@ -26,10 +27,10 @@ import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
-import net.lecousin.framework.network.http.client.HTTPClientResponse;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
-import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
+import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.util.DebugUtil;
+import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
 /** Client for web socket protocol. */
@@ -66,7 +67,7 @@ public class WebSocketClient implements Closeable {
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
 		Triple<? extends TCPClient, IAsync<IOException>, Boolean> connect;
-		try { connect = HTTP1ClientUtil.openConnection(hostname, port, secure, path, config, logger); }
+		try { connect = HTTP1ClientConnection.openConnection(hostname, port, secure, path, config, logger); }
 		catch (URISyntaxException e) {
 			return new AsyncSupplier<>(null, IO.error(e));
 		}
@@ -113,10 +114,6 @@ public class WebSocketClient implements Closeable {
 		// set version
 		request.addHeader("Sec-WebSocket-Version", "13");
 		
-		// send HTTP request
-		HTTPClientResponse response = new HTTPClientResponse();
-		Async<IOException> send = HTTP1ClientUtil.send(client, new Async<>(true), request, response, config, logger);
-		
 		// calculate the expected accept key
 		String acceptKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 		byte[] buf;
@@ -130,7 +127,11 @@ public class WebSocketClient implements Closeable {
 		}
 		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
-		send.onDone(() -> HTTP1ClientUtil.receiveResponse(client, request, response, isUsingProxy, null, resp -> {
+		// send HTTP request
+		HTTP1ClientConnection sender = new HTTP1ClientConnection(client, new Async<>(true), 1, config);
+		HTTPClientRequestContext ctx = new HTTPClientRequestContext(sender, request);
+		ctx.setRequestBody(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()));
+		ctx.setOnHeadersReceived(response -> {
 			if (logger.debug())
 				logger.debug("Response received to upgrade request: " + response.getStatusCode());
 			if (response.getStatusCode() != 101) {
@@ -157,7 +158,10 @@ public class WebSocketClient implements Closeable {
 			conn = client;
 			result.unblockSuccess(protocol);
 			return Boolean.FALSE;
-		}, DefaultMimeEntityFactory.getInstance(), config, logger), result);
+		});
+		ctx.setThroughProxy(isUsingProxy);
+		sender.reserve(ctx);
+		sender.sendReserved(ctx);
 	}
 
 	private WebSocketDataFrame currentFrame = null;

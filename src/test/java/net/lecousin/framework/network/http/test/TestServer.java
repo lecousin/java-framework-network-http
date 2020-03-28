@@ -30,7 +30,7 @@ import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
@@ -226,7 +226,7 @@ public class TestServer extends AbstractNetworkTest {
 		// open connection
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientUtil.openConnection(
+		Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
 			"localhost", serverPort, false, "/test/get?status=200&test=hello", config, logger);
 		TCPClient client = conn.getValue1();
 		IAsync<IOException> connection = conn.getValue2();
@@ -238,52 +238,45 @@ public class TestServer extends AbstractNetworkTest {
 		HTTPClientRequest req5 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=605");
 		HTTPClientRequest req6 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=606");
 		HTTPClientRequest req7 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=607");
-		HTTPClientResponse resp1 = new HTTPClientResponse();
-		HTTPClientResponse resp2 = new HTTPClientResponse();
-		HTTPClientResponse resp3 = new HTTPClientResponse();
-		HTTPClientResponse resp4 = new HTTPClientResponse();
-		HTTPClientResponse resp5 = new HTTPClientResponse();
-		HTTPClientResponse resp6 = new HTTPClientResponse();
-		HTTPClientResponse resp7 = new HTTPClientResponse();
-		HTTP1ClientUtil.send(client, connection, req1, resp1, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req2, resp2, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req3, resp3, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req4, resp4, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req5, resp5, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req6, resp6, config, logger).blockThrow(0);
-		HTTP1ClientUtil.send(client, connection, req7, resp7, config, logger).blockThrow(0);
+		HTTPClientRequest req8 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=608");
+		HTTPClientRequest req9 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=609");
+		HTTPClientRequest req10 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=610");
+
 		String multiRequest =
+			"GET /test/get?status=200&test=hello HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=602 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=603 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=604 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=605 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=606 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /test/get?status=607 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
 			"GET /test/get?status=608 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
 			"GET /test/get?status=609 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
 			"GET /test/get?status=610 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+		connection.blockThrow(0);
 		client.send(ByteBuffer.wrap(multiRequest.getBytes(StandardCharsets.US_ASCII)), 15000);
-		HTTPClientRequest req8 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=608");
-		HTTPClientResponse resp8 = new HTTPClientResponse();
-		HTTPClientRequest req9 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=609");
-		HTTPClientResponse resp9 = new HTTPClientResponse();
-		HTTPClientRequest req10 = new HTTPClientRequest("localhost", serverPort, false).get("/test/get?status=610");
-		HTTPClientResponse resp10 = new HTTPClientResponse();
 		
-		HTTP1ClientUtil.receiveResponse(client, req1, resp1, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp1 = HTTP1ClientConnection.receiveResponse(client, req1, config);
 		resp1.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req2, resp2, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp2 = HTTP1ClientConnection.receiveResponse(client, req2, config);
 		resp2.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req3, resp3, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp3 = HTTP1ClientConnection.receiveResponse(client, req3, config);
 		resp3.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req4, resp4, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp4 = HTTP1ClientConnection.receiveResponse(client, req4, config);
 		resp4.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req5, resp5, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp5 = HTTP1ClientConnection.receiveResponse(client, req5, config);
 		resp5.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req6, resp6, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp6 = HTTP1ClientConnection.receiveResponse(client, req6, config);
 		resp6.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req7, resp7, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp7 = HTTP1ClientConnection.receiveResponse(client, req7, config);
 		resp7.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req8, resp8, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp8 = HTTP1ClientConnection.receiveResponse(client, req8, config);
 		resp8.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req9, resp9, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp9 = HTTP1ClientConnection.receiveResponse(client, req9, config);
 		resp9.getTrailersReceived().blockThrow(0);
-		HTTP1ClientUtil.receiveResponse(client, req10, resp10, conn.getValue3().booleanValue(), null, null, null, config, logger);
+		HTTPClientResponse resp10 = HTTP1ClientConnection.receiveResponse(client, req10, config);
 		resp10.getTrailersReceived().blockThrow(0);
+		
 		client.close();
 		
 		check(resp1, 200, "hello");
@@ -323,10 +316,8 @@ public class TestServer extends AbstractNetworkTest {
 			client.send(ByteBuffer.wrap(buf, i, len).asReadOnlyBuffer(), 10000);
 			Thread.sleep(100);
 		}
-		HTTPClientResponse resp = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
-		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), resp, false, null, null, null, config, logger);
+		HTTPClientResponse resp = HTTP1ClientConnection.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), config);
 		resp.getTrailersReceived().blockThrow(0);
 		client.close();
 		
@@ -357,10 +348,8 @@ public class TestServer extends AbstractNetworkTest {
 		TCPClient client = new TCPClient();
 		client.connect(new InetSocketAddress("localhost", serverPort), 10000).blockThrow(0);
 		client.send(ByteBuffer.wrap(request.getBytes(StandardCharsets.US_ASCII)), 10000);
-		HTTPClientResponse response = new HTTPClientResponse();
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
-		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-		HTTP1ClientUtil.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), response, false, null, null, null, config, logger);
+		HTTPClientResponse response = HTTP1ClientConnection.receiveResponse(client, new HTTPClientRequest("localhost", serverPort, false), config);
 		response.getTrailersReceived().blockThrow(0);
 		client.close();
 		Assert.assertEquals(expectedStatus, response.getStatusCode());
@@ -403,18 +392,16 @@ public class TestServer extends AbstractNetworkTest {
 			// open connection
 			HTTPClientConfiguration config = new HTTPClientConfiguration();
 			Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestServer.class);
-			Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientUtil.openConnection(
+			Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
 				"localhost", serverAddress.getPort(), false, "/", config, logger);
-			IAsync<IOException> connection = conn.getValue2();
 			
-			try (TCPClient client = conn.getValue1()) {
+			try (HTTP1ClientConnection http = new HTTP1ClientConnection(conn.getValue1(), conn.getValue2(), 1, config)) {
 				HTTPClientRequest request;
 				HTTPClientResponse response;
 	
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=-2");
-				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
+				response = http.send(request);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				String s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -422,8 +409,7 @@ public class TestServer extends AbstractNetworkTest {
 				
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=3-6");
-				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
+				response = http.send(request);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -431,8 +417,7 @@ public class TestServer extends AbstractNetworkTest {
 				
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=12-");
-				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
+				response = http.send(request);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
@@ -440,8 +425,7 @@ public class TestServer extends AbstractNetworkTest {
 				
 				request = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get();
 				request.setDecodedPath("/myresource.txt").setHeader("Range", "bytes=3-6,12-");
-				response = new HTTPClientResponse();
-				HTTP1ClientUtil.sendAndReceive(client, connection, conn.getValue3().booleanValue(), request, response, 0, null, null, null, config, logger);
+				response = http.send(request);
 				response.getTrailersReceived().blockThrow(0);
 				Assert.assertEquals(206, response.getStatusCode());
 				Assert.assertEquals(MultipartEntity.class, response.getEntity().getClass());
@@ -461,7 +445,7 @@ public class TestServer extends AbstractNetworkTest {
 			server.setProtocol(new HTTP1ServerProtocol(new StaticProcessor("net/lecousin/framework/network/http/test", null)));
 			InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 
-			HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(new HTTPClientRequest(serverAddress, false).get("/myresource.txt"), 0, BinaryEntity::new, new HTTPClientConfiguration());
+			HTTPClientResponse response = HTTP1ClientConnection.send(new HTTPClientRequest(serverAddress, false).get("/myresource.txt"), 0, BinaryEntity::new, new HTTPClientConfiguration());
 			response.getTrailersReceived().blockThrow(0);
 			String s = IOUtil.readFullyAsStringSync(((BinaryEntity)response.getEntity()).getContent(), StandardCharsets.US_ASCII);
 			Assert.assertEquals("This is my resource", s);
@@ -480,7 +464,7 @@ public class TestServer extends AbstractNetworkTest {
 			for (int i = 0; i < buf.length; ++i)
 				buf[i] = (byte)(i * 7 % 621);
 
-			HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(new HTTPClientRequest(serverAddress, false).post("/test/post?status=200", new BinaryEntity(new ByteArrayIO(buf, "test"))), 0, BinaryEntity::new, new HTTPClientConfiguration());
+			HTTPClientResponse response = HTTP1ClientConnection.send(new HTTPClientRequest(serverAddress, false).post("/test/post?status=200", new BinaryEntity(new ByteArrayIO(buf, "test"))), 0, BinaryEntity::new, new HTTPClientConfiguration());
 			response.getTrailersReceived().blockThrow(0);
 			PreBufferedReadable bio = new PreBufferedReadable(((BinaryEntity)response.getEntity()).getContent(), 8192, Task.Priority.NORMAL, 16384, Task.Priority.NORMAL, 10);
 			for (int i = 0; i < buf.length; ++i)
@@ -518,7 +502,7 @@ public class TestServer extends AbstractNetworkTest {
 			server.setProtocol(new HTTP1ServerProtocol(new TestTrailerTimeProcessor()));
 			InetSocketAddress serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 	
-			HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(new HTTPClientRequest(serverAddress, false).get("/tutu"), 0, BinaryEntity::new, new HTTPClientConfiguration());
+			HTTPClientResponse response = HTTP1ClientConnection.send(new HTTPClientRequest(serverAddress, false).get("/tutu"), 0, BinaryEntity::new, new HTTPClientConfiguration());
 			response.getTrailersReceived().blockThrow(0);
 			Assert.assertTrue(response.getHeaders().has("X-Time-Start"));
 			Assert.assertTrue(response.getHeaders().has("X-Time-Send"));

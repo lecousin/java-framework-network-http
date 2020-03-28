@@ -23,7 +23,7 @@ import net.lecousin.framework.network.http.server.HTTPRequestFilter;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor.Filter;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.server.TCPServer;
@@ -59,7 +59,7 @@ public class TestProxy extends LCCoreAbstractTest {
 	@Test
 	public void testHttp() throws Exception {
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("http://" + HttpBin.HTTP_BIN_DOMAIN + "/get");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(200, response.getStatusCode());
 		new HttpBin.CheckJSONResponse().check(request, response, null);
@@ -69,7 +69,7 @@ public class TestProxy extends LCCoreAbstractTest {
 	public void testHttpsNotAllowed() throws Exception {
 		processor.allowForwardFromHttpToHttps(false);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("https://" + HttpBin.HTTP_BIN_DOMAIN + "/get");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 	}
@@ -78,7 +78,7 @@ public class TestProxy extends LCCoreAbstractTest {
 	public void testHttpsAllowed() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("https://" + HttpBin.HTTP_BIN_DOMAIN + "/get");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(200, response.getStatusCode());
 		new HttpBin.CheckJSONResponse().check(request, response, null);
@@ -88,7 +88,7 @@ public class TestProxy extends LCCoreAbstractTest {
 	public void testInvalidProtocol() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("ftp://google.com");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 	}
@@ -98,7 +98,7 @@ public class TestProxy extends LCCoreAbstractTest {
 		processor.allowForwardFromHttpToHttps(true);
 		LCCore.getApplication().getLoggerFactory().getLogger("test-proxy").setLevel(Level.INFO);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("hello");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 	}
@@ -107,7 +107,7 @@ public class TestProxy extends LCCoreAbstractTest {
 	public void testEmptyURL() throws Exception {
 		processor.allowForwardFromHttpToHttps(true);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(400, response.getStatusCode());
 	}
@@ -128,7 +128,7 @@ public class TestProxy extends LCCoreAbstractTest {
 		});
 		processor.allowForwardFromHttpToHttps(true);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("https://" + HttpBin.HTTP_BIN_DOMAIN + "/get");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(200, response.getStatusCode());
 	}
@@ -149,7 +149,7 @@ public class TestProxy extends LCCoreAbstractTest {
 		});
 		processor.allowConnectMethod(false);
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("https://" + HttpBin.HTTP_BIN_DOMAIN + "/get");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 	}
@@ -171,19 +171,19 @@ public class TestProxy extends LCCoreAbstractTest {
 		});
 
 		HTTPClientRequest request = new HTTPClientRequest("localhost", serverPort, false).get("/titi");
-		HTTPClientResponse response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		HTTPClientResponse response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(200, response.getStatusCode());
 		Assert.assertEquals("application/json", response.getHeaders().getFirst("Content-Type").getRawValue());
 
 		request = new HTTPClientRequest("localhost", serverPort, false).get("/tutu");
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(200, response.getStatusCode());
 		Assert.assertEquals("application/json", response.getHeaders().getFirst("Content-Type").getRawValue());
 		
 		request = new HTTPClientRequest("localhost", serverPort, false).get("/toto");
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
+		response = HTTP1ClientConnection.send(request, 0, BinaryEntity::new, new HTTPClientConfiguration());
 		response.getBodyReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 	}

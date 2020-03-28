@@ -154,6 +154,8 @@ public abstract class HTTP2Headers extends HTTP2Priority {
 					}
 
 					decompressionContext.consume(b, mimeHeaders, pseudoHeaderHandler);
+					if (b != data)
+						data.position(b.position());
 
 					pos += len;
 					if (pos < size)
@@ -237,18 +239,19 @@ public abstract class HTTP2Headers extends HTTP2Priority {
 				Pair<String, String> header = headers.get(0);
 				if (!compressor.compress(header.getValue1(), header.getValue2(), true, true, buffer))
 					break;
+				headers.remove(0);
 			}
 			byte flags = 0;
 			if (isEndOfStream && firstFrame)
 				flags |= FLAG_END_STREAM;
 			if (headers.isEmpty())
 				flags |= FLAG_END_HEADERS;
-			HTTP2FrameHeader.write(b, 0, buffer.position() - HTTP2FrameHeader.LENGTH,
+			HTTP2FrameHeader.write(b, 0, buffer.position(),
 				firstFrame ? HTTP2FrameHeader.TYPE_HEADERS : HTTP2FrameHeader.TYPE_CONTINUATION, flags, streamId);
 			firstFrame = false;
 			if (headers.isEmpty() && onFramesProduced != null)
 				onFramesProduced.run();
-			return new ByteArray(b, 0, buffer.position());
+			return new ByteArray(b, 0, buffer.position() + HTTP2FrameHeader.LENGTH);
 		}
 		
 	}

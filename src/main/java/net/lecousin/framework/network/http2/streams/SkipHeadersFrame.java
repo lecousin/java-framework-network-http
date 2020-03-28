@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http2.server;
+package net.lecousin.framework.network.http2.streams;
 
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http2.HTTP2Error;
@@ -16,25 +16,24 @@ class SkipHeadersFrame extends StreamHandler.Default {
 	}
 	
 	@Override
-	public boolean startFrame(ClientStreamsManager clientManager, HTTP2FrameHeader header) {
+	public boolean startFrame(StreamsManager manager, HTTP2FrameHeader header) {
 		if (header.getPayloadLength() == 0) {
-			if (clientManager.currentDecompressionStreamId == streamId)
-				clientManager.currentDecompressionStreamId = -1;
+			if (manager.currentDecompressionStreamId == streamId)
+				manager.currentDecompressionStreamId = -1;
 		}
 
 		// we need to consume using decompressionContext
-		if (clientManager.currentDecompressionStreamId != -1 && clientManager.currentDecompressionStreamId != streamId) {
-			HTTP2ServerProtocol.connectionError(clientManager.client, HTTP2Error.Codes.PROTOCOL_ERROR,
-				"No concurrency is allowed for headers transmission");
+		if (manager.currentDecompressionStreamId != -1 && manager.currentDecompressionStreamId != streamId) {
+			manager.connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "No concurrency is allowed for headers transmission");
 			return false;
 		}
 		
-		clientManager.currentDecompressionStreamId = streamId;
+		manager.currentDecompressionStreamId = streamId;
 		HTTPRequest r = new HTTPRequest();
 		frame = header.getType() == HTTP2FrameHeader.TYPE_HEADERS
-			? new HTTP2Headers.Reader(header, clientManager.decompressionContext,
+			? new HTTP2Headers.Reader(header, manager.decompressionContext,
 				r.getHeaders(), new HTTP2PseudoHeaderHandler.Request(r))
-			: new HTTP2Continuation.Reader(header, clientManager.decompressionContext,
+			: new HTTP2Continuation.Reader(header, manager.decompressionContext,
 				r.getHeaders(), new HTTP2PseudoHeaderHandler.Request(r));
 		payloadConsumer = frame.createConsumer();
 
@@ -42,7 +41,7 @@ class SkipHeadersFrame extends StreamHandler.Default {
 	}
 	
 	@Override
-	protected void onEndOfPayload(ClientStreamsManager clientManager, HTTP2FrameHeader header) {
-		clientManager.currentDecompressionStreamId = -1;
+	protected void onEndOfPayload(StreamsManager manager, HTTP2FrameHeader header) {
+		manager.currentDecompressionStreamId = -1;
 	}
 }

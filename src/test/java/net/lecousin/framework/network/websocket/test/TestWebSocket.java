@@ -40,7 +40,7 @@ import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
@@ -481,7 +481,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 		request.get("/test").setHeaders(new MimeHeaders(
 			new MimeHeader("Upgrade", "websocket")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 
@@ -490,7 +490,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
 			new MimeHeader("Upgrade", "websocket")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(400, response.getStatusCode());
 
@@ -499,7 +499,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader(HTTPConstants.Headers.CONNECTION, "Upgrade"),
 			new MimeHeader("Upgrade", "unknown")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(404, response.getStatusCode());
 
@@ -509,7 +509,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader("Upgrade", "websocket"),
 			new MimeHeader("Sec-WebSocket-Key", "hello")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(400, response.getStatusCode());
 
@@ -519,7 +519,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader("Upgrade", "websocket"),
 			new MimeHeader("Sec-WebSocket-Key", "")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(400, response.getStatusCode());
 
@@ -530,7 +530,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader("Sec-WebSocket-Key", "hello"),
 			new MimeHeader("Sec-WebSocket-Version", "51")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 		Assert.assertEquals(400, response.getStatusCode());
 
@@ -541,7 +541,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			new MimeHeader("Sec-WebSocket-Key", "hello"),
 			new MimeHeader("Sec-WebSocket-Version", "")
 		));
-		response = HTTP1ClientUtil.sendAndReceive(request, 0, null, config);
+		response = HTTP1ClientConnection.send(request, config);
 		response.getHeadersReceived().blockThrow(0);
 	}
 }

@@ -2,15 +2,13 @@ package net.lecousin.framework.network.http1.test;
 
 import java.util.Collection;
 
-import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.core.test.runners.LCConcurrentRunner;
-import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -38,11 +36,8 @@ public class TestHTTP1ClientToHttpBin extends LCCoreAbstractTest {
 	
 	@Test
 	public void test() throws Exception {
-		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHTTP1ClientToHttpBin.class);
-		//logger.setLevel(Level.TRACE);
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
-		HTTPClientResponse response = new HTTPClientResponse();
-		HTTP1ClientUtil.sendAndReceive(test.request, response, test.maxRedirection, null, null, null, config, logger);
+		HTTPClientResponse response = HTTP1ClientConnection.send(test.request, test.maxRedirection, null, config);
 		response.getTrailersReceived().blockThrow(0);
 		test.check(response, null);
 	}

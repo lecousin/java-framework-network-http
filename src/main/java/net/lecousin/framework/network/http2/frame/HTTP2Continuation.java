@@ -73,6 +73,7 @@ public abstract class HTTP2Continuation implements HTTP2Frame {
 				return new AsyncSupplier<>(Boolean.TRUE, null);
 			}
 		}
+		
 	}
 
 }

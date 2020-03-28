@@ -33,7 +33,7 @@ public final class HPackHuffmanCompress {
 	private static void encode(int charValue, BitsBuffer.Writable bits) {
 		int v = table[charValue * 2];
 		int m = table[charValue * 2 + 1];
-		m = 1 << m;
+		m = 1 << (m - 1);
 		do {
 			bits.put((v & m) != 0);
 			m >>= 1;

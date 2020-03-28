@@ -10,6 +10,8 @@ public class EnsureHostFilter implements HTTPClientRequestFilter {
 
 	@Override
 	public void filter(HTTPClientRequest request, HTTPClientResponse response) {
+		if (request.getProtocolVersion().getMajor() > 1)
+			return;
 		if (request.getPort() != HTTPConstants.DEFAULT_HTTP_PORT)
 			request.getHeaders().setRawValue(HTTPConstants.Headers.Request.HOST, request.getHostname() + ":" + request.getPort());
 		else

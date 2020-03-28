@@ -3,6 +3,7 @@ package net.lecousin.framework.network.http.client;
 import java.io.Closeable;
 import java.io.IOException;
 
+import net.lecousin.framework.concurrent.CancelException;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.exception.NoException;
@@ -11,20 +12,24 @@ import net.lecousin.framework.network.client.TCPClient;
 /** Abstract class to handle a connection to a HTTP server, with capability
  * to queue requests or to send several requests in parallel. 
  */
-public abstract class HTTPClientConnection implements AutoCloseable, Closeable {
+public abstract class HTTPClientConnection implements AutoCloseable, Closeable, HTTPClientRequestSender {
 
 	/** Constructor. */
-	public HTTPClientConnection(TCPClient tcp, IAsync<IOException> connect) {
-		this.tcp = tcp;
-		this.connect = connect;
+	public HTTPClientConnection() {
+		// nothing
 	}
-	
+
 	protected TCPClient tcp;
 	protected IAsync<IOException> connect;
 	protected boolean stopping = false;
 	
+	public void setConnection(TCPClient tcp, IAsync<IOException> connect) {
+		this.tcp = tcp;
+		this.connect = connect;
+	}
+	
 	public boolean isConnected() {
-		return !stopping && connect.isSuccessful() && !tcp.isClosed();
+		return !stopping && connect != null && connect.isSuccessful() && !tcp.isClosed();
 	}
 	
 	public boolean isClosed() {
@@ -34,7 +39,9 @@ public abstract class HTTPClientConnection implements AutoCloseable, Closeable {
 	@Override
 	public void close() {
 		stopping = true;
-		tcp.close();
+		if (tcp != null)
+			tcp.close();
+		if (!connect.isDone()) connect.cancel(new CancelException("Close connection"));
 	}
 	
 	/** Return true if at least one request is currently processed or queued. */

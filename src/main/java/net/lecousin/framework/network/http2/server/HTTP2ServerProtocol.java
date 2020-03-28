@@ -1,11 +1,12 @@
 package net.lecousin.framework.network.http2.server;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
+import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.data.BytesFromIso8859String;
 import net.lecousin.framework.log.Logger;
@@ -20,9 +21,6 @@ import net.lecousin.framework.network.http.server.errorhandler.HTTPErrorHandler;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.http1.server.HTTP1ServerUpgradeProtocol;
 import net.lecousin.framework.network.http2.HTTP2Constants;
-import net.lecousin.framework.network.http2.frame.HTTP2Frame;
-import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
-import net.lecousin.framework.network.http2.frame.HTTP2GoAway;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.server.TCPServerClient;
@@ -54,8 +52,10 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 	private int receiveDataTimeout = 0;
 	private int sendDataTimeout = 0;
 	private HTTPErrorHandler errorHandler;
-	private long initialWindowSize = 128L * 1024;
-	private int compressionHeaderTableSize = 4096; // it is supposed to be good to keep indexes on 7-bits
+	private HTTP2Settings settings = new HTTP2Settings()
+		.setWindowSize(128L * 1024)
+		.setHeaderTableSize(4096) // it is supposed to be good to keep indexes on 7-bits
+		.setEnablePush(false); // we do not do that for now
 	
 	public HTTPRequestProcessor getProcessor() {
 		return processor;
@@ -85,12 +85,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		sendDataTimeout = timeout;
 	}
 	
-	public long getInitialWindowSize() {
-		return initialWindowSize;
-	}
-	
-	public int getCompressionHeaderTableSize() {
-		return compressionHeaderTableSize;
+	public HTTP2Settings getSettings() {
+		return settings;
 	}
 
 	@Override
@@ -166,22 +162,9 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		} else {
 			clientSettings = null;
 		}
-		client.setAttribute(ATTRIBUTE_FRAME_STATE, FrameState.START);
 		ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
 		client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
 		
-		// send server settings
-		HTTP2Settings.Writer serverSettings = new HTTP2Settings.Writer(true);
-		serverSettings.setEnablePush(false);
-		serverSettings.setWindowSize(initialWindowSize);
-		serverSettings.setHeaderTableSize(compressionHeaderTableSize);
-		manager.sendFrame(serverSettings, false);
-		
-		if (clientSettings != null) {
-			// send ACK
-			manager.sendFrame(new HTTP2Frame.EmptyWriter(
-				new HTTP2FrameHeader(0, HTTP2FrameHeader.TYPE_SETTINGS, HTTP2Settings.FLAG_ACK, 0)), false);
-		}
 		return receiveDataTimeout;
 	}
 
@@ -190,115 +173,18 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		return 8192;
 	}
 
-	static final String ATTRIBUTE_FRAME_STATE = "http2.frame.state";
-	static final String ATTRIBUTE_FRAME_HEADER = "http2.frame.header";
-	static final String ATTRIBUTE_FRAME_HEADER_CONSUMER = "http2.frame.header.consumer";
-	static final String ATTRIBUTE_CLIENT_STREAMS_MANAGER = "http2.streams-manager";
-	static final String ATTRIBUTE_FRAME_STREAM_HANDLER = "http2.stream-handler";
-	private static final String ATTRIBUTE_SETTINGS_FROM_UPGRADE = "http2.upgrade.settings";
-	
-	private enum FrameState {
-		START, HEADER, PAYLOAD
-	}
+	private static final String ATTRIBUTE_SETTINGS_FROM_UPGRADE = "http2.server.upgrade.settings";
+	private static final String ATTRIBUTE_CLIENT_STREAMS_MANAGER = "http2.server.streams-manager";
 
 	@Override
 	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data) {
-		FrameState frameState = (FrameState)client.getAttribute(ATTRIBUTE_FRAME_STATE);
-		switch (frameState) {
-		case START:
-			startFrame(client, data);
-			break;
-		case HEADER:
-			continueFrameHeader(client, data);
-			break;
-		case PAYLOAD:
-			continueFramePayload(client, data);
-			break;
-		default: // not possible
-		}
-	}
-	
-	private void startFrame(TCPServerClient client, ByteBuffer data) {
-		if (logger.trace())
-			logger.trace("Start receiving new frame from " + client);
-		HTTP2FrameHeader header = new HTTP2FrameHeader();
-		HTTP2FrameHeader.Consumer consumer = header.createConsumer();
-		boolean headerReady = consumer.consume(data);
-		if (!headerReady) {
-			bufferCache.free(data);
-			client.setAttribute(ATTRIBUTE_FRAME_STATE, FrameState.HEADER);
-			client.setAttribute(ATTRIBUTE_FRAME_HEADER, header);
-			client.setAttribute(ATTRIBUTE_FRAME_HEADER_CONSUMER, consumer);
-			try { client.waitForData(receiveDataTimeout); }
-			catch (ClosedChannelException e) { /* ignore. */ }
-			return;
-		}
-		startFramePayload(client, data);
-	}
-	
-	
-	private void continueFrameHeader(TCPServerClient client, ByteBuffer data) {
-		HTTP2FrameHeader.Consumer consumer = (HTTP2FrameHeader.Consumer)client.getAttribute(ATTRIBUTE_FRAME_HEADER_CONSUMER);
-		boolean headerReady = consumer.consume(data);
-		if (!headerReady) {
+		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
+		Async<IOException> consume = manager.consumeDataFromRemote(data);
+		consume.onSuccess(() -> {
 			bufferCache.free(data);
 			try { client.waitForData(receiveDataTimeout); }
 			catch (ClosedChannelException e) { /* ignore. */ }
-			return;
-		}
-		startFramePayload(client, data);
+		});
 	}
 
-	private void startFramePayload(TCPServerClient client, ByteBuffer data) {
-		client.removeAttribute(ATTRIBUTE_FRAME_HEADER_CONSUMER);
-		client.setAttribute(ATTRIBUTE_FRAME_STATE, FrameState.PAYLOAD);
-		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
-		HTTP2FrameHeader header = (HTTP2FrameHeader)client.getAttribute(ATTRIBUTE_FRAME_HEADER);
-		if (logger.trace())
-			logger.trace("Frame header received with type " + header.getType() + ", flags " + header.getFlags()
-				+ ", stream " + header.getStreamId() + ", payload length " + header.getPayloadLength());
-		StreamHandler stream = manager.startFrame(header);
-		if (stream == null)
-			return; // connection error
-		if (header.getPayloadLength() == 0) {
-			endOfFrame(client, data);
-			return;
-		}
-		if (!data.hasRemaining()) {
-			bufferCache.free(data);
-			try { client.waitForData(receiveDataTimeout); }
-			catch (ClosedChannelException e) { /* ignore. */ }
-			return;
-		}
-		stream.consumeFramePayload(manager, data);
-	}	
-	
-	private static void continueFramePayload(TCPServerClient client, ByteBuffer data) {
-		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
-		StreamHandler stream = (StreamHandler)client.getAttribute(ATTRIBUTE_FRAME_STREAM_HANDLER);
-		stream.consumeFramePayload(manager, data);
-	}
-	
-	void endOfFrame(TCPServerClient client, ByteBuffer data) {
-		client.setAttribute(ATTRIBUTE_FRAME_STATE, FrameState.START);
-		client.removeAttribute(ATTRIBUTE_FRAME_HEADER);
-		client.removeAttribute(ATTRIBUTE_FRAME_STREAM_HANDLER);
-		if (!data.hasRemaining()) {
-			bufferCache.free(data);
-			try { client.waitForData(receiveDataTimeout); }
-			catch (ClosedChannelException e) { /* ignore. */ }
-			return;
-		}
-		// TODO check number of processed requests and delay receiving the next one if needed
-		// TODO launch it in a new task to avoid recursivity
-		dataReceivedFromClient(client, data);
-	}
-
-	static void connectionError(TCPServerClient client, int errorCode, String debugMessage) {
-		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
-		HTTP2GoAway.Writer frame = new HTTP2GoAway.Writer(manager.getLastStreamId(), errorCode,
-			debugMessage != null ? debugMessage.getBytes(StandardCharsets.UTF_8) : null);
-		manager.sendFrame(frame, true);
-	}
-	
 }

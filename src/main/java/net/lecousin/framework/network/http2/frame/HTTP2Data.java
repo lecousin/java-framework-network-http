@@ -54,10 +54,14 @@ public abstract class HTTP2Data implements HTTP2Frame {
 						b.limit(b.position() + len);
 					}
 					pos += len;
-					IAsync<IOException> consume = bodyConsumer.consume(b.asReadOnlyBuffer());
+					b = b.asReadOnlyBuffer();
+					IAsync<IOException> consume = bodyConsumer.consume(b);
 					AsyncSupplier<Boolean, HTTP2Error> result = new AsyncSupplier<>();
-					consume.onDone(() -> result.unblockSuccess(Boolean.valueOf(pos == header.getPayloadLength())),
-						result, ioErr -> {
+					int l = len;
+					consume.onDone(() -> {
+						data.position(data.position() + l);
+						result.unblockSuccess(Boolean.valueOf(pos == header.getPayloadLength()));
+					}, result, ioErr -> {
 							// TODO log it
 							return new HTTP2Error(true, HTTP2Error.Codes.INTERNAL_ERROR, ioErr.getMessage());
 						});

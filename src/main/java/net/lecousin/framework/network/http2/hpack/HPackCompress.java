@@ -52,55 +52,58 @@ public class HPackCompress extends HPack {
 	}
 	
 	private static boolean writeNameIndexed(int nameIndex, String value, boolean indexValue, Bytes.Writable buffer) {
-		int valueSizeUncompressed = getStringUncompressedSize(value);
-		int valueSizeCompressed = getStringCompressedSize(value);
+		int valueLen = value.length();
+		int valueSizeUncompressed = getIntegerSize(valueLen, 0x7F) + valueLen;
+		int valueLenCompressed = HPackHuffmanCompress.getBytesToCompress(value);
+		int valueSizeCompressed = getIntegerSize(valueLenCompressed, 0x7F) + valueLenCompressed;
 		int size = getIntegerSize(nameIndex, indexValue ? 0x3F : 0x0F) + Math.min(valueSizeUncompressed, valueSizeCompressed);
 		if (buffer.remaining() < size)
 			return false;
 		writeInteger(nameIndex, indexValue ? 0x40 : 0x00, indexValue ? 0x3F : 0x0F, buffer);
 		if (valueSizeUncompressed <= valueSizeCompressed) {
 			// not using huffman
-			writeInteger(valueSizeUncompressed, 0x00, 0x7F, buffer);
-			int l = value.length();
-			for (int i = 0; i < l; ++i)
+			writeInteger(valueLen, 0x00, 0x7F, buffer);
+			for (int i = 0; i < valueLen; ++i)
 				buffer.put((byte)value.charAt(i));
 		} else {
 			// using huffman
-			writeInteger(valueSizeCompressed, 0x80, 0x7F, buffer);
+			writeInteger(valueLenCompressed, 0x80, 0x7F, buffer);
 			HPackHuffmanCompress.compress(value, buffer);
 		}
 		return true;
 	}
 	
 	private static boolean writeNew(String name, String value, boolean addToIndex, Bytes.Writable buffer) {
-		int nameSizeUncompressed = getStringUncompressedSize(name);
-		int nameSizeCompressed = getStringCompressedSize(name);
-		int valueSizeUncompressed = getStringUncompressedSize(value);
-		int valueSizeCompressed = getStringCompressedSize(value);
+		int nameLen = name.length();
+		int nameSizeUncompressed = getIntegerSize(nameLen, 0x7F) + nameLen;
+		int nameLenCompressed = HPackHuffmanCompress.getBytesToCompress(name);
+		int nameSizeCompressed = getIntegerSize(nameLenCompressed, 0x7F) + nameLenCompressed;
+		int valueLen = value.length();
+		int valueSizeUncompressed = getIntegerSize(valueLen, 0x7F) + valueLen;
+		int valueLenCompressed = HPackHuffmanCompress.getBytesToCompress(value);
+		int valueSizeCompressed = getIntegerSize(valueLenCompressed, 0x7F) + valueLenCompressed;
 		int size = 1 + Math.min(nameSizeUncompressed, nameSizeCompressed) + Math.min(valueSizeUncompressed, valueSizeCompressed);
 		if (buffer.remaining() < size)
 			return false;
 		buffer.put(addToIndex ? (byte)0x40 : (byte)0x00);
 		if (nameSizeUncompressed <= nameSizeCompressed) {
 			// not using huffman
-			writeInteger(nameSizeUncompressed, 0x00, 0x7F, buffer);
-			int l = value.length();
-			for (int i = 0; i < l; ++i)
-				buffer.put((byte)value.charAt(i));
+			writeInteger(nameLen, 0x00, 0x7F, buffer);
+			for (int i = 0; i < nameLen; ++i)
+				buffer.put((byte)name.charAt(i));
 		} else {
 			// using huffman
-			writeInteger(nameSizeCompressed, 0x80, 0x7F, buffer);
-			HPackHuffmanCompress.compress(value, buffer);
+			writeInteger(nameLenCompressed, 0x80, 0x7F, buffer);
+			HPackHuffmanCompress.compress(name, buffer);
 		}
 		if (valueSizeUncompressed <= valueSizeCompressed) {
 			// not using huffman
-			writeInteger(valueSizeUncompressed, 0x00, 0x7F, buffer);
-			int l = value.length();
-			for (int i = 0; i < l; ++i)
+			writeInteger(valueLen, 0x00, 0x7F, buffer);
+			for (int i = 0; i < valueLen; ++i)
 				buffer.put((byte)value.charAt(i));
 		} else {
 			// using huffman
-			writeInteger(valueSizeCompressed, 0x80, 0x7F, buffer);
+			writeInteger(valueLenCompressed, 0x80, 0x7F, buffer);
 			HPackHuffmanCompress.compress(value, buffer);
 		}
 		return true;
@@ -136,14 +139,4 @@ public class HPackCompress extends HPack {
 		} while (true);
 	}
 	
-	private static int getStringUncompressedSize(String s) {
-		int l = s.length();
-		return getIntegerSize(l, 0x7F) + l;
-	}
-	
-	private static int getStringCompressedSize(String s) {
-		int size = HPackHuffmanCompress.getBytesToCompress(s);
-		return getIntegerSize(size, 0x7F) + size;
-	}
-
 }

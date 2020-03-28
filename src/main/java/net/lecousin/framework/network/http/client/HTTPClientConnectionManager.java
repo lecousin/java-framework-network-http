@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
+import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
@@ -15,7 +16,6 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
-import net.lecousin.framework.network.http1.client.HTTP1ClientUtil;
 import net.lecousin.framework.util.Pair;
 
 class HTTPClientConnectionManager {
@@ -163,8 +163,8 @@ class HTTPClientConnectionManager {
 	private HTTPClientConnection createProxyConnection(HTTPClientRequestContext reservedFor) {
 		HTTPClientRequest request = reservedFor.getRequest();
 		Pair<TCPClient, IAsync<IOException>> proxyConnection = request.isSecure()
-			? HTTP1ClientUtil.openTunnelOnProxy(serverAddress, request.getHostname(), request.getPort(), true, config, logger)
-			: HTTP1ClientUtil.openDirectConnection(serverAddress, config, logger);
+			? HTTP1ClientConnection.openTunnelOnProxy(serverAddress, request.getHostname(), request.getPort(), true, config, logger)
+			: HTTP1ClientConnection.openDirectConnection(serverAddress, config, logger);
 			
 		HTTP1ClientConnection connection = new HTTP1ClientConnection(proxyConnection.getValue1(), proxyConnection.getValue2(), 2, config);
 		return addConnection(connection, proxyConnection.getValue1(), proxyConnection.getValue2(), reservedFor);
@@ -188,8 +188,12 @@ class HTTPClientConnectionManager {
 					if (!hasOpen)
 						lastConnectionFailed = System.currentTimeMillis();
 				}
-				if (hasOpen)
-					reservedFor.getRemoteAddresses().add(serverAddress);
+				if (hasOpen) {
+					@SuppressWarnings("unchecked")
+					List<InetSocketAddress> remoteAddresses = (List<InetSocketAddress>)
+						reservedFor.getAttribute(HTTPClient.CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
+					remoteAddresses.add(serverAddress);
+				}
 				client.retryConnection(reservedFor);
 				return null;
 			}).start();

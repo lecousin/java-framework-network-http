@@ -37,7 +37,6 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.header.AlternativeService;
 import net.lecousin.framework.network.http.header.AlternativeServices;
 import net.lecousin.framework.network.mime.MimeException;
-import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
@@ -50,7 +49,7 @@ import net.lecousin.framework.util.Pair;
  * HTTP Client, managing connections to servers.<br/>
  *
  */
-public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
+public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, HTTPClientRequestSender {
 	
 	/** Get the default instance for the current application. */
 	public static synchronized HTTPClient getDefault() {
@@ -64,6 +63,8 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	}
 	
 	public static final String HOST_PROTOCOL_ALTERNATIVE_SERVICES_ATTRIBUTE = "HTTP-alternative-services";
+	
+	static final String CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE = "httpclient.request.remote-addresses";
 	
 	@SuppressWarnings("unchecked")
 	public static void addKnowledgeFromResponseHeaders(
@@ -217,58 +218,47 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			}
 		}
 	}
-
-	/**
-	 * Send an HTTP request, with an optional body.<br/>
-	 * Filters configured in the HTTPClientConfiguration are first called to modify the request.
-	 */
-	public HTTPClientResponse send(HTTPClientRequest request) {
-		HTTPClientRequestContext ctx = new HTTPClientRequestContext(this, request);
+	
+	@Override
+	public void redirectTo(HTTPClientRequestContext ctx, URI targetUri) {
+		// TODO we need to keep targetUri else we will connect again to the same host !
 		send(ctx);
-		return ctx.getResponse();
 	}
 	
-	/**
-	 * Send an HTTP request, with an optional body.<br/>
-	 * Filters configured in the HTTPClientConfiguration are first called to modify the request.
-	 */
+	@Override
 	public void send(HTTPClientRequestContext ctx) {
-		ctx.setClient(this);
+		ctx.removeAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
+		ctx.setSender(this);
 		
 		if (logger.debug())
 			logger.debug("Request to send: " + ctx);
 		
 		// apply filters
-		for (HTTPClientRequestFilter filter : config.getFilters())
-			filter.filter(ctx.getRequest(), ctx.getResponse());
+		ctx.applyFilters(config.getFilters());
 		
 		// determine how to connect
 		AsyncSupplier<HTTPClientConnection, IOException> connection = getConnection(ctx);
 		
 		// start to prepare request while connecting
-		MimeEntity entity = ctx.getRequest().getEntity();
-		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer;
-		if (entity != null)
-			bodyProducer = entity.createBodyProducer();
-		else
-			bodyProducer = new AsyncSupplier<>(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()), null);
+		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer =
+			ctx.prepareRequestBody();
 		
 		// once request is done we can try to dequeue a request
 		ctx.getResponse().getTrailersReceived().thenStart("Dequeue HTTP request", Priority.NORMAL, () -> dequeueRequest(), true);
 		
 		bodyProducer.thenStart("Prepare HTTP request", Task.getCurrentPriority(), (Task<Void, NoException> t) -> {
-			sendRequest(ctx, connection, bodyProducer);
+			ctx.setRequestBody(bodyProducer.getResult());
+			sendRequest(ctx, connection);
 			return null;
 		}, ctx.getRequestSent());
 	}
 	
 	private void sendRequest(
 		HTTPClientRequestContext ctx,
-		AsyncSupplier<HTTPClientConnection, IOException> connection,
-		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer
+		AsyncSupplier<HTTPClientConnection, IOException> connection
 	) {
 		HTTPRequest request = ctx.getRequest();
-		Long size = bodyProducer.getResult().getValue1();
+		Long size = ctx.getRequestBody().getValue1();
 		Supplier<List<MimeHeader>> trailerSupplier = request.getTrailerHeadersSuppliers();
 		
 		if (size == null || trailerSupplier != null) {
@@ -277,7 +267,6 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			request.getHeaders().setContentLength(size.longValue());
 		}
 		
-		ctx.setRequestBody(bodyProducer.getResult());
 		connection.thenStart("Send HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel
@@ -356,7 +345,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 						+ alternatives);
 			}
 		}
-		ctx.setRemoteAddresses(list);
+		ctx.setAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE, list);
 		ctx.setThroughProxy(isProxy);
 		synchronized (connectionManagers) {
 			HTTPClientConnection connection = tryToConnect(ctx);
@@ -373,8 +362,11 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			reservedFor.getRequestSent().cancel(new CancelException("HTTPClient closed"));
 			return null;
 		}
+		@SuppressWarnings("unchecked")
+		List<InetSocketAddress> remoteAddresses =
+			(List<InetSocketAddress>)reservedFor.getAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
 		// try to reuse existing available connection
-		for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+		for (InetSocketAddress addr : remoteAddresses) {
 			HTTPClientConnectionManager manager = connectionManagers.get(addr);
 			if (manager == null) continue;
 			HTTPClientConnection connection = manager.reuseAvailableConnection(reservedFor);
@@ -386,7 +378,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		}
 		if (nbOpenConnections.get() < config.getLimits().getOpenConnections()) {
 			// we can open a new connection, we prefer to do so
-			for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+			for (InetSocketAddress addr : remoteAddresses) {
 				HTTPClientConnectionManager manager = connectionManagers.get(addr);
 				if (manager == null) {
 					manager = new HTTPClientConnectionManager(this, addr, reservedFor.isThroughProxy(), config);
@@ -398,7 +390,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 					return connection;
 				}
 			}
-			for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+			for (InetSocketAddress addr : remoteAddresses) {
 				HTTPClientConnectionManager manager = connectionManagers.get(addr);
 				HTTPClientConnection connection = manager.createConnection(reservedFor);
 				if (connection != null) {
@@ -410,7 +402,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 			}
 		}
 		// no available connexion, try to find a connection with a single pending request
-		for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+		for (InetSocketAddress addr : remoteAddresses) {
 			HTTPClientConnectionManager manager = connectionManagers.get(addr);
 			if (manager == null) continue;
 			HTTPClientConnection connection = manager.reuseConnectionIfPossible(reservedFor);
@@ -422,7 +414,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 		}
 		// if no open connection to one if the addresses, try to close an idle connection
 		if (nbOpenConnections.get() >= config.getLimits().getOpenConnections()) {
-			for (InetSocketAddress addr : reservedFor.getRemoteAddresses()) {
+			for (InetSocketAddress addr : remoteAddresses) {
 				HTTPClientConnectionManager manager = connectionManagers.get(addr);
 				if (manager != null) continue;
 				// we have one address without connection
@@ -487,7 +479,10 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	}
 	
 	private static void connectionUsed(HTTPClientConnectionManager manager, HTTPClientRequestContext ctx) {
-		ctx.getRemoteAddresses().remove(manager.getAddress());
+		@SuppressWarnings("unchecked")
+		List<InetSocketAddress> remoteAddresses =
+			(List<InetSocketAddress>)ctx.getAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
+		remoteAddresses.remove(manager.getAddress());
 	}
 	
 	private void dequeueRequest() {
@@ -542,7 +537,10 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable {
 	
 	/** Called by HTTPClientConnectionManager to signal connection failed. */
 	void retryConnection(HTTPClientRequestContext ctx) {
-		if (ctx.getRemoteAddresses().isEmpty()) {
+		@SuppressWarnings("unchecked")
+		List<InetSocketAddress> remoteAddresses =
+			(List<InetSocketAddress>)ctx.getAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
+		if (remoteAddresses.isEmpty()) {
 			ctx.getRequestSent().error(new ConnectException("Unable to connect"));
 			return;
 		}

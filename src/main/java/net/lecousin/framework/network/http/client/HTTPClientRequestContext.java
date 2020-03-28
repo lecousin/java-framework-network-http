@@ -2,7 +2,6 @@ package net.lecousin.framework.network.http.client;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
@@ -10,25 +9,27 @@ import java.util.List;
 import java.util.function.Function;
 
 import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.io.util.EmptyReadable;
+import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.BinaryFileEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
+import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntityFactory;
 import net.lecousin.framework.util.Pair;
 
 /** Context while sending an HTTP request and receiving the response. */
-public class HTTPClientRequestContext {
+public class HTTPClientRequestContext extends AbstractAttributesContainer {
 	
-	private HTTPClient client;
+	private HTTPClientRequestSender sender;
 	private HTTPClientRequest request;
 	private HTTPClientResponse response;
 	private Pair<Long, AsyncProducer<ByteBuffer, IOException>> requestBody;
-	private List<InetSocketAddress> remoteAddresses;
 	private boolean throughProxy;
 	private Async<IOException> requestSent = new Async<>();
 	private MimeEntityFactory entityFactory;
@@ -37,28 +38,28 @@ public class HTTPClientRequestContext {
 	private int maxRedirections = 0;
 	
 	/** Constructor. */
-	public HTTPClientRequestContext(HTTPClient client, HTTPClientRequest request) {
-		this.client = client;
+	public HTTPClientRequestContext(HTTPClientRequestSender sender, HTTPClientRequest request) {
+		this.sender = sender;
 		this.request = request;
 		this.response = new HTTPClientResponse();
 		requestSent.onError(response.getHeadersReceived()::error);
 		requestSent.onCancel(response.getHeadersReceived()::cancel);
 	}
 	
+	public HTTPClientRequestSender getSender() {
+		return sender;
+	}
+
+	public void setSender(HTTPClientRequestSender sender) {
+		this.sender = sender;
+	}
+
 	public HTTPClientRequest getRequest() {
 		return request;
 	}
 	
 	public HTTPClientResponse getResponse() {
 		return response;
-	}
-
-	public HTTPClient getClient() {
-		return client;
-	}
-
-	public void setClient(HTTPClient client) {
-		this.client = client;
 	}
 
 	public int getMaxRedirections() {
@@ -78,12 +79,11 @@ public class HTTPClientRequestContext {
 		}
 		request.setURI(u);
 		requestBody = null;
-		remoteAddresses = null;
 		throughProxy = false;
 		requestSent = new Async<>();
 		maxRedirections--;
 		response.reset();
-		client.send(this);
+		sender.redirectTo(this, u);
 	}
 
 	public Pair<Long, AsyncProducer<ByteBuffer, IOException>> getRequestBody() {
@@ -92,14 +92,6 @@ public class HTTPClientRequestContext {
 
 	public void setRequestBody(Pair<Long, AsyncProducer<ByteBuffer, IOException>> requestBody) {
 		this.requestBody = requestBody;
-	}
-
-	public List<InetSocketAddress> getRemoteAddresses() {
-		return remoteAddresses;
-	}
-
-	public void setRemoteAddresses(List<InetSocketAddress> remoteAddresses) {
-		this.remoteAddresses = remoteAddresses;
 	}
 
 	public boolean isThroughProxy() {
@@ -120,6 +112,18 @@ public class HTTPClientRequestContext {
 
 	public void setEntityFactory(MimeEntityFactory entityFactory) {
 		this.entityFactory = entityFactory;
+	}
+	
+	public void applyFilters(List<HTTPClientRequestFilter> filters) {
+		for (HTTPClientRequestFilter filter : filters)
+			filter.filter(request, response);
+	}
+	
+	public AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> prepareRequestBody() {
+		MimeEntity entity = request.getEntity();
+		if (entity != null)
+			return entity.createBodyProducer();
+		return new AsyncSupplier<>(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()), null);
 	}
 	
 	/** Receive the response from the server as a BinaryEntity with an OutputToInput so the body can be read while it is received. */

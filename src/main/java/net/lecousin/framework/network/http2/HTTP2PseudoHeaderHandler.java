@@ -56,9 +56,9 @@ public interface HTTP2PseudoHeaderHandler {
 			switch (name) {
 			case HTTP2Constants.Headers.Response.Pseudo.STATUS:
 				try {
-					response.setStatus(Integer.parseUnsignedInt(name));
+					response.setStatus(Integer.parseUnsignedInt(value));
 				} catch (NumberFormatException e) {
-					throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid status code " + name);
+					throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid status code " + value);
 				}
 				break;
 			default:
