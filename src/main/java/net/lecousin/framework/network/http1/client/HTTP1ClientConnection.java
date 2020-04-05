@@ -401,32 +401,6 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		newConn.send(ctx);
 		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
 	}
-	
-	/** Return true if the protocol, the hostname and the port are compatible with this client. */
-	private static boolean isCompatible(URI uri, TCPClient client, String hostname, int port) {
-		String protocol = uri.getScheme();
-		if (protocol != null) {
-			protocol = protocol.toLowerCase();
-			if (client instanceof SSLClient) {
-				if (!"https".equals(protocol))
-					return false;
-			} else if (!"http".equals(protocol)) {
-				return false;
-			}
-		}
-
-		if (!hostname.equals(uri.getHost()))
-			return false;
-		
-		int p = uri.getPort();
-		if (p <= 0) {
-			if (client instanceof SSLClient)
-				p = HTTPConstants.DEFAULT_HTTPS_PORT;
-			else
-				p = HTTPConstants.DEFAULT_HTTP_PORT;
-		}
-		return p == port;
-	}
 
 	private void requestBodyReady(HTTPClientRequestContext ctx) {
 		Long size = ctx.getRequestBody().getValue1();

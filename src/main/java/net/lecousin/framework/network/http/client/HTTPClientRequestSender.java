@@ -2,7 +2,7 @@ package net.lecousin.framework.network.http.client;
 
 import java.net.URI;
 
-public interface HTTPClientRequestSender {
+public interface HTTPClientRequestSender extends AutoCloseable {
 
 	/**
 	 * Send an HTTP request, with an optional body.<br/>

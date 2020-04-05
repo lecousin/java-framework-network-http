@@ -20,6 +20,7 @@ import net.lecousin.framework.network.http2.HTTP2Constants;
 import net.lecousin.framework.network.http2.frame.HTTP2Headers;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.http2.streams.DataHandler;
+import net.lecousin.framework.network.http2.streams.DataStreamHandler;
 import net.lecousin.framework.network.http2.streams.StreamsManager;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
@@ -43,6 +44,10 @@ public class ClientStreamsManager extends StreamsManager {
 		synchronized (dataHandlers) {
 			return dataHandlers.remove(Integer.valueOf(streamId >> 1));
 		}
+	}
+	
+	TCPClient getRemote() {
+		return (TCPClient)remote;
 	}
 
 	void send(HTTPClientRequestContext ctx) {
@@ -88,10 +93,13 @@ public class ClientStreamsManager extends StreamsManager {
 			headers.add(new Pair<>(h.getNameLowerCase(), h.getRawValue()));
 		// if available, add the content-length
 		boolean isEndOfStream = false;
-		if (ctx.getRequestBody().getValue1().longValue() == 0)
-			isEndOfStream = true;
-		else
-			headers.add(new Pair<>("content-length", ctx.getRequestBody().getValue1().toString()));
+		Long size = ctx.getRequestBody().getValue1();
+		if (size != null) {
+			if (size.longValue() == 0)
+				isEndOfStream = true;
+			else
+				headers.add(new Pair<>("content-length", size.toString()));
+		}
 		if (ctx.getRequest().getTrailerHeadersSuppliers() != null)
 			isEndOfStream = false;
 		// send headers/continuation frames, then body, then trailers
@@ -103,8 +111,10 @@ public class ClientStreamsManager extends StreamsManager {
 			}
 			sendFrame(new HTTP2Headers.Writer(streamId, headers, eos, reservation.getValue1(), () -> {
 				releaseCompressionContext(streamId);
-				// TODO sendBody(ctx);
+				DataStreamHandler.sendBody(this, streamId, ctx.getRequest(), ctx.getRequestSent(),
+					size, ctx.getRequestBody().getValue2(), 128 * 1024);
 			}), false);
 		}, false);
 	}
+
 }

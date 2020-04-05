@@ -11,17 +11,17 @@ import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.exception.NoException;
-import net.lecousin.framework.mutable.Mutable;
-import net.lecousin.framework.mutable.MutableInteger;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
 import net.lecousin.framework.network.http2.HTTP2Constants;
 import net.lecousin.framework.network.http2.HTTP2PseudoHeaderHandler;
-import net.lecousin.framework.network.http2.frame.HTTP2Data;
 import net.lecousin.framework.network.http2.frame.HTTP2Headers;
 import net.lecousin.framework.network.http2.streams.DataHandler;
+import net.lecousin.framework.network.http2.streams.DataStreamHandler;
+import net.lecousin.framework.network.http2.streams.StreamsManager;
+import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
@@ -30,16 +30,14 @@ import net.lecousin.framework.util.Pair;
 
 class ClientDataHandler implements DataHandler {
 
-	private ClientStreamsManager manager;
 	private HTTPRequestContext ctx;
 	private int streamId;
 	private HTTP2ServerProtocol server;
 	
 	public ClientDataHandler(
-		ClientStreamsManager manager, TCPServerClient client, int streamId,
+		TCPServerClient client, int streamId,
 		HTTP2ServerProtocol server
 	) {
-		this.manager = manager;
 		this.ctx = new HTTPRequestContext(client, new HTTPRequest(), new HTTPServerResponse(), server.getErrorHandler());
 		this.streamId = streamId;
 		this.server = server;
@@ -56,47 +54,50 @@ class ClientDataHandler implements DataHandler {
 	}
 	
 	@Override
-	public void emptyEntityReceived() {
+	public void emptyEntityReceived(StreamsManager manager, DataStreamHandler stream) {
 		ctx.getRequest().setEntity(new EmptyEntity(null, ctx.getRequest().getHeaders()));
 	}
 	
 	@Override
-	public AsyncConsumer<ByteBuffer, IOException> endOfHeaders() {
+	public AsyncConsumer<ByteBuffer, IOException> endOfHeaders(StreamsManager manager, DataStreamHandler stream) {
 		// we can start processing the request
 		if (manager.isClosing())
 			return null;
-		
-		if (ctx.getRequest().getEntity() == null) {
-			// body will come
-			if (!ctx.getRequest().isExpectingBody()) {
-				// TODO error ?
-			}
-		}
+
 		// TODO manage priority and number of pending requests (both for the client and for the server?)
 		if (server.logger.debug())
 			server.logger.debug("Processing request from " + ctx.getClient()
-				+ ": " + HTTP1RequestCommandProducer.generateString(ctx.getRequest()));
+				+ ":\n" + HTTP1RequestCommandProducer.generateString(ctx.getRequest())
+				+ "\n" + ctx.getRequest().getHeaders().generateString(1024).asString()
+			);
+
 		server.getProcessor().process(ctx);
 		
-		ctx.getResponse().getReady().onDone(() -> sendHeaders(ctx));
+		ctx.getResponse().getReady().onDone(() -> sendHeaders(manager, ctx));
 		ctx.getResponse().getSent().thenStart("Close HTTP/2 stream", Priority.NORMAL, () -> manager.endOfStream(streamId), true);
 
+		if (ctx.getRequest().getEntity() == null) {
+			if (!ctx.getRequest().isExpectingBody())
+				return null;
+			server.logger.warn("Processor did not set an entity to receive the request body, default to binary");
+			ctx.getRequest().setEntity(new BinaryEntity(null, ctx.getRequest().getHeaders()));
+		}
 		return ctx.getRequest().getEntity().createConsumer(ctx.getRequest().getHeaders().getContentLength());
 	}
 	
 	@Override
-	public void endOfBody() {
+	public void endOfBody(StreamsManager manager, DataStreamHandler stream) {
 		// TODO Auto-generated method stub
 		
 	}
 	
 	@Override
-	public void endOfTrailers() {
+	public void endOfTrailers(StreamsManager manager, DataStreamHandler stream) {
 		// TODO Auto-generated method stub
 		
 	}
 	
-	private void sendHeaders(HTTPRequestContext ctx) {
+	private void sendHeaders(StreamsManager manager, HTTPRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
 			// TODO if getReady() has an error, send an error
 			// TODO handle range request
@@ -120,104 +121,27 @@ class ClientDataHandler implements DataHandler {
 			}
 			if (ctx.getResponse().getTrailerHeadersSuppliers() != null)
 				isEndOfStream = false;
+			if (server.logger.debug()) {
+				StringBuilder s = new StringBuilder("Ready to send response to ").append(ctx.getClient());
+				s.append(" [").append(HTTP1RequestCommandProducer.generateString(ctx.getRequest())).append(']');
+				for (Pair<String, String> p : headers)
+					s.append('\n').append(p.getValue1()).append(": ").append(p.getValue2());
+				server.logger.debug(s.toString());
+			}
 			// send headers/continuation frames, then body, then trailers
 			final boolean eos = isEndOfStream;
 			manager.reserveCompressionContext(streamId).thenStart("Send HTTP/2 headers", Priority.NORMAL, compressionContext -> {
 				manager.sendFrame(new HTTP2Headers.Writer(streamId, headers, eos, compressionContext, () -> {
 					manager.releaseCompressionContext(streamId);
-					bodyProducer.onDone(
-						() -> sendBody(ctx, bodyProducer.getResult().getValue1(), bodyProducer.getResult().getValue2())
-					);
+					bodyProducer.onDone(() -> DataStreamHandler.sendBody(
+						manager, streamId, ctx.getResponse(), ctx.getResponse().getSent(),
+						bodyProducer.getResult().getValue1(), bodyProducer.getResult().getValue2(),
+						128 * 1024
+					));
 				}), false);
 			}, false);
 			return null;
 		}).start();
 	}
 	
-	private void sendBody(HTTPRequestContext ctx, Long bodySize, AsyncProducer<ByteBuffer, IOException> body) {
-		if (bodySize != null && bodySize.longValue() == 0) {
-			sendTrailers(ctx);
-			return;
-		}
-		produceBody(ctx, body, new Mutable<>(null), new MutableInteger(0));
-	}
-	
-	private static final int MAX_BODY_SIZE_PRODUCED = 128 * 1024;
-	
-	private void produceBody(
-		HTTPRequestContext ctx,
-		AsyncProducer<ByteBuffer, IOException> body, Mutable<HTTP2Data.Writer> lastWriter,
-		MutableInteger sizeProduced
-	) {
-		body.produce("Produce HTTP/2 body data frame", Task.getCurrentPriority())
-		.onDone(data -> {
-			// TODO in a task
-			if (data == null) {
-				// end of data
-				if (ctx.getResponse().getTrailerHeadersSuppliers() == null) {
-					// end of stream
-					if (lastWriter.get() != null && lastWriter.get().setEndOfStream()) {
-						ctx.getResponse().getSent().unblock();
-						return;
-					}
-					HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
-						sent -> ctx.getResponse().getSent().unblock());
-					manager.sendFrame(w, false);
-					return;
-				}
-				// trailers will come
-				sendTrailers(ctx);
-				return;
-			}
-			synchronized (sizeProduced) {
-				sizeProduced.add(data.remaining());
-			}
-			if (lastWriter.get() == null || !lastWriter.get().addData(data)) {
-				lastWriter.set(new HTTP2Data.Writer(streamId, data, false, consumed -> {
-					boolean canProduce;
-					synchronized (sizeProduced) {
-						canProduce = sizeProduced.get() >= MAX_BODY_SIZE_PRODUCED &&
-							sizeProduced.get() - consumed.getValue2().intValue() < MAX_BODY_SIZE_PRODUCED;
-						sizeProduced.sub(consumed.getValue2().intValue());
-					}
-					if (canProduce)
-						produceBody(ctx, body, lastWriter, sizeProduced);
-				}));
-				manager.sendFrame(lastWriter.get(), false);
-			}
-			synchronized (sizeProduced) {
-				if (sizeProduced.get() < MAX_BODY_SIZE_PRODUCED)
-					produceBody(ctx, body, lastWriter, sizeProduced);
-			}
-		}, error -> {
-			// TODO
-		}, cancel -> {
-			// TODO
-		});
-	}
-	
-	private void sendTrailers(HTTPRequestContext ctx) {
-		if (ctx.getResponse().getTrailerHeadersSuppliers() == null) {
-			ctx.getResponse().getSent().unblock();
-			return;
-		}
-		List<MimeHeader> headers = ctx.getResponse().getTrailerHeadersSuppliers().get();
-		if (headers.isEmpty()) {
-			// finally not ! we need to send end of stream
-			HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
-				sent -> ctx.getResponse().getSent().unblock());
-			manager.sendFrame(w, false);
-			return;
-		}
-		List<Pair<String, String>> list = new LinkedList<>();
-		for (MimeHeader h : headers)
-			list.add(new Pair<>(h.getNameLowerCase(), h.getRawValue()));
-		manager.reserveCompressionContext(streamId).thenStart("Send HTTP/2 trailers", Priority.NORMAL, compressionContext -> {
-			manager.sendFrame(new HTTP2Headers.Writer(streamId, list, true, compressionContext, () -> {
-				manager.releaseCompressionContext(streamId);
-				ctx.getResponse().getSent().unblock();
-			}), false);
-		}, false);
-	}
-
 }

@@ -61,6 +61,10 @@ public abstract class HTTP2WindowUpdate implements HTTP2Frame {
 			this.increment = increment;
 		}
 		
+		public void setIncrement(long increment) {
+			this.increment = increment;
+		}
+		
 		@Override
 		public int getStreamId() {
 			return streamId;

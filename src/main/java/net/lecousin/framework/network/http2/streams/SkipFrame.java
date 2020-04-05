@@ -21,12 +21,18 @@ class SkipFrame implements StreamHandler {
 
 		// just skip payload to be able to process next frame
 		int expected = header.getPayloadLength() - payloadPos;
+		if (manager.getLogger().debug())
+			manager.getLogger().debug("Skipping frame payload: " + expected);
+		if (header.getType() == HTTP2FrameHeader.TYPE_DATA)
+			manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 		if (data.remaining() < expected) {
 			data.position(data.limit());
 			onConsumed.unblock();
 			return;
 		}
 		data.position(data.position() + expected);
+		if (manager.getLogger().debug())
+			manager.getLogger().debug("Frame fully skipped");
 		manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 		manager.endOfFrame(data, onConsumed);
 	}

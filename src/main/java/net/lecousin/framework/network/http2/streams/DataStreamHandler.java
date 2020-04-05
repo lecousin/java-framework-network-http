@@ -2,8 +2,18 @@ package net.lecousin.framework.network.http2.streams;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
+import java.util.List;
 
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
+import net.lecousin.framework.concurrent.util.AsyncProducer;
+import net.lecousin.framework.mutable.Mutable;
+import net.lecousin.framework.mutable.MutableBoolean;
+import net.lecousin.framework.mutable.MutableInteger;
+import net.lecousin.framework.network.http.HTTPMessage;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.frame.HTTP2Continuation;
 import net.lecousin.framework.network.http2.frame.HTTP2Data;
@@ -13,8 +23,10 @@ import net.lecousin.framework.network.http2.frame.HTTP2Headers;
 import net.lecousin.framework.network.http2.frame.HTTP2Priority;
 import net.lecousin.framework.network.http2.frame.HTTP2ResetStream;
 import net.lecousin.framework.network.http2.frame.HTTP2WindowUpdate;
+import net.lecousin.framework.network.mime.header.MimeHeader;
+import net.lecousin.framework.util.Pair;
 
-class DataStreamHandler extends StreamHandler.Default {
+public class DataStreamHandler extends StreamHandler.Default {
 	
 	DataStreamHandler(int id) {
 		this.id = id;
@@ -58,7 +70,7 @@ class DataStreamHandler extends StreamHandler.Default {
 			try {
 				frame = new HTTP2Priority.Reader(header);
 			} catch (HTTP2Error e) {
-				manager.connectionError(e.getErrorCode(), e.getMessage());
+				manager.connectionError(e.getErrorCode(), "Error reading priority frame: " + e.getMessage());
 				return false;
 			}
 			payloadConsumer = frame.createConsumer();
@@ -92,6 +104,7 @@ class DataStreamHandler extends StreamHandler.Default {
 					bodyConsumer.end();
 					bodyConsumer = null;
 				}
+				dataHandler.endOfBody(manager, this);
 				state = StreamState.OPEN_TRAILERS;
 			} else {
 				manager.connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid stream state");
@@ -127,11 +140,18 @@ class DataStreamHandler extends StreamHandler.Default {
 			
 		case HTTP2FrameHeader.TYPE_DATA:
 			if (!StreamState.OPEN_DATA.equals(state)) {
-				streamError(manager, HTTP2Error.Codes.PROTOCOL_ERROR);
+				resetStream(manager, HTTP2Error.Codes.PROTOCOL_ERROR);
+				manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 				return true;
 			}
 			if (header.getPayloadLength() == 0) {
 				onEndOfPayload(manager, header);
+				return true;
+			}
+			if (bodyConsumer == null) {
+				manager.getLogger().error("No body consumer for DATA");
+				resetStream(manager, HTTP2Error.Codes.INTERNAL_ERROR);
+				manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 				return true;
 			}
 			payloadConsumer = new HTTP2Data.Reader(header, bodyConsumer).createConsumer();
@@ -155,7 +175,7 @@ class DataStreamHandler extends StreamHandler.Default {
 					manager.addDependency(id, prio.getStreamDependency(),
 						prio.getDependencyWeight(), prio.isExclusiveDependency());
 				} catch (HTTP2Error e) {
-					streamError(manager, e.getErrorCode());
+					resetStream(manager, e.getErrorCode());
 					return;
 				}
 			}
@@ -170,7 +190,7 @@ class DataStreamHandler extends StreamHandler.Default {
 				}
 				if (header.hasFlags(HTTP2Headers.FLAG_END_HEADERS)) {
 					// end of trailers
-					// TODO how to signal to processor we have trailers ?
+					dataHandler.endOfTrailers(manager, this);
 					manager.closeStream(this);
 				}
 			} else {
@@ -179,7 +199,7 @@ class DataStreamHandler extends StreamHandler.Default {
 					manager.currentDecompressionStreamId = -1;
 					if (header.hasFlags(HTTP2Headers.FLAG_END_STREAM)) {
 						// end of headers and no body
-						dataHandler.emptyEntityReceived();
+						dataHandler.emptyEntityReceived(manager, this);
 						noBody = true;
 						manager.closeStream(this);
 					} else {
@@ -187,7 +207,7 @@ class DataStreamHandler extends StreamHandler.Default {
 						state = StreamState.OPEN_DATA;
 					}
 					try {
-						bodyConsumer = dataHandler.endOfHeaders();
+						bodyConsumer = dataHandler.endOfHeaders(manager, this);
 					} catch (Exception e) {
 						manager.getLogger().error("Error processing headers", e);
 						manager.closeStream(this);
@@ -196,7 +216,7 @@ class DataStreamHandler extends StreamHandler.Default {
 				}
 				if (header.hasFlags(HTTP2Headers.FLAG_END_STREAM)) {
 					// expect continuation but no data
-					dataHandler.emptyEntityReceived();
+					dataHandler.emptyEntityReceived(manager, this);
 					noBody = true;
 				}
 				// continuation expected
@@ -210,13 +230,13 @@ class DataStreamHandler extends StreamHandler.Default {
 				manager.currentDecompressionStreamId = -1;
 				if (StreamState.OPEN_TRAILERS.equals(state)) {
 					// end of trailers
-					// TODO how to signal to processor we have trailers ?
+					dataHandler.endOfTrailers(manager, this);
 					manager.closeStream(this);
 				} else {
 					// update state
 					state = StreamState.OPEN_DATA;
 					try {
-						bodyConsumer = dataHandler.endOfHeaders();
+						bodyConsumer = dataHandler.endOfHeaders(manager, this);
 					} catch (Exception e) {
 						manager.getLogger().error("Error processing headers", e);
 						manager.closeStream(this);
@@ -235,9 +255,9 @@ class DataStreamHandler extends StreamHandler.Default {
 				// end of body
 				bodyConsumer.end();
 				bodyConsumer = null;
-				dataHandler.endOfBody();
+				dataHandler.endOfBody(manager, this);
 				// no trailer
-				dataHandler.endOfTrailers();
+				dataHandler.endOfTrailers(manager, this);
 				manager.closeStream(this);
 			} else {
 				// body or trailers can follow
@@ -261,14 +281,110 @@ class DataStreamHandler extends StreamHandler.Default {
 	}
 	
 	
-	private void streamError(StreamsManager manager, int errorCode) {
-		HTTP2ResetStream.Writer frame = new HTTP2ResetStream.Writer(id, errorCode);
-		manager.sendFrame(frame, false);
+	public void resetStream(StreamsManager manager, int errorCode) {
+		if (errorCode != HTTP2Error.Codes.NO_ERROR || !StreamState.IDLE.equals(state)) {
+			if (manager.getLogger().debug()) manager.getLogger().debug("Reset stream " + id + " with code " + errorCode);
+			HTTP2ResetStream.Writer frame = new HTTP2ResetStream.Writer(id, errorCode);
+			manager.sendFrame(frame, false);
+			manager.closeStream(this);
+		}
 		if (bodyConsumer != null) {
-			bodyConsumer.error(new IOException("HTTP/2 stream error"));
+			bodyConsumer.error(new IOException("HTTP/2 stream closed"));
 			bodyConsumer = null;
 		}
-		manager.closeStream(this);
+	}
+	
+	public static void sendBody(
+		StreamsManager manager, int streamId,
+		HTTPMessage<?> message, Async<IOException> sent,
+		Long bodySize, AsyncProducer<ByteBuffer, IOException> body,
+		int maxBodySizeToProduce
+	) {
+		if (bodySize != null && bodySize.longValue() == 0) {
+			sendTrailers(manager, streamId, message, sent);
+			return;
+		}
+		produceBody(manager, streamId, message, sent, body,
+			new Mutable<>(null), new MutableInteger(0), maxBodySizeToProduce, new MutableBoolean(false));
+	}
+	
+	private static void produceBody(
+		StreamsManager manager, int streamId,
+		HTTPMessage<?> message, Async<IOException> sent,
+		AsyncProducer<ByteBuffer, IOException> body, Mutable<HTTP2Data.Writer> lastWriter,
+		MutableInteger sizeProduced, int maxBodySizeToProduce, MutableBoolean productionPaused
+	) {
+		body.produce("Produce HTTP/2 body data frame", Task.getCurrentPriority())
+		.onDone(data -> {
+			// TODO in a task
+			if (data == null) {
+				// end of data
+				if (message.getTrailerHeadersSuppliers() == null) {
+					// end of stream
+					if (lastWriter.get() != null && lastWriter.get().setEndOfStream()) {
+						sent.unblock();
+						return;
+					}
+					HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
+						frameSent -> sent.unblock());
+					manager.sendFrame(w, false);
+					return;
+				}
+				// trailers will come
+				sendTrailers(manager, streamId, message, sent);
+				return;
+			}
+			boolean delayNextProduction;
+			synchronized (sizeProduced) {
+				sizeProduced.add(data.remaining());
+				delayNextProduction = sizeProduced.get() >= maxBodySizeToProduce;
+				if (delayNextProduction) productionPaused.set(true);
+			}
+			if (lastWriter.get() == null || !lastWriter.get().addData(data)) {
+				lastWriter.set(new HTTP2Data.Writer(streamId, data, false, consumed -> {
+					boolean needToProduce;
+					synchronized (sizeProduced) {
+						sizeProduced.sub(consumed.getValue2().intValue());
+						needToProduce = productionPaused.get() && sizeProduced.get() < maxBodySizeToProduce;
+						if (needToProduce) productionPaused.set(false);
+					}
+					if (needToProduce)
+						produceBody(manager, streamId, message, sent, body, lastWriter,
+							sizeProduced, maxBodySizeToProduce, productionPaused);
+				}));
+				manager.sendFrame(lastWriter.get(), false);
+			}
+			if (!delayNextProduction)
+				produceBody(manager, streamId, message, sent, body, lastWriter, sizeProduced, maxBodySizeToProduce, productionPaused);
+		}, error -> {
+			// TODO
+		}, cancel -> {
+			// TODO
+		});
+	}
+	
+	private static void sendTrailers(StreamsManager manager, int streamId, HTTPMessage<?> message, Async<IOException> sent) {
+		if (message.getTrailerHeadersSuppliers() == null) {
+			sent.unblock();
+			return;
+		}
+		List<MimeHeader> headers = message.getTrailerHeadersSuppliers().get();
+		if (headers.isEmpty()) {
+			// finally not ! we need to send end of stream
+			HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
+				frameSent -> sent.unblock());
+			manager.sendFrame(w, false);
+			return;
+		}
+		List<Pair<String, String>> list = new LinkedList<>();
+		for (MimeHeader h : headers)
+			list.add(new Pair<>(h.getNameLowerCase(), h.getRawValue()));
+		manager.reserveCompressionContext(streamId).thenStart("Send HTTP/2 trailers", Priority.NORMAL, compressionContext -> {
+			manager.sendFrame(new HTTP2Headers.Writer(streamId, list, true, compressionContext, () -> {
+				manager.releaseCompressionContext(streamId);
+				sent.unblock();
+			}), false);
+		}, false);
 	}
 	
 }

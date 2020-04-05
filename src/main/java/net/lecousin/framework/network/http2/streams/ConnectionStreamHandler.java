@@ -31,7 +31,7 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			if (header.hasFlags(HTTP2Settings.FLAG_ACK)) {
 				// acknowledge of settings, the payload MUST be empty
 				if (header.getPayloadLength() != 0) {
-					manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, null);
+					manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, "settings ack must have empty payload");
 					return false;
 				}
 				// TODO ?
@@ -47,7 +47,7 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			try {
 				frame = new HTTP2Settings.Reader(header);
 			} catch (HTTP2Error e) {
-				manager.connectionError(e.getErrorCode(), e.getMessage());
+				manager.connectionError(e.getErrorCode(), "Error reading settings: " + e.getMessage());
 				return false;
 			}
 			payloadConsumer = frame.createConsumer();
@@ -55,7 +55,7 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			
 		case HTTP2FrameHeader.TYPE_PING:
 			if (header.getPayloadLength() != HTTP2Ping.OPAQUE_DATA_LENGTH) {
-				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, null);
+				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, "Invalid ping size");
 				return false;
 			}
 			frame = new HTTP2Ping.Reader();
@@ -64,7 +64,7 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			
 		case HTTP2FrameHeader.TYPE_GOAWAY:
 			if (header.getPayloadLength() < HTTP2GoAway.MINIMUM_PAYLOAD_LENGTH) {
-				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, null);
+				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, "Invalid goaway size");
 				return false;
 			}
 			frame = new HTTP2GoAway.Reader(header);
@@ -73,7 +73,7 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			
 		case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
 			if (header.getPayloadLength() != HTTP2WindowUpdate.LENGTH) {
-				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, null);
+				manager.connectionError(HTTP2Error.Codes.FRAME_SIZE_ERROR, "Invalid window update size");
 				return false;
 			}
 			frame = new HTTP2WindowUpdate.Reader();

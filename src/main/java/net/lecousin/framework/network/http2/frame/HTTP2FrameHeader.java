@@ -153,45 +153,26 @@ public class HTTP2FrameHeader {
 		StringBuilder s = new StringBuilder(128);
 		s.append('[');
 		s.append("stream ").append(streamId);
-		s.append(", type ").append(type).append(" = ");
-		switch (type) {
-		case TYPE_DATA:
-			s.append("DATA");
-			break;
-		case TYPE_HEADERS:
-			s.append("HEADERS");
-			break;
-		case TYPE_PRIORITY:
-			s.append("PRIORITY");
-			break;
-		case TYPE_RST_STREAM:
-			s.append("RST_STREAM");
-			break;
-		case TYPE_SETTINGS:
-			s.append("SETTINGS");
-			break;
-		case TYPE_PUSH_PROMISE:
-			s.append("PUSH_PROMISE");
-			break;
-		case TYPE_PING:
-			s.append("PING");
-			break;
-		case TYPE_GOAWAY:
-			s.append("GOAWAY");
-			break;
-		case TYPE_WINDOW_UPDATE:
-			s.append("WINDOW_UPDATE");
-			break;
-		case TYPE_CONTINUATION:
-			s.append("CONTINUATION");
-			break;
-		default:
-			s.append("unknown");
-			break;
-		}
+		s.append(", type ").append(type).append(" = ").append(getTypeName(type));
 		s.append(", flags = ").append(flags);
 		s.append(", payload = ").append(payloadLength);
 		s.append(']');
 		return s.toString();
+	}
+	
+	public static String getTypeName(byte type) {
+		switch (type) {
+		case TYPE_DATA: return "DATA";
+		case TYPE_HEADERS: return "HEADERS";
+		case TYPE_PRIORITY: return "PRIORITY";
+		case TYPE_RST_STREAM: return "RST_STREAM";
+		case TYPE_SETTINGS: return "SETTINGS";
+		case TYPE_PUSH_PROMISE: return "PUSH_PROMISE";
+		case TYPE_PING: return "PING";
+		case TYPE_GOAWAY: return "GOAWAY";
+		case TYPE_WINDOW_UPDATE: return "WINDOW_UPDATE";
+		case TYPE_CONTINUATION: return "CONTINUATION";
+		default: return "UNKNOWN[" + (int)type + "]";
+		}
 	}
 }

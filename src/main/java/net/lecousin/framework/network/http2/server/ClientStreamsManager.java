@@ -20,7 +20,7 @@ class ClientStreamsManager extends StreamsManager {
 	
 	@Override
 	public DataHandler createDataHandler(int streamId) {
-		return new ClientDataHandler(this, (TCPServerClient)remote, streamId, server);
+		return new ClientDataHandler((TCPServerClient)remote, streamId, server);
 	}
 	
 

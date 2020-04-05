@@ -281,9 +281,7 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 		Long size = headers.getContentLength();
 		if (size != null)
 			return size.longValue() != 0;
-		String s = headers.getFirstRawValue(MimeHeaders.TRANSFER_ENCODING);
-		if (s == null) s = headers.getFirstRawValue(MimeHeaders.CONTENT_TRANSFER_ENCODING);
-		return (s != null && s.length() != 0);
+		return true;
 	}
 	
 	/** Return true is the given method may contain a body. GET method returns false. */

@@ -1,6 +1,7 @@
 package net.lecousin.framework.network.http2;
 
 import net.lecousin.framework.network.http.HTTPConstants;
+import net.lecousin.framework.network.http.HTTPProtocolVersion;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 
@@ -18,6 +19,7 @@ public interface HTTP2PseudoHeaderHandler {
 		/** Constructor. */
 		public Request(HTTPRequest request) {
 			this.request = request;
+			request.setProtocolVersion(new HTTPProtocolVersion((byte)2, (byte)0));
 		}
 
 		@Override
@@ -49,6 +51,7 @@ public interface HTTP2PseudoHeaderHandler {
 		/** Constructor. */
 		public Response(HTTPResponse response) {
 			this.response = response;
+			response.setProtocolVersion(new HTTPProtocolVersion((byte)2, (byte)0));
 		}
 		
 		@Override
@@ -64,6 +67,13 @@ public interface HTTP2PseudoHeaderHandler {
 			default:
 				throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Unexpected pseudo header " + name);
 			}
+		}
+	}
+	
+	public static class IgnoreAll implements HTTP2PseudoHeaderHandler {
+		@Override
+		public void accept(String name, String value) {
+			// ignore
 		}
 	}
 	

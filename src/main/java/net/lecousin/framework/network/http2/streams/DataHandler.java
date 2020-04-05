@@ -14,13 +14,13 @@ public interface DataHandler {
 	HTTP2PseudoHeaderHandler createPseudoHeaderHandler();
 	
 	/** Signal an empty entity, but headers may not yet be fully received. */
-	void emptyEntityReceived();
+	void emptyEntityReceived(StreamsManager manager, DataStreamHandler stream);
 
 	/** Return the body consumer. */
-	AsyncConsumer<ByteBuffer, IOException> endOfHeaders() throws Exception;
+	AsyncConsumer<ByteBuffer, IOException> endOfHeaders(StreamsManager manager, DataStreamHandler stream) throws Exception;
 	
-	void endOfBody();
+	void endOfBody(StreamsManager manager, DataStreamHandler stream);
 	
-	void endOfTrailers();
+	void endOfTrailers(StreamsManager manager, DataStreamHandler stream);
 	
 }

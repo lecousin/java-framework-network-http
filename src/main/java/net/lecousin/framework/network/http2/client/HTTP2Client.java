@@ -9,17 +9,22 @@ import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.util.Pair;
+import net.lecousin.framework.util.Triple;
 
-public class HTTP2Client implements HTTPClientRequestSender {
+public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	
 	public static final byte[] HTTP1_TO_HTTP2_REQUEST = new byte[] {
 		'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2', '.', '0', '\r', '\n',
@@ -48,6 +53,10 @@ public class HTTP2Client implements HTTPClientRequestSender {
 		this.settings = settings;
 	}
 
+	public HTTP2Client(HTTPClientConfiguration config) {
+		this(config, null, null, null);
+	}
+	
 	public Async<IOException> connectWithPriorKnowledge(InetSocketAddress address, String hostname, boolean isSecure) {
 		Pair<? extends TCPClient, IAsync<IOException>> conn =
 			HTTP1ClientConnection.openDirectConnection(address, hostname, isSecure, config, logger);
@@ -68,7 +77,7 @@ public class HTTP2Client implements HTTPClientRequestSender {
 	private void dataReceived(ByteBuffer data) {
 		manager.consumeDataFromRemote(data).onDone(() -> {
 			bufferCache.free(data);
-			int size = (int)settings.getMaxFrameSize();
+			int size = (int)settings.getMaxFrameSize() + HTTP2FrameHeader.LENGTH;
 			if (size > 65536) size = 65536;
 			tcp.receiveData(size, config.getTimeouts().getReceive()).onDone(this::dataReceived);
 		});
@@ -81,8 +90,30 @@ public class HTTP2Client implements HTTPClientRequestSender {
 	
 	@Override
 	public void redirectTo(HTTPClientRequestContext ctx, URI targetUri) {
-		if (logger.debug()) logger.debug("Redirect to " + targetUri);
-		// TODO Auto-generated method stub
+		if (HTTPClientConnection.isCompatible(targetUri, tcp, ctx.getRequest().getHostname(), ctx.getRequest().getPort())) {
+			if (logger.debug()) logger.debug("Reuse same HTTP/2 connection for redirection to " + targetUri);
+			send(ctx);
+			return;
+		}
+		if (logger.debug()) logger.debug("Open new connection for redirection to " + targetUri);
+		Triple<? extends TCPClient, IAsync<IOException>, Boolean> newClient;
+		try {
+			newClient = HTTP1ClientConnection.openConnection(targetUri.getHost(), targetUri.getPort(),
+				HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme()),
+				targetUri.getPath(), config, logger);
+		} catch (Exception e) {
+			ctx.getRequestSent().error(IO.error(e));
+			return;
+		}
+		HTTP1ClientConnection newConn = new HTTP1ClientConnection(newClient.getValue1(), newClient.getValue2(), 1, config);
+		ctx.setThroughProxy(newClient.getValue3().booleanValue());
+		newConn.send(ctx);
+		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
+	}
+	
+	@Override
+	public void close() throws Exception {
+		tcp.close();
 	}
 	
 }

@@ -30,6 +30,12 @@ public interface StreamHandler {
 		public void consumeFramePayload(StreamsManager manager, ByteBuffer data, Async<IOException> onConsumed) {
 			HTTP2FrameHeader header = manager.getCurrentFrameHeader();
 			int dataPos = data.position();
+			if (payloadConsumer == null) {
+				if (manager.getLogger().debug())
+					manager.getLogger().debug("No consumer => skip frame payload");
+				new SkipFrame().consumeFramePayload(manager, data, onConsumed);
+				return;
+			}
 			if (manager.getLogger().debug())
 				manager.getLogger().debug("Consuming frame payload using " + payloadConsumer);
 			AsyncSupplier<Boolean, HTTP2Error> consumption = payloadConsumer.consume(data);

@@ -1,11 +1,11 @@
 package net.lecousin.framework.network.http2.streams;
 
-import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.HTTP2PseudoHeaderHandler;
 import net.lecousin.framework.network.http2.frame.HTTP2Continuation;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2Headers;
+import net.lecousin.framework.network.mime.header.MimeHeaders;
 
 class SkipHeadersFrame extends StreamHandler.Default {
 	
@@ -29,12 +29,10 @@ class SkipHeadersFrame extends StreamHandler.Default {
 		}
 		
 		manager.currentDecompressionStreamId = streamId;
-		HTTPRequest r = new HTTPRequest();
+		MimeHeaders headers = new MimeHeaders();
 		frame = header.getType() == HTTP2FrameHeader.TYPE_HEADERS
-			? new HTTP2Headers.Reader(header, manager.decompressionContext,
-				r.getHeaders(), new HTTP2PseudoHeaderHandler.Request(r))
-			: new HTTP2Continuation.Reader(header, manager.decompressionContext,
-				r.getHeaders(), new HTTP2PseudoHeaderHandler.Request(r));
+			? new HTTP2Headers.Reader(header, manager.decompressionContext, headers, new HTTP2PseudoHeaderHandler.IgnoreAll())
+			: new HTTP2Continuation.Reader(header, manager.decompressionContext, headers, new HTTP2PseudoHeaderHandler.IgnoreAll());
 		payloadConsumer = frame.createConsumer();
 
 		return true;
