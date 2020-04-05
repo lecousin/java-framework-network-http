@@ -9,6 +9,7 @@ import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -31,6 +32,7 @@ public class TestHTTP1ClientToHttpBin extends LCCoreAbstractTest {
 	
 	@Before
 	public void initTest() throws Exception {
+		AbstractNetworkTest.deactivateNetworkTraces();
 		test.init();
 	}
 	

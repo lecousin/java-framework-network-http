@@ -469,7 +469,6 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	@SuppressWarnings("java:S3776") // complexity
 	private void nextJob() {
-		if (logger.debug()) logger.debug("Check next job to do");
 		Request r = null;
 		Request previous = null;
 		for (Iterator<Request> it = requests.iterator(); it.hasNext(); previous = r) {

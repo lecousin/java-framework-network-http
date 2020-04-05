@@ -15,6 +15,7 @@ import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.io.util.EmptyReadable;
+import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.BinaryFileEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
@@ -180,7 +181,7 @@ public class HTTPClientRequestContext extends AbstractAttributesContainer {
 	
 	@Override
 	public String toString() {
-		return "HTTPClientRequestContext: " + request;
+		return "HTTPClientRequestContext: " + HTTP1RequestCommandProducer.generateString(request);
 	}
 
 }
