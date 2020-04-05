@@ -24,6 +24,7 @@ import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.TCPServer;
+import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.After;
 import org.junit.Before;
@@ -47,6 +48,7 @@ public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 	
 	@Before
 	public void initTest() throws Exception {
+		AbstractNetworkTest.deactivateNetworkTraces();
 		test.init();
 	}
 	

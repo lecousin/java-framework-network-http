@@ -14,6 +14,7 @@ import net.lecousin.framework.network.http2.client.HTTP2Client;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
+import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -24,7 +25,7 @@ public class TestHttp2Client extends LCCoreAbstractTest {
 	@Test
 	public void testWikipedia() throws Exception {
 		String hostname = "wikipedia.org";
-//		AbstractNetworkTest.activateNetworkTraces();
+		AbstractNetworkTest.deactivateNetworkTraces();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Client.class);
 		try (HTTP2Client client = new HTTP2Client(new HTTPClientConfiguration(), new HTTP2Settings(), logger, ByteArrayCache.getInstance())) {
 			client.connectWithPriorKnowledge(new InetSocketAddress(hostname, 443), hostname, true).blockThrow(0);
@@ -55,7 +56,7 @@ public class TestHttp2Client extends LCCoreAbstractTest {
 	@Test
 	public void testW3Get() throws Exception {
 		String hostname = "validator.w3.org";
-//		AbstractNetworkTest.activateNetworkTraces();
+		AbstractNetworkTest.deactivateNetworkTraces();
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Client.class);
 		try (HTTP2Client client = new HTTP2Client(new HTTPClientConfiguration(), new HTTP2Settings(), logger, ByteArrayCache.getInstance())) {
 			client.connectWithPriorKnowledge(new InetSocketAddress(hostname, 443), hostname, true).blockThrow(0);
