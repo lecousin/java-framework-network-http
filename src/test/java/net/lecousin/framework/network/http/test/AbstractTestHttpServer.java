@@ -234,9 +234,9 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 
 	@Test
 	public void testPostLargeBody() throws Exception {
+		stopLogging();
+		AbstractNetworkTest.deactivateNetworkTraces();
 		startServer(new ProcessorForTests());
-		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
-		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.INFO);
 		byte[] buf = new byte[10 * 1024 * 1024];
 		for (int i = 0; i < buf.length; ++i)
 			buf[i] = (byte)(i * 7 % 621);
@@ -253,8 +253,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			Assert.assertEquals(-1, bio.read());
 			bio.close();
 		} finally {
-			LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
-			LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.TRACE);
+			resumeLogging();
 		}
 	}
 	
