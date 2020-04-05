@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.threads.Task;
@@ -32,6 +33,7 @@ import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.entity.MultipartEntity;
+import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
@@ -67,6 +69,10 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	protected abstract ServerProtocol createProtocol(HTTPRequestProcessor processor);
 	
 	protected abstract HTTPClientRequestSender createClient() throws Exception;
+	
+	protected abstract void stopLogging();
+	
+	protected abstract void resumeLogging();
 	
 	@Before
 	public void deactivateTraces() {
@@ -111,6 +117,28 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			resp.getBodyReceived().blockThrow(0);
 			check(resp, 678, null);
 		}
+	}
+	
+	@Test
+	public void testManyHeaders() throws Exception {
+		stopLogging();
+		startServer(new ProcessorForTests());
+		try (HTTPClientRequestSender client = createClient()) {
+			HTTPClientRequest request = new HTTPClientRequest(serverAddress.getHostString(), serverAddress.getPort(), useSSL);
+			request = new HTTPClientRequest(serverAddress.getHostString(), serverAddress.getPort(), useSSL);
+			request.get().setURI("/test/get?status=201");
+			for (int i = 0; i < 1000; ++i)
+				request.addHeader("X-Client-" + i, "Value" + i);
+			HTTPClientResponse resp = client.send(request);
+			resp.getBodyReceived().blockThrow(0);
+			check(resp, 201, null);
+			for (int i = 0; i < 1000; ++i) {
+				List<MimeHeader> list = resp.getHeaders().getList("X-Server-" + i);
+				Assert.assertEquals("Header " + i, 1, list.size());
+				Assert.assertEquals("Header " + i, "Value" + i, list.get(0).getRawValue());
+			}
+		}
+		resumeLogging();
 	}
 	
 	@Test

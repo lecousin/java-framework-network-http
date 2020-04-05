@@ -58,7 +58,17 @@ public class TestHTTPClientToHttpBinWith3Connections extends LCCoreAbstractTest 
 		HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, test.request);
 		ctx.setMaxRedirections(test.maxRedirection);
 		client.send(ctx);
-		ctx.getResponse().getBodyReceived().blockThrow(0);
+		ctx.getResponse().getBodyReceived().blockThrow(60000);
+		if (!ctx.getResponse().getBodyReceived().isDone()) {
+			StringBuilder s = new StringBuilder();
+			s.append("Request ").append(ctx).append(" failed:")
+			.append("\n - sent: ").append(ctx.getRequestSent().isDone())
+			.append("\n - headers: ").append(ctx.getResponse().getHeadersReceived().isDone())
+			.append("\n - body: ").append(ctx.getResponse().getBodyReceived().isDone())
+			.append("\n - trailers: ").append(ctx.getResponse().getTrailersReceived().isDone())
+			;
+			throw new AssertionError(s.toString());
+		}
 		test.check(ctx.getResponse(), null);
 	}
 }

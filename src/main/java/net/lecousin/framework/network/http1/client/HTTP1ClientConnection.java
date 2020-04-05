@@ -284,9 +284,9 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 					s.append("waiting to send headers");
 				else if (r.ctx.getRequestBody() != null)
 					s.append("waiting to send body");
-				else if (!r.receiveStatusLine.isDone())
+				else if (r.receiveStatusLine == null || !r.receiveStatusLine.isDone())
 					s.append("waiting for response status line");
-				else if (!r.receiveHeaders.isDone())
+				else if (r.receiveHeaders == null || !r.receiveHeaders.isDone())
 					s.append("waiting for response headers");
 				else if (!r.ctx.getResponse().getBodyReceived().isDone())
 					s.append("waiting for response body");
@@ -495,7 +495,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 
 			// if headers are not yet sent, send them
 			if (r.headersSent == null) {
-				if (logger.debug()) logger.debug("Send headers for request " + r.ctx);
+				if (logger.debug()) logger.debug("Send headers for request " + r.ctx + " to " + tcp);
 				sendHeaders(r);
 				unblockResult(r, Boolean.TRUE);
 				break;
@@ -525,7 +525,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
 				r.ctx.setRequestBody(null);
 				// send body
-				if (logger.debug()) logger.debug("Send body for request " + r.ctx);
+				if (logger.debug()) logger.debug("Send body for request " + r.ctx + " to " + tcp);
 				final Request req = r;
 				final Request prev = previous;
 				Task.cpu("Send HTTP/1 request body",  Priority.NORMAL, t -> {
@@ -655,7 +655,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			stop(r, true);
 			return;
 		}
-		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode());
+		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode() + " for " + r.ctx + " from" + tcp);
 		if (r.ctx.getOnStatusReceived() != null) {
 			Boolean close = r.ctx.getOnStatusReceived().apply(r.ctx.getResponse());
 			if (close != null) {
@@ -679,7 +679,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			stop(r, true);
 			return;
 		}
-		if (logger.debug()) logger.debug("Headers received");
+		if (logger.debug()) logger.debug("Headers received for " + r.ctx + " from " + tcp);
 		HTTPClientResponse response = r.ctx.getResponse();
 		if (r.ctx.getOnHeadersReceived() != null) {
 			Boolean close = r.ctx.getOnHeadersReceived().apply(response);
@@ -726,7 +726,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			r.ctx.getResponse().getBodyReceived().error(IO.error(e));
 			return;
 		}
-		if (logger.debug()) logger.debug("Start receiving body");
+		if (logger.debug()) logger.debug("Start receiving body for " + r.ctx + " from " + tcp);
 		int bufferSize;
 		if (size == null)
 			bufferSize = 8192;
@@ -738,7 +738,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			bufferSize = 64 * 1024;
 		IAsync<IOException> receiveBody = tcp.getReceiver().consume(transfer, bufferSize, config.getTimeouts().getReceive());
 		receiveBody.onSuccess(() -> {
-			if (logger.debug()) logger.debug("Body received, end of request");
+			if (logger.debug()) logger.debug("Body received, end of request " + r.ctx + " from " + tcp);
 			requestDone(r);
 			r.ctx.getResponse().getBodyReceived().unblock();
 			r.ctx.getResponse().getTrailersReceived().unblock();
@@ -784,7 +784,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			if (size != null && size.longValue() > 0 && size.longValue() < 65536) {
 				skipBody = tcp.getReceiver().skipBytes(size.intValue(), config.getTimeouts().getReceive());
 				r.nextRequestCanBeSent = true;
-				if (logger.debug()) logger.debug("Skip body of redirection");
+				if (logger.debug()) logger.debug("Skip body of redirection from " + r.ctx + " on " + tcp);
 				skipBody.onSuccess(() -> requestDone(r));
 				skipBody.onErrorOrCancel(() -> stop(r, true));
 			} else if (size != null && size.longValue() == 0) {

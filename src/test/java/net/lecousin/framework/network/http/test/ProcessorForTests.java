@@ -6,6 +6,7 @@ import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
+import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 
@@ -54,6 +55,9 @@ public class ProcessorForTests implements HTTPRequestProcessor {
 		ctx.getResponse().setStatus(code, "Test OK");
 		if (ctx.getRequest().getQueryParameter("test") != null)
 			ctx.getResponse().setHeader("X-Test", ctx.getRequest().getQueryParameter("test"));
+		for (MimeHeader h : ctx.getRequest().getHeaders().getHeaders())
+			if (h.getNameLowerCase().startsWith("x-client-"))
+				ctx.getResponse().addHeader("X-Server-" + h.getName().substring(9), h.getRawValue());
 		
 		ctx.getResponse().getReady().unblock();
 	}

@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
+import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
@@ -19,6 +20,7 @@ import net.lecousin.framework.network.http.test.AbstractTestHttpServer;
 import net.lecousin.framework.network.http.test.ProcessorForTests;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
+import net.lecousin.framework.network.mime.header.MimeHeaders.HeadersConsumer;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.util.Triple;
 
@@ -32,6 +34,18 @@ public class TestHttp1Server extends AbstractTestHttpServer {
 	}
 	
 	private HTTP1ServerProtocol protocol;
+	
+	@Override
+	protected void stopLogging() {
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.ERROR);
+		LCCore.getApplication().getLoggerFactory().getLogger(HeadersConsumer.class).setLevel(Level.ERROR);
+	}
+	
+	@Override
+	protected void resumeLogging() {
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.DEBUG);
+		LCCore.getApplication().getLoggerFactory().getLogger(HeadersConsumer.class).setLevel(Level.DEBUG);
+	}
 	
 	@Override
 	protected ServerProtocol createProtocol(HTTPRequestProcessor processor) {

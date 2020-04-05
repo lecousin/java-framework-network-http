@@ -197,15 +197,15 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				switch (level) {
 				default:
 				case EXPIRED_ONLY:
-					if (connectionManagers.size() > 250 && now - manager.lastUsage() > 5 * 60 * 1000)
+					if (now - manager.lastUsage() > 5 * 60 * 1000)
 						toRemove.add(entry.getKey());
 					break;
 				case LOW:
-					if (connectionManagers.size() > 100 && now - manager.lastUsage() > 2 * 60 * 1000)
+					if (now - manager.lastUsage() > 2 * 60 * 1000)
 						toRemove.add(entry.getKey());
 					break;
 				case MEDIUM:
-					if (connectionManagers.size() > 50 && now - manager.lastUsage() > 30 * 1000)
+					if (now - manager.lastUsage() > 30 * 1000)
 						toRemove.add(entry.getKey());
 					break;
 				case URGENT:
@@ -486,7 +486,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 	}
 	
 	private void dequeueRequest() {
-		if (logger.debug()) logger.debug("Dequeue request");
+		if (logger.debug()) logger.debug("Dequeue request: " + queue.size() + " pending");
 		synchronized (connectionManagers) {
 			if (queue.isEmpty())
 				return;
