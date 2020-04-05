@@ -70,7 +70,7 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 		tcp.send(ByteBuffer.wrap(HTTP1_TO_HTTP2_REQUEST).asReadOnlyBuffer(), config.getTimeouts().getSend());
 		manager = new ClientStreamsManager(tcp, settings, null, config.getTimeouts().getSend(), logger, bufferCache);
 		// we expect the settings frame to come immediately
-		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived);
+		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, ready);
 		manager.getConnectionReady().onDone(ready);
 	}
 	

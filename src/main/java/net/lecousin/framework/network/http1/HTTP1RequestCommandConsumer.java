@@ -40,7 +40,8 @@ public class HTTP1RequestCommandConsumer extends PartialAsyncConsumer.ConsumerQu
 					return new AsyncSupplier<>(Boolean.TRUE, null);
 				}
 				if (!HTTPRequest.isValidMethodChar(b))
-					return new AsyncSupplier<>(null, new HTTPError(HttpURLConnection.HTTP_BAD_REQUEST, "Invalid method"));
+					return new AsyncSupplier<>(null, new HTTPError(HttpURLConnection.HTTP_BAD_REQUEST,
+						"Invalid method character: " + (b & 0xFF)));
 				if (str.length() >= HTTPRequest.MAX_METHOD_LENGTH)
 					return new AsyncSupplier<>(null, new HTTPError(HttpURLConnection.HTTP_BAD_REQUEST, "Method too long"));
 				str.append(b);
