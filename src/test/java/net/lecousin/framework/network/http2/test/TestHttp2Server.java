@@ -28,12 +28,14 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Override
 	protected void stopLogging() {
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.ERROR);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTP2ServerProtocol.class).setLevel(Level.ERROR);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTP2Client.class).setLevel(Level.ERROR);
 	}
 	
 	@Override
 	protected void resumeLogging() {
+		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.DEBUG);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTP2ServerProtocol.class).setLevel(useSSL ? Level.DEBUG : Level.TRACE);
 		LCCore.getApplication().getLoggerFactory().getLogger(HTTP2Client.class).setLevel(useSSL ? Level.DEBUG : Level.TRACE);
 	}
