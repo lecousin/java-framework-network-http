@@ -70,7 +70,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	
 	@Before
 	public void deactivateTraces() {
-		//deactivateNetworkTraces();
+		deactivateNetworkTraces();
 	}
 	
 	protected void startServer(HTTPRequestProcessor processor) throws Exception {

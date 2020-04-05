@@ -1,7 +1,10 @@
 package net.lecousin.framework.network.http2.streams;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.frame.HTTP2Frame;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
@@ -11,6 +14,11 @@ import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.http2.frame.HTTP2WindowUpdate;
 
 class ConnectionStreamHandler extends StreamHandler.Default {
+	
+	@Override
+	public int getStreamId() {
+		return 0;
+	}
 
 	/** Start processing a frame. Return false if nothing else should be done. */
 	@Override
@@ -114,6 +122,12 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 		default:
 			break;
 		}
+	}
+	
+	@Override
+	protected void error(HTTP2Error error, StreamsManager manager, Async<IOException> onConsumed) {
+		manager.connectionError(error.getErrorCode(), error.getMessage());
+		onConsumed.error(IO.error(error));
 	}
 
 }

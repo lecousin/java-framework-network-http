@@ -56,6 +56,7 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		.setWindowSize(128L * 1024)
 		.setHeaderTableSize(4096) // it is supposed to be good to keep indexes on 7-bits
 		.setEnablePush(false); // we do not do that for now
+	private boolean enableRangeRequests = false;
 	
 	public HTTPRequestProcessor getProcessor() {
 		return processor;
@@ -89,6 +90,14 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		return settings;
 	}
 
+	public boolean rangeRequestsEnabled() {
+		return enableRangeRequests;
+	}
+
+	public void enableRangeRequests(boolean enableRangeRequests) {
+		this.enableRangeRequests = enableRangeRequests;
+	}
+
 	@Override
 	public String getUpgradeProtocolToken() {
 		return "h2c";
@@ -96,11 +105,11 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 	
 	@Override
 	public boolean acceptUpgrade(TCPServerClient client, HTTPRequest request) {
-		List<MimeHeader> settings = request.getHeaders().getList(HTTP2Constants.Headers.Request.HTTP2_SETTINGS);
-		if (settings.size() != 1)
+		List<MimeHeader> settingsHeaders = request.getHeaders().getList(HTTP2Constants.Headers.Request.HTTP2_SETTINGS);
+		if (settingsHeaders.size() != 1)
 			return false;
 		try {
-			byte[] bytes = Base64Encoding.instanceURL.decode(new BytesFromIso8859String(settings.get(0).getRawValue()));
+			byte[] bytes = Base64Encoding.instanceURL.decode(new BytesFromIso8859String(settingsHeaders.get(0).getRawValue()));
 			HTTP2Settings.Reader clientSettings = new HTTP2Settings.Reader(bytes.length);
 			clientSettings.createConsumer().consume(ByteBuffer.wrap(bytes));
 			client.setAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE, clientSettings);

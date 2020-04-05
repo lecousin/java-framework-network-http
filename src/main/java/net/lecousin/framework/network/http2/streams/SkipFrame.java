@@ -8,6 +8,11 @@ import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 
 class SkipFrame implements StreamHandler {
 
+	public SkipFrame(int streamId) {
+		this.streamId = streamId;
+	}
+	
+	private int streamId;
 	private int payloadPos = 0;
 	
 	@Override
@@ -21,8 +26,8 @@ class SkipFrame implements StreamHandler {
 
 		// just skip payload to be able to process next frame
 		int expected = header.getPayloadLength() - payloadPos;
-		if (manager.getLogger().debug())
-			manager.getLogger().debug("Skipping frame payload: " + expected);
+		if (manager.getLogger().trace())
+			manager.getLogger().trace("Skipping frame payload: " + expected);
 		if (header.getType() == HTTP2FrameHeader.TYPE_DATA)
 			manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 		if (data.remaining() < expected) {
@@ -31,10 +36,15 @@ class SkipFrame implements StreamHandler {
 			return;
 		}
 		data.position(data.position() + expected);
-		if (manager.getLogger().debug())
-			manager.getLogger().debug("Frame fully skipped");
+		if (manager.getLogger().trace())
+			manager.getLogger().trace("Frame fully skipped");
 		manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 		manager.endOfFrame(data, onConsumed);
+	}
+
+	@Override
+	public int getStreamId() {
+		return streamId;
 	}
 
 }

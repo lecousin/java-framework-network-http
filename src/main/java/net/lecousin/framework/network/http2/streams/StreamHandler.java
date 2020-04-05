@@ -11,6 +11,9 @@ import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 
 public interface StreamHandler {
 	
+	/** Return the stream id. */
+	int getStreamId();
+	
 	/** Start processing a frame. Return false if nothing else should be done.
 	 * if payload length is 0, the method MUST process the frame and consumeFramePayload
 	 * won't be called.
@@ -28,24 +31,28 @@ public interface StreamHandler {
 		
 		@Override
 		public void consumeFramePayload(StreamsManager manager, ByteBuffer data, Async<IOException> onConsumed) {
+			boolean trace = manager.getLogger().trace();
 			HTTP2FrameHeader header = manager.getCurrentFrameHeader();
 			int dataPos = data.position();
 			if (payloadConsumer == null) {
 				if (manager.getLogger().debug())
 					manager.getLogger().debug("No consumer => skip frame payload");
-				new SkipFrame().consumeFramePayload(manager, data, onConsumed);
+				new SkipFrame(getStreamId()).consumeFramePayload(manager, data, onConsumed);
 				return;
 			}
-			if (manager.getLogger().debug())
+			if (trace)
 				manager.getLogger().debug("Consuming frame payload using " + payloadConsumer);
 			AsyncSupplier<Boolean, HTTP2Error> consumption = payloadConsumer.consume(data);
 			consumption.onDone(endOfFrame -> {
 				payloadPos += data.position() - dataPos;
-				if (manager.getLogger().debug())
-					manager.getLogger().debug("Frame payload consumed: " + payloadPos + " / " + header.getPayloadLength());
+				if (trace)
+					manager.getLogger().trace("Frame payload consumed: " + payloadPos + " / " + header.getPayloadLength());
 				if (payloadPos == header.getPayloadLength()) {
-					if (!endOfFrame) {
-						// TODO error
+					if (!endOfFrame.booleanValue()) {
+						error(new HTTP2Error(false, HTTP2Error.Codes.INTERNAL_ERROR,
+							"Payload consumer said it needs more data but full payload has been consumer: "
+							+ payloadConsumer), manager, onConsumed);
+						return;
 					}
 					onEndOfPayload(manager, header);
 					frame = null;
@@ -55,20 +62,24 @@ public interface StreamHandler {
 					return;
 				}
 				if (payloadPos > header.getPayloadLength()) {
-					// TODO error
+					error(new HTTP2Error(false, HTTP2Error.Codes.INTERNAL_ERROR,
+						"Payload consumer consumed more than payload: " + payloadConsumer),	manager, onConsumed);
+					return;
 				}
 				// more payload data expected
 				if (data.hasRemaining()) {
-					// TODO error
+					error(new HTTP2Error(false, HTTP2Error.Codes.INTERNAL_ERROR,
+						"Payload consumer didn't consume full data: " + payloadConsumer), manager, onConsumed);
+					return;
 				}
 				onConsumed.unblock();
-			}, error -> {
-				// TODO
-				manager.getLogger().error("Error consuming HTTP/2 payload", error);
-			}, cancel -> {
-				// TODO
-			});
+			},
+			error -> error(error, manager, onConsumed),
+			cancel -> error(new HTTP2Error(false, HTTP2Error.Codes.CANCEL, null), manager, onConsumed)
+			);
 		}
+		
+		protected abstract void error(HTTP2Error error, StreamsManager manager, Async<IOException> onConsumed);
 		
 		protected abstract void onEndOfPayload(StreamsManager manager, HTTP2FrameHeader header);
 		

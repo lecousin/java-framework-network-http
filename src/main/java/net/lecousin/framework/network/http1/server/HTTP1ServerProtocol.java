@@ -417,6 +417,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		
 	}
 	
+	@SuppressWarnings("java:S3776") // complexity
 	private boolean handleUpgradeRequest(TCPServerClient client, HTTPRequest request, ByteBuffer data)
 	throws HTTPException {
 		if (upgradableProtocols == null)
@@ -483,6 +484,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		return true;
 	}
 	
+	@SuppressWarnings("java:S3398") // clearer to keep it here
 	private void sendResponse(HTTPRequestContext ctx) {
 		HTTPServerResponse response = ctx.getResponse();
 		if (response.getReady().isCancelled()) {
@@ -493,7 +495,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 			response.setStatus(response.getReady().hasError() ? 500 : 200);
 
 		if (enableRangeRequests)
-			handleRangeRequest(ctx);
+			handleRangeRequest(ctx, logger);
 		
 		MimeEntity entity = response.getEntity();
 		AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer;
@@ -601,7 +603,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	 * By default range requests are disabled. It may be enabled globally by calling the method
 	 * {@link #enableRangeRequests()} or by calling this method only on the requests we want to enable it.
 	 */
-	private void handleRangeRequest(HTTPRequestContext ctx) {
+	public static void handleRangeRequest(HTTPRequestContext ctx, Logger logger) {
 		HTTPServerResponse response = ctx.getResponse();
 		if (response.getStatusCode() != 200) return;
 		if (!response.getEntity().canProduceBodyRange()) return;

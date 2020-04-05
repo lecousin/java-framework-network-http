@@ -6,11 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.header.MimeHeadersContainer;
+import net.lecousin.framework.util.AbstractAttributesContainer;
 
 /** Abstract class for HTTPRequest and HTTPResponse.
  * @param <ME> type of implementation

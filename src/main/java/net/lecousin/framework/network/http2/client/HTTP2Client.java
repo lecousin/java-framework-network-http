@@ -26,7 +26,7 @@ import net.lecousin.framework.util.Triple;
 
 public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	
-	public static final byte[] HTTP1_TO_HTTP2_REQUEST = new byte[] {
+	private static final byte[] HTTP1_TO_HTTP2_REQUEST = new byte[] {
 		'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2', '.', '0', '\r', '\n',
 		'\r', '\n',
 		'S', 'M', '\r', '\n',

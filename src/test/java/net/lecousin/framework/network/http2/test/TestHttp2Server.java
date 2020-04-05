@@ -8,8 +8,6 @@ import net.lecousin.framework.network.http2.client.HTTP2Client;
 import net.lecousin.framework.network.http2.server.HTTP2ServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 
-import org.junit.Assume;
-
 public class TestHttp2Server extends AbstractTestHttpServer {
 
 	public TestHttp2Server(boolean useSSL) {
@@ -28,7 +26,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Override
 	protected void enableRangeRequests() {
-		Assume.assumeFalse(true); // TODO
+		protocol2.enableRangeRequests(true);
 	}
 	
 	@Override

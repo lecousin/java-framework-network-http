@@ -15,12 +15,12 @@ import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.io.buffering.IOInMemoryOrFile;
 import net.lecousin.framework.io.out2in.OutputToInput;
 import net.lecousin.framework.io.util.EmptyReadable;
-import net.lecousin.framework.network.AbstractAttributesContainer;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.BinaryFileEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntityFactory;
+import net.lecousin.framework.util.AbstractAttributesContainer;
 import net.lecousin.framework.util.Pair;
 
 /** Context while sending an HTTP request and receiving the response. */

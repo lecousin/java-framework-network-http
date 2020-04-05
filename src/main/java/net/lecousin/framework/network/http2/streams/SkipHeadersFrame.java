@@ -1,5 +1,9 @@
 package net.lecousin.framework.network.http2.streams;
 
+import java.io.IOException;
+
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.HTTP2PseudoHeaderHandler;
 import net.lecousin.framework.network.http2.frame.HTTP2Continuation;
@@ -41,5 +45,15 @@ class SkipHeadersFrame extends StreamHandler.Default {
 	@Override
 	protected void onEndOfPayload(StreamsManager manager, HTTP2FrameHeader header) {
 		manager.currentDecompressionStreamId = -1;
+	}
+
+	@Override
+	public int getStreamId() {
+		return streamId;
+	}
+
+	@Override
+	protected void error(HTTP2Error error, StreamsManager manager, Async<IOException> onConsumed) {
+		onConsumed.error(IO.error(error));
 	}
 }

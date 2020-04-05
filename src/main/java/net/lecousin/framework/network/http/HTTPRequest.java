@@ -286,7 +286,7 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	
 	/** Return true is the given method may contain a body. GET method returns false. */
 	public static boolean methodMayContainBody(String method) {
-		return !METHOD_GET.equals(method);
+		return !METHOD_GET.equals(method) && !METHOD_CONNECT.equals(method) && !METHOD_HEAD.equals(method);
 	}
 	
 	/** Return true if the connection should be persistent. */

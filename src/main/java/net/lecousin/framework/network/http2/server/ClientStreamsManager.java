@@ -22,6 +22,9 @@ class ClientStreamsManager extends StreamsManager {
 	public DataHandler createDataHandler(int streamId) {
 		return new ClientDataHandler((TCPServerClient)remote, streamId, server);
 	}
-	
+
+	public HTTP2ServerProtocol getServer() {
+		return server;
+	}
 
 }

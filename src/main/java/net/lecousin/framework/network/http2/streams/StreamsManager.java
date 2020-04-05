@@ -169,9 +169,6 @@ public abstract class StreamsManager {
 	private void startConsumeFramePayload(ByteBuffer data, Async<IOException> onConsumed) {
 		currentFrameHeaderConsumer = null;
 		currentFrameState = FrameState.PAYLOAD;
-		if (logger.trace())
-			logger.trace("Frame header received with type " + currentFrameHeader.getType() + ", flags " + currentFrameHeader.getFlags()
-				+ ", stream " + currentFrameHeader.getStreamId() + ", payload length " + currentFrameHeader.getPayloadLength());
 		currentStream = processFrameHeader();
 		if (currentStream == null)
 			return; // connection error
@@ -199,8 +196,10 @@ public abstract class StreamsManager {
 			return;
 		}
 		// TODO check number of processed requests and delay receiving the next one if needed
-		// TODO launch it in a new task to avoid recursivity
-		consumeDataFromRemote(data, onConsumed);
+		Task.cpu("Continue consuming HTTP/2 data", t -> {
+			consumeDataFromRemote(data, onConsumed);
+			return null;
+		}).start();
 	}
 
 	void applyRemoteSettings(HTTP2Settings settings) {
@@ -233,8 +232,8 @@ public abstract class StreamsManager {
 	private StreamHandler processFrameHeader() {
 		if (closing)
 			return null;
-		if (logger.debug())
-			logger.debug("Received frame: " + currentFrameHeader);
+		if (logger.trace())
+			logger.trace("Received frame: " + currentFrameHeader);
 		StreamHandler stream;
 		if (currentFrameHeader.getStreamId() == 0) {
 			stream = connectionStream;
@@ -250,17 +249,17 @@ public abstract class StreamsManager {
 					switch (currentFrameHeader.getType()) {
 					case HTTP2FrameHeader.TYPE_HEADERS:
 					case HTTP2FrameHeader.TYPE_CONTINUATION:
-						if (logger.debug())
-							logger.debug("Received headers frame on closed stream, process it: " + currentFrameHeader);
+						if (logger.trace())
+							logger.trace("Received headers frame on closed stream, process it: " + currentFrameHeader);
 						stream = new SkipHeadersFrame(currentFrameHeader.getStreamId());
 						break;
 					case HTTP2FrameHeader.TYPE_PRIORITY:
 						// TODO
 					case HTTP2FrameHeader.TYPE_DATA:
 					case HTTP2FrameHeader.TYPE_RST_STREAM:
-						if (logger.debug())
-							logger.debug("Received frame on closed stream, skip it: " + currentFrameHeader);
-						stream = new SkipFrame();
+						if (logger.trace())
+							logger.trace("Received frame on closed stream, skip it: " + currentFrameHeader);
+						stream = new SkipFrame(currentFrameHeader.getStreamId());
 						break;
 					case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
 						DependencyNode node;
@@ -268,15 +267,15 @@ public abstract class StreamsManager {
 							node = dependencyNodes.get(currentFrameHeader.getStreamId());
 						}
 						if (node == null) {
-							if (logger.debug())
-								logger.debug("Received window update on closed stream, skip it: "
+							if (logger.trace())
+								logger.trace("Received window update on closed stream, skip it: "
 									+ currentFrameHeader);
-							stream = new SkipFrame();
+							stream = new SkipFrame(currentFrameHeader.getStreamId());
 						} else {
-							if (logger.debug())
-								logger.debug("Received window update on closed stream with pending data, process it: "
+							if (logger.trace())
+								logger.trace("Received window update on closed stream with pending data, process it: "
 									+ currentFrameHeader);
-							stream = new ProcessWindowUpdateFrame();
+							stream = new ProcessWindowUpdateFrame(currentFrameHeader.getStreamId());
 						}
 						break;
 					default:
@@ -377,7 +376,7 @@ public abstract class StreamsManager {
 	private static final int MAX_FRAMES_PRODUCED = 5;
 	
 	public void sendFrame(HTTP2Frame.Writer frame, boolean closeAfter) {
-		if (logger.debug()) logger.debug("Frame to send on stream " + frame.getStreamId()
+		if (logger.trace()) logger.trace("Frame to send on stream " + frame.getStreamId()
 			+ ": " + HTTP2FrameHeader.getTypeName(frame.getType()));
 		synchronized (this) {
 			if (closing)
@@ -476,10 +475,10 @@ public abstract class StreamsManager {
 						if (producer instanceof HTTP2Data)
 							decrementSendWindowSize(producer.getStreamId(),
 								data.remaining() - HTTP2FrameHeader.LENGTH);
-						if (logger.debug()) {
+						if (logger.trace()) {
 							HTTP2FrameHeader header = new HTTP2FrameHeader();
 							header.createConsumer().consume(data.toByteBuffer().asReadOnlyBuffer());
-							logger.debug("Frame ready to send: " + header);
+							logger.trace("Frame ready to send: " + header);
 						}
 					} while (producer.canProduceMore() && buffersReady.size() + production.size() < MAX_FRAMES_PRODUCED);
 					if (buffersReady.size() + production.size() >= MAX_FRAMES_PRODUCED)
@@ -509,7 +508,7 @@ public abstract class StreamsManager {
 		long increment = 0;
 		synchronized (dependencyTree) {
 			dependencyTree.recvWindowSize -= size;
-			if (logger.debug()) logger.debug("Connection window recv consumed: " + size
+			if (logger.trace()) logger.trace("Connection window recv consumed: " + size
 				+ ", remaining = " + dependencyTree.recvWindowSize);
 			if (dependencyTree.recvWindowSize <= localSettings.getWindowSize() / 2) {
 				increment = localSettings.getWindowSize() - dependencyTree.recvWindowSize;
@@ -517,15 +516,15 @@ public abstract class StreamsManager {
 			}
 		}
 		if (increment > 0) {
-			if (logger.debug())
-				logger.debug("Connection window recv increment: " + increment);
+			if (logger.trace())
+				logger.trace("Connection window recv increment: " + increment);
 			sendFrame(new HTTP2WindowUpdate.Writer(0, increment), false);
 		}
 	}
 	
 	void incrementConnectionSendWindowSize(long increment) {
-		if (logger.debug())
-			logger.debug("Increment connection send window: " + increment
+		if (logger.trace())
+			logger.trace("Increment connection send window: " + increment
 				+ ", new size = " + (dependencyTree.sendWindowSize + increment));
 		synchronized (dependencyTree) {
 			boolean wasZero = dependencyTree.sendWindowSize <= 0;
@@ -542,8 +541,8 @@ public abstract class StreamsManager {
 				node = addStreamNode(dependencyTree, streamId, 16);
 			boolean wasZero = node.sendWindowSize <= 0;
 			node.sendWindowSize += increment;
-			if (logger.debug())
-				logger.debug("Increment window for stream " + streamId + ": " + increment + ", new size = " + node.sendWindowSize);
+			if (logger.trace())
+				logger.trace("Increment window for stream " + streamId + ": " + increment + ", new size = " + node.sendWindowSize);
 			if (wasZero && node.sendWindowSize > 0 && buffersReady.size() < MAX_FRAMES_PRODUCED)
 				launchFrameProduction();
 		}
@@ -555,8 +554,8 @@ public abstract class StreamsManager {
 			DependencyNode node = dependencyNodes.get(streamId);
 			if (node != null) {
 				node.sendWindowSize -= size;
-				if (logger.debug())
-					logger.debug("Decrement window for stream " + streamId + ": " + size + ", new size = " + node.sendWindowSize);
+				if (logger.trace())
+					logger.trace("Decrement window for stream " + streamId + ": " + size + ", new size = " + node.sendWindowSize);
 			}
 		}
 	}

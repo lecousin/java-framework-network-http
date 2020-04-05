@@ -10,6 +10,7 @@ import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.mutable.Mutable;
 import net.lecousin.framework.mutable.MutableBoolean;
 import net.lecousin.framework.mutable.MutableInteger;
@@ -49,6 +50,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 		OPEN_TRAILERS,
 	}
 	
+	@Override
 	public int getStreamId() {
 		return id;
 	}
@@ -280,6 +282,12 @@ public class DataStreamHandler extends StreamHandler.Default {
 		}
 	}
 	
+	@Override
+	protected void error(HTTP2Error error, StreamsManager manager, Async<IOException> onConsumed) {
+		manager.getLogger().error(error.getMessage());
+		resetStream(manager, error.getErrorCode());
+		onConsumed.error(IO.error(error));
+	}
 	
 	public void resetStream(StreamsManager manager, int errorCode) {
 		if (errorCode != HTTP2Error.Codes.NO_ERROR || !StreamState.IDLE.equals(state)) {

@@ -15,6 +15,7 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
+import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.http2.HTTP2Constants;
 import net.lecousin.framework.network.http2.HTTP2PseudoHeaderHandler;
 import net.lecousin.framework.network.http2.frame.HTTP2Headers;
@@ -87,20 +88,21 @@ class ClientDataHandler implements DataHandler {
 	
 	@Override
 	public void endOfBody(StreamsManager manager, DataStreamHandler stream) {
-		// TODO Auto-generated method stub
-		
+		// nothing
 	}
 	
 	@Override
 	public void endOfTrailers(StreamsManager manager, DataStreamHandler stream) {
-		// TODO Auto-generated method stub
-		
+		// nothing
 	}
 	
 	private void sendHeaders(StreamsManager manager, HTTPRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
 			// TODO if getReady() has an error, send an error
-			// TODO handle range request
+			
+			if (((ClientStreamsManager)manager).getServer().rangeRequestsEnabled())
+				HTTP1ServerProtocol.handleRangeRequest(ctx, manager.getLogger());
+			
 			AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer;
 			if (ctx.getResponse().getEntity() == null) {
 				bodyProducer = new AsyncSupplier<>(new Pair<>(Long.valueOf(0), null), null);
