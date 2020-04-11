@@ -169,8 +169,11 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	}
 	
 	@Override
-	public int getInputBufferSize() {
-		return 16384;
+	public int getInputBufferSize(TCPServerClient client) {
+		ReceiveStatus status = (ReceiveStatus)client.getAttribute(RECEIVE_STATUS_ATTRIBUTE);
+		if (status != null && ReceiveStatus.BODY.equals(status))
+			return 32768;
+		return 8192;
 	}
 	
 	@SuppressWarnings("unchecked")

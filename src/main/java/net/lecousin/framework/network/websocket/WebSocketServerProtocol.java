@@ -163,8 +163,8 @@ public class WebSocketServerProtocol implements HTTP1ServerUpgradeProtocol {
 	}
 	
 	@Override
-	public int getInputBufferSize() {
-		return 8192;
+	public int getInputBufferSize(TCPServerClient client) {
+		return 4096;
 	}
 	
 	@Override

@@ -178,8 +178,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 	}
 
 	@Override
-	public int getInputBufferSize() {
-		return 8192;
+	public int getInputBufferSize(TCPServerClient client) {
+		return (int)Math.min(32768, settings.getMaxFrameSize());
 	}
 
 	private static final String ATTRIBUTE_SETTINGS_FROM_UPGRADE = "http2.server.upgrade.settings";
