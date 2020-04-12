@@ -321,18 +321,23 @@ public abstract class StreamsManager {
 		lastRemoteStreamId = id;
 		DataStreamHandler stream = new DataStreamHandler(id);
 		dataStreams.put(id, stream);
+		boolean tooManyStreams = false;
 		synchronized (dependencyTree) {
 			// check if maximum is reached
 			if (localSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
 				// we may need to close stream
 				dependencyTree.cleanStreams();
 				if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
-					connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
-						+ dependencyNodes.size() + "/" + localSettings.getMaxConcurrentStreams() + ")");
-					return null;
+					tooManyStreams = true;
 				}
 			}
-			addStreamNode(dependencyTree, id, 16);
+			if (!tooManyStreams)
+				addStreamNode(dependencyTree, id, 16);
+		}
+		if (tooManyStreams) {
+			connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
+				+ dependencyNodes.size() + "/" + localSettings.getMaxConcurrentStreams() + ")");
+			return null;
 		}
 		return stream;
 	}
@@ -728,6 +733,8 @@ public abstract class StreamsManager {
 				if (!toClose.isEmpty()) {
 					for (DependencyNode node : toClose)
 						node.close();
+					if (deep == 0)
+						deep++;
 					continue;
 				}
 				deep++;

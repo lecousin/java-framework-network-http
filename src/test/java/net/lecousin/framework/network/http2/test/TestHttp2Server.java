@@ -1,17 +1,36 @@
 package net.lecousin.framework.network.http2.test;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
+import java.nio.charset.StandardCharsets;
+import java.util.function.IntFunction;
 
 import net.lecousin.framework.application.LCCore;
+import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
+import net.lecousin.framework.io.IOUtil;
+import net.lecousin.framework.io.buffering.ByteArrayIO;
+import net.lecousin.framework.io.data.ByteArray;
+import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
+import net.lecousin.framework.memory.ByteArrayCache;
+import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.test.AbstractTestHttpServer;
+import net.lecousin.framework.network.http.test.ProcessorForTests;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.http2.client.HTTP2Client;
+import net.lecousin.framework.network.http2.frame.HTTP2Frame;
+import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.server.HTTP2ServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
+import net.lecousin.framework.util.Pair;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -45,6 +64,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 
 	private boolean makeClientAggressive = false;
 	private boolean makeServerRestrictive = false;
+	private boolean useHttp1Client = false;
 
 	@Override
 	protected ServerProtocol createProtocol(HTTPRequestProcessor processor) {
@@ -62,6 +82,10 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Override
 	protected HTTPClientRequestSender createClient() throws Exception {
+		if (useHttp1Client) {
+			HTTP1ClientConnection client = new HTTP1ClientConnection(2, clientConfig);
+			return client;
+		}
 		HTTP2Client client = new HTTP2Client(clientConfig);
 		client.connectWithPriorKnowledge(serverAddress, "localhost", useSSL).blockThrow(0);
 		if (makeClientAggressive)
@@ -70,13 +94,20 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	}
 	
 	@Test
+	public void testHttp1Request() throws Exception {
+		useHttp1Client = true;
+		testGetStatus();
+	}
+	
+	@Test
 	public void testAggressiveClient() throws Exception {
 		makeClientAggressive = true;
 		try {
 			testSeveralGetRequests();
 			throw new AssertionError();
-		} catch (ClosedChannelException e) {
+		} catch (Exception e) {
 			// this is expected as the server should close this aggressive client
+			Assert.assertTrue(e instanceof ClosedChannelException || e.getCause() instanceof ClosedChannelException);
 		}
 	}
 	
@@ -84,6 +115,104 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	public void testOnlyTwoConcurrentStreams() throws Exception {
 		makeServerRestrictive = true;
 		testSeveralGetRequests();
+	}
+	
+	@Test
+	public void testSendInvalidFrames() throws Exception {
+		startServer(new ProcessorForTests());
+		
+		// test send SETTINGS on data stream
+		sendInvalidFramesOnDataStream(true, id -> new HTTP2Frame.Writer() {
+			private boolean sent = false;
+			@Override
+			public byte getType() { return HTTP2FrameHeader.TYPE_SETTINGS; }
+			@Override
+			public int getStreamId() { return id; }
+			@Override
+			public boolean canProduceSeveralFrames() { return false; }
+			@Override
+			public boolean canProduceMore() { return !sent; }
+			@Override
+			public ByteArray produce(int maxFrameSize, ByteArrayCache cache) {
+				byte[] b = new byte[HTTP2FrameHeader.LENGTH];
+				HTTP2FrameHeader.write(b, 0, 0, HTTP2FrameHeader.TYPE_SETTINGS, (byte)0, id);
+				sent = true;
+				return new ByteArray.Writable(b, true);
+			}
+		});
+		
+		// test send HEADERS on connection stream
+		sendInvalidFramesOnDataStream(false, id -> new HTTP2Frame.Writer() {
+			private boolean sent = false;
+			@Override
+			public byte getType() { return HTTP2FrameHeader.TYPE_SETTINGS; }
+			@Override
+			public int getStreamId() { return id; }
+			@Override
+			public boolean canProduceSeveralFrames() { return false; }
+			@Override
+			public boolean canProduceMore() { return !sent; }
+			@Override
+			public ByteArray produce(int maxFrameSize, ByteArrayCache cache) {
+				byte[] b = new byte[HTTP2FrameHeader.LENGTH];
+				HTTP2FrameHeader.write(b, 0, 0, HTTP2FrameHeader.TYPE_HEADERS, (byte)0, id);
+				sent = true;
+				return new ByteArray.Writable(b, true);
+			}
+		});
+	}
+	
+	private void sendInvalidFramesOnDataStream(boolean needDataStream, IntFunction<HTTP2Frame.Writer> frameProvider) throws Exception {
+		try (HTTP2Client client = (HTTP2Client)createClient()) {
+			IAsync<IOException> send;
+			if (needDataStream) {
+				send = new Async<>();
+				client.getStreamsManager().reserveCompressionContextAndOpenStream().thenStart("Send HTTP/2 headers", Priority.NORMAL, reservation -> {
+					int streamId = reservation.getValue2().intValue();
+					client.getStreamsManager().sendFrame(frameProvider.apply(streamId), false).onDone((Async<IOException>)send);
+				}, send);
+			} else {
+				send = client.getStreamsManager().sendFrame(frameProvider.apply(0), false);
+			}
+			send.blockThrow(0);
+			Async<Exception> sp = new Async<>();
+			client.getConnection().onclosed(sp::unblock);
+			sp.blockThrow(5000);
+			Assert.assertTrue(sp.isDone());
+		}
+	}
+	
+	@Test
+	public void testWrongHttp2Connections() throws Exception {
+		startServer(new ProcessorForTests());
+		testWrongHttp2Connection("PRI * HTTP/2.1\r\n\r\nSM\r\n\r\n");
+		testWrongHttp2Connection("PRO * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+		testWrongHttp2Connection("PRI x HTTP/2.0\r\n\r\nSM\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\nX: x\r\n\r\nSM\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nXM\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\rX\nSM\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSMX\r\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\rX\n\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\nX\r\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\n\rX\n");
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nS");
+	}
+	
+	private void testWrongHttp2Connection(String upgradeString) throws Exception {
+		activateNetworkTraces();
+		System.out.println("!!!!");
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Server.class);
+		Pair<? extends TCPClient, IAsync<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(serverAddress, "localhost", useSSL, clientConfig, logger);
+		TCPClient tcp = conn.getValue1();
+		IAsync<IOException> connect = conn.getValue2();
+		connect.blockThrow(0);
+		tcp.send(ByteBuffer.wrap(upgradeString.getBytes(StandardCharsets.US_ASCII)), 5000).blockThrow(0);
+		ByteArrayIO io = tcp.getReceiver().readUntil((byte)'\n', 1024, 5000).blockResult(0);
+		String line = IOUtil.readFullyAsStringSync(io, StandardCharsets.US_ASCII);
+		Assert.assertTrue(line.contains(" 400 "));
+		tcp.close();
 	}
 	
 }

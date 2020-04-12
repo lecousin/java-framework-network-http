@@ -244,12 +244,16 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			for (Iterator<Pair<HTTPClientResponse, Integer>> it = pending.iterator(); it.hasNext(); ) {
 				Pair<HTTPClientResponse, Integer> p = it.next();
 				HTTPClientResponse resp = p.getValue1();
-				resp.getTrailersReceived().blockThrow(1);
+				try {
+					resp.getTrailersReceived().blockThrow(1);
+				} catch (Exception e) {
+					throw new Exception("Error waiting for response " + p.getValue2(), e);
+				}
 				if (resp.getTrailersReceived().isDone()) {
 					if (resp.getTrailersReceived().isSuccessful())
 						check(resp, 700 + p.getValue2().intValue(), null);
 					else
-						throw resp.getTrailersReceived().getError();
+						throw new Exception("Error receiving response " + p.getValue2(), resp.getTrailersReceived().getError());
 					it.remove();
 					done = true;
 				}

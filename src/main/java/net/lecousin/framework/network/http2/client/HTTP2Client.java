@@ -124,4 +124,8 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 		return manager;
 	}
 	
+	public TCPClient getConnection() {
+		return tcp;
+	}
+	
 }

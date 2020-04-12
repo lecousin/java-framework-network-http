@@ -560,7 +560,8 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		ByteBuffer[] buffers = headers.asByteBuffers();
 		if (logger.debug())
 			logger.debug("Sending response with body size " + bodySize + " and headers:\n" + headers);
-		AsyncConsumer<ByteBuffer, IOException> clientConsumer = ctx.getClient().asConsumer(3, sendDataTimeout);
+		boolean closeAfter = !ctx.getRequest().isConnectionPersistent() || response.isForceClose();
+		AsyncConsumer<ByteBuffer, IOException> clientConsumer = ctx.getClient().asConsumer(closeAfter ? 1 : 3, sendDataTimeout);
 		IAsync<IOException> sendHeaders = clientConsumer.push(Arrays.asList(buffers));
 		
 		sendHeaders.onError(error -> {
@@ -572,7 +573,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		if (!isChunked && bodySize.longValue() == 0) {
 			// empty body
 			sendHeaders.onDone(response.getSent());
-			if (!ctx.getRequest().isConnectionPersistent() || response.isForceClose())
+			if (closeAfter)
 				sendHeaders.onSuccess(ctx.getClient()::close);
 			return;
 		}
@@ -590,7 +591,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 				ctx.getClient().close();
 			});
 			sendBody.onDone(response.getSent());
-			if (!ctx.getRequest().isConnectionPersistent() || response.isForceClose())
+			if (closeAfter)
 				sendBody.onSuccess(ctx.getClient()::close);
 		}, false);
 	}

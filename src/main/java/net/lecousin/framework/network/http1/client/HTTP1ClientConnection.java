@@ -252,7 +252,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			doNextJob();
 		});
 	}
-
+	
 	@Override
 	public boolean hasPendingRequest() {
 		return !requests.isEmpty();
