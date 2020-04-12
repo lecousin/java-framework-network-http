@@ -71,7 +71,7 @@ public abstract class HTTP2GoAway implements HTTP2Frame {
 						}
 						pos++;
 					}
-					return new AsyncSupplier<>(Boolean.FALSE, null);
+					return new AsyncSupplier<>(Boolean.valueOf(pos == header.getPayloadLength()), null);
 				}
 			};
 		}

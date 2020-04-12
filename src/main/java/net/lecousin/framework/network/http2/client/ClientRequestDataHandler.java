@@ -51,6 +51,7 @@ class ClientRequestDataHandler implements DataHandler {
 	public AsyncConsumer<ByteBuffer, IOException> endOfHeaders(StreamsManager manager, DataStreamHandler stream) throws Exception {
 		if (manager.getLogger().debug())
 			manager.getLogger().debug("End of headers on stream " + stream.getStreamId() + ":\n"
+				+ ctx.getResponse().getStatusCode() + " " + ctx.getResponse().getStatusMessage() + "\n"
 				+ ctx.getResponse().getHeaders().generateString(1024).asString());
 		if (handleHeaders(manager, stream))
 			return null;
@@ -71,6 +72,8 @@ class ClientRequestDataHandler implements DataHandler {
 			ctx.getResponse().setEntity(entity);
 		}
 		if ((entity instanceof EmptyEntity) || (length != null && length.longValue() == 0)) {
+			if (manager.getLogger().debug())
+				manager.getLogger().debug("Empty response on stream " + stream.getStreamId());
 			ctx.getResponse().getBodyReceived().unblock();
 			ctx.getResponse().getTrailersReceived().unblock();
 			return null;

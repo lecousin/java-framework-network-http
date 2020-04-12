@@ -55,6 +55,7 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 	private HTTP2Settings settings = new HTTP2Settings()
 		.setWindowSize(128L * 1024)
 		.setHeaderTableSize(4096) // it is supposed to be good to keep indexes on 7-bits
+		.setMaxConcurrentStreams(10) // limit pending requests for a client
 		.setEnablePush(false); // we do not do that for now
 	private boolean enableRangeRequests = false;
 	

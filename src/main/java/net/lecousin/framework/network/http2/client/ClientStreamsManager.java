@@ -2,6 +2,7 @@ package net.lecousin.framework.network.http2.client;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -52,6 +53,10 @@ public class ClientStreamsManager extends StreamsManager {
 
 	void send(HTTPClientRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
+			if (remote.isClosed()) {
+				ctx.getRequestSent().error(new ClosedChannelException());
+				return null;
+			}
 			if (ctx.getRequestBody() != null) {
 				sendRequestBodyReady(ctx);
 			} else {
@@ -113,8 +118,16 @@ public class ClientStreamsManager extends StreamsManager {
 				releaseCompressionContext(streamId);
 				DataStreamHandler.sendBody(this, streamId, ctx.getRequest(), ctx.getRequestSent(),
 					size, ctx.getRequestBody().getValue2(), 128 * 1024);
-			}), false);
-		}, false);
+			}), false).onError(ctx.getRequestSent()::error);
+		}, ctx.getRequestSent());
+	}
+	
+	/** Return the settings returned by the server.
+	 * The values MUST NOT be changed.
+	 * This method is for test purposes to simulate bad client behavior.
+	 */
+	public HTTP2Settings getServerSettings() {
+		return remoteSettings;
 	}
 
 }

@@ -65,7 +65,6 @@ class ClientDataHandler implements DataHandler {
 		if (manager.isClosing())
 			return null;
 
-		// TODO manage priority and number of pending requests (both for the client and for the server?)
 		if (server.logger.debug())
 			server.logger.debug("Processing request from " + ctx.getClient()
 				+ ":\n" + HTTP1RequestCommandProducer.generateString(ctx.getRequest())
@@ -75,7 +74,12 @@ class ClientDataHandler implements DataHandler {
 		server.getProcessor().process(ctx);
 		
 		ctx.getResponse().getReady().onDone(() -> sendHeaders(manager, ctx));
-		ctx.getResponse().getSent().thenStart("Close HTTP/2 stream", Priority.NORMAL, () -> manager.endOfStream(streamId), true);
+		ctx.getResponse().getSent().thenStart("Close HTTP/2 stream", Priority.NORMAL, () -> {
+			manager.endOfStream(streamId);
+			if (server.logger.debug())
+				server.logger.debug("Response sent to " + ctx.getClient()
+					+ " for " + HTTP1RequestCommandProducer.generateString(ctx.getRequest()));
+		}, true);
 
 		if (ctx.getRequest().getEntity() == null) {
 			if (!ctx.getRequest().isExpectingBody())
@@ -96,6 +100,7 @@ class ClientDataHandler implements DataHandler {
 		// nothing
 	}
 	
+	@SuppressWarnings("java:S1602") // better readability to keep curly braces
 	private void sendHeaders(StreamsManager manager, HTTPRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
 			// TODO if getReady() has an error, send an error

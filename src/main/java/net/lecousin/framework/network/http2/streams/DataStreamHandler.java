@@ -169,6 +169,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 	}
 
 	@Override
+	@SuppressWarnings("java:S3776") // complexity
 	protected void onEndOfPayload(StreamsManager manager, HTTP2FrameHeader header) {
 		if (frame instanceof HTTP2Priority) {
 			HTTP2Priority prio = (HTTP2Priority)frame;
@@ -188,12 +189,18 @@ public class DataStreamHandler extends StreamHandler.Default {
 			if (StreamState.OPEN_TRAILERS.equals(state)) {
 				// trailers
 				if (!header.hasFlags(HTTP2Headers.FLAG_END_STREAM)) {
-					// TODO error ??
+					// this is a malformed request/response, even it is not specified as a protocol
+					// error, we don't want to accept such behavior
+					manager.connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Trailer frame must have the END_STREAM flag");
+					return;
 				}
 				if (header.hasFlags(HTTP2Headers.FLAG_END_HEADERS)) {
 					// end of trailers
 					dataHandler.endOfTrailers(manager, this);
 					manager.closeStream(this);
+					// if this is a response (client mode), this is the end
+					if (manager.isClientMode())
+						manager.endOfStream(id);
 				}
 			} else {
 				if (header.hasFlags(HTTP2Headers.FLAG_END_HEADERS)) {
@@ -204,6 +211,9 @@ public class DataStreamHandler extends StreamHandler.Default {
 						dataHandler.emptyEntityReceived(manager, this);
 						noBody = true;
 						manager.closeStream(this);
+						// if this is a response (client mode), this is the end
+						if (manager.isClientMode())
+							manager.endOfStream(id);
 					} else {
 						// end of headers, start data
 						state = StreamState.OPEN_DATA;
@@ -212,7 +222,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 						bodyConsumer = dataHandler.endOfHeaders(manager, this);
 					} catch (Exception e) {
 						manager.getLogger().error("Error processing headers", e);
-						manager.closeStream(this);
+						resetStream(manager, HTTP2Error.Codes.INTERNAL_ERROR);
 					}
 					break;
 				}
@@ -234,6 +244,9 @@ public class DataStreamHandler extends StreamHandler.Default {
 					// end of trailers
 					dataHandler.endOfTrailers(manager, this);
 					manager.closeStream(this);
+					// if this is a response (client mode), this is the end
+					if (manager.isClientMode())
+						manager.endOfStream(id);
 				} else {
 					// update state
 					state = StreamState.OPEN_DATA;
@@ -241,11 +254,14 @@ public class DataStreamHandler extends StreamHandler.Default {
 						bodyConsumer = dataHandler.endOfHeaders(manager, this);
 					} catch (Exception e) {
 						manager.getLogger().error("Error processing headers", e);
-						manager.closeStream(this);
+						resetStream(manager, HTTP2Error.Codes.INTERNAL_ERROR);
 						break;
 					}
 					if (noBody) {
 						manager.closeStream(this);
+						// if this is a response (client mode), this is the end
+						if (manager.isClientMode())
+							manager.endOfStream(id);
 					}
 				}
 			}
@@ -261,6 +277,9 @@ public class DataStreamHandler extends StreamHandler.Default {
 				// no trailer
 				dataHandler.endOfTrailers(manager, this);
 				manager.closeStream(this);
+				// if this is a response (client mode), this is the end
+				if (manager.isClientMode())
+					manager.endOfStream(id);
 			} else {
 				// body or trailers can follow
 				// send a WINDOW_UPDATE as we consumed the data
@@ -269,8 +288,11 @@ public class DataStreamHandler extends StreamHandler.Default {
 			break;
 			
 		case HTTP2FrameHeader.TYPE_RST_STREAM:
-			// TODO if error ?
+			int error = ((HTTP2ResetStream)frame).getErrorCode();
+			if (error != HTTP2Error.Codes.NO_ERROR)
+				manager.getLogger().error("Error " + error + " returned by remote on stream " + id);
 			manager.closeStream(this);
+			manager.endOfStream(id);
 			break;
 			
 		case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
@@ -316,15 +338,16 @@ public class DataStreamHandler extends StreamHandler.Default {
 			new Mutable<>(null), new MutableInteger(0), maxBodySizeToProduce, new MutableBoolean(false));
 	}
 	
+	@SuppressWarnings("java:S107") // number of parameters
 	private static void produceBody(
 		StreamsManager manager, int streamId,
 		HTTPMessage<?> message, Async<IOException> sent,
 		AsyncProducer<ByteBuffer, IOException> body, Mutable<HTTP2Data.Writer> lastWriter,
 		MutableInteger sizeProduced, int maxBodySizeToProduce, MutableBoolean productionPaused
 	) {
-		body.produce("Produce HTTP/2 body data frame", Task.getCurrentPriority())
-		.onDone(data -> {
-			// TODO in a task
+		Priority prio = Task.getCurrentPriority();
+		body.produce("Produce HTTP/2 body data frame", prio)
+		.thenStart("Handle produced data frame", prio, data -> {
 			if (data == null) {
 				// end of data
 				if (message.getTrailerHeadersSuppliers() == null) {
@@ -335,7 +358,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 					}
 					HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
 						frameSent -> sent.unblock());
-					manager.sendFrame(w, false);
+					manager.sendFrame(w, false).onError(sent::error);
 					return;
 				}
 				// trailers will come
@@ -360,17 +383,14 @@ public class DataStreamHandler extends StreamHandler.Default {
 						produceBody(manager, streamId, message, sent, body, lastWriter,
 							sizeProduced, maxBodySizeToProduce, productionPaused);
 				}));
-				manager.sendFrame(lastWriter.get(), false);
+				manager.sendFrame(lastWriter.get(), false).onError(sent::error);
 			}
 			if (!delayNextProduction)
 				produceBody(manager, streamId, message, sent, body, lastWriter, sizeProduced, maxBodySizeToProduce, productionPaused);
-		}, error -> {
-			// TODO
-		}, cancel -> {
-			// TODO
-		});
+		}, sent);
 	}
 	
+	@SuppressWarnings("java:S1602") // more readable
 	private static void sendTrailers(StreamsManager manager, int streamId, HTTPMessage<?> message, Async<IOException> sent) {
 		if (message.getTrailerHeadersSuppliers() == null) {
 			sent.unblock();
@@ -381,7 +401,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 			// finally not ! we need to send end of stream
 			HTTP2Data.Writer w = new HTTP2Data.Writer(streamId, null, true,
 				frameSent -> sent.unblock());
-			manager.sendFrame(w, false);
+			manager.sendFrame(w, false).onError(sent::error);
 			return;
 		}
 		List<Pair<String, String>> list = new LinkedList<>();
@@ -391,8 +411,8 @@ public class DataStreamHandler extends StreamHandler.Default {
 			manager.sendFrame(new HTTP2Headers.Writer(streamId, list, true, compressionContext, () -> {
 				manager.releaseCompressionContext(streamId);
 				sent.unblock();
-			}), false);
-		}, false);
+			}), false).onError(sent::error);
+		}, sent);
 	}
 	
 }

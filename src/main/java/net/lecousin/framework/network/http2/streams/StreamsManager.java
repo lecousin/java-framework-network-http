@@ -2,8 +2,8 @@ package net.lecousin.framework.network.http2.streams;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -15,7 +15,9 @@ import net.lecousin.framework.collections.sort.RedBlackTreeInteger;
 import net.lecousin.framework.concurrent.Executable;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.data.ByteArray;
 import net.lecousin.framework.log.Logger;
@@ -36,12 +38,12 @@ public abstract class StreamsManager {
 	
 	protected TCPRemote remote;
 	private boolean clientMode;
-	private HTTP2Settings localSettings;
-	private HTTP2Settings remoteSettings;
+	protected HTTP2Settings localSettings;
+	protected HTTP2Settings remoteSettings;
 	private Async<IOException> connectionReady = new Async<>();
 	private int sendTimeout;
-	private Logger logger;
-	private ByteArrayCache bufferCache;
+	protected Logger logger;
+	protected ByteArrayCache bufferCache;
 	private ConnectionStreamHandler connectionStream = new ConnectionStreamHandler();
 	private IntegerMapRBT<StreamHandler> dataStreams = new IntegerMapRBT<StreamHandler>(10) {
 		@Override
@@ -57,7 +59,7 @@ public abstract class StreamsManager {
 	HPackCompress compressionContext;
 	int currentDecompressionStreamId = -1;
 	private int currentCompressionStreamId = -1;
-	private LinkedList<Pair<Integer, AsyncSupplier<Pair<HPackCompress, Integer>, NoException>>> compressionContextRequests = new LinkedList<>();
+	private LinkedList<Pair<Integer, AsyncSupplier<Pair<HPackCompress, Integer>, IOException>>> compressionContextRequests = new LinkedList<>();
 	
 	private FrameState currentFrameState = FrameState.START;
 	private HTTP2FrameHeader currentFrameHeader = null;
@@ -95,7 +97,28 @@ public abstract class StreamsManager {
 			connectionReady.unblock();
 		}
 
-		// TODO on remote closed, clean everything
+		remote.onclosed(() -> Task.cpu("Closing HTTP/2 streams", Priority.NORMAL, t -> {
+			closing = true;
+			if (logger.debug())
+				logger.debug("Remote closed - clean HTTP/2 streams");
+			ClosedChannelException closed = new ClosedChannelException();
+			synchronized (compressionContextRequests) {
+				while (!compressionContextRequests.isEmpty())
+					compressionContextRequests.removeFirst().getValue2().error(closed);
+			}
+			synchronized (dependencyTree) {
+				for (Pair<ByteBuffer, Async<IOException>> p : buffersReady)
+					if (p.getValue2() != null)
+						p.getValue2().error(closed);
+				dependencyTree.forceClose(closed);
+				dependencyNodes.clear();
+			}
+			return null;
+		}).start());
+	}
+	
+	public boolean isClientMode() {
+		return clientMode;
 	}
 	
 	public Async<IOException> getConnectionReady() {
@@ -195,7 +218,6 @@ public abstract class StreamsManager {
 			onConsumed.unblock();
 			return;
 		}
-		// TODO check number of processed requests and delay receiving the next one if needed
 		Task.cpu("Continue consuming HTTP/2 data", t -> {
 			consumeDataFromRemote(data, onConsumed);
 			return null;
@@ -221,8 +243,8 @@ public abstract class StreamsManager {
 	}
 	
 	void connectionError(int errorCode, String debugMessage) {
-		if (logger.debug())
-			logger.debug("Send connection error " + errorCode + ": " + debugMessage);
+		if (logger.error())
+			logger.error("Send connection error " + errorCode + ": " + debugMessage);
 		HTTP2GoAway.Writer frame = new HTTP2GoAway.Writer(lastRemoteStreamId, errorCode,
 			debugMessage != null ? debugMessage.getBytes(StandardCharsets.UTF_8) : null);
 		sendFrame(frame, true);
@@ -246,54 +268,53 @@ public abstract class StreamsManager {
 					(currentFrameHeader.getStreamId() <= lastRemoteStreamId)) {
 					// it may be remaining frames sent before we sent a reset stream to the remote
 					// we need to process it as it may change connection contexts (i.e. decompression context)
-					switch (currentFrameHeader.getType()) {
-					case HTTP2FrameHeader.TYPE_HEADERS:
-					case HTTP2FrameHeader.TYPE_CONTINUATION:
-						if (logger.trace())
-							logger.trace("Received headers frame on closed stream, process it: " + currentFrameHeader);
-						stream = new SkipHeadersFrame(currentFrameHeader.getStreamId());
-						break;
-					case HTTP2FrameHeader.TYPE_PRIORITY:
-						// TODO
-					case HTTP2FrameHeader.TYPE_DATA:
-					case HTTP2FrameHeader.TYPE_RST_STREAM:
-						if (logger.trace())
-							logger.trace("Received frame on closed stream, skip it: " + currentFrameHeader);
-						stream = new SkipFrame(currentFrameHeader.getStreamId());
-						break;
-					case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
-						DependencyNode node;
-						synchronized (dependencyTree) {
-							node = dependencyNodes.get(currentFrameHeader.getStreamId());
-						}
-						if (node == null) {
-							if (logger.trace())
-								logger.trace("Received window update on closed stream, skip it: "
-									+ currentFrameHeader);
-							stream = new SkipFrame(currentFrameHeader.getStreamId());
-						} else {
-							if (logger.trace())
-								logger.trace("Received window update on closed stream with pending data, process it: "
-									+ currentFrameHeader);
-							stream = new ProcessWindowUpdateFrame(currentFrameHeader.getStreamId());
-						}
-						break;
-					default:
-						// The identifier of a newly established stream MUST be numerically
-						// greater than all streams that the initiating endpoint has opened or reserved.
-						connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid stream id");
-						return null;
-					}
+					stream = handleFrameOnClosedStream();
 				} else {
 					// this is a new stream from the remote
-					// TODO check if maximum is reached
 					stream = openRemoteStream(currentFrameHeader.getStreamId());
 				}
 			}
 		}
-		if (!stream.startFrame(this, currentFrameHeader))
+		if (stream != null && !stream.startFrame(this, currentFrameHeader))
 			return null;
 		return stream;
+	}
+	
+	private StreamHandler handleFrameOnClosedStream() {
+		switch (currentFrameHeader.getType()) {
+		case HTTP2FrameHeader.TYPE_HEADERS:
+		case HTTP2FrameHeader.TYPE_CONTINUATION:
+			if (logger.trace())
+				logger.trace("Received headers frame on closed stream, process it: " + currentFrameHeader);
+			return new SkipHeadersFrame(currentFrameHeader.getStreamId());
+		case HTTP2FrameHeader.TYPE_PRIORITY:
+			// TODO
+		case HTTP2FrameHeader.TYPE_DATA:
+		case HTTP2FrameHeader.TYPE_RST_STREAM:
+			if (logger.trace())
+				logger.trace("Received frame on closed stream, skip it: " + currentFrameHeader);
+			return new SkipFrame(currentFrameHeader.getStreamId());
+		case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
+			DependencyNode node;
+			synchronized (dependencyTree) {
+				node = dependencyNodes.get(currentFrameHeader.getStreamId());
+			}
+			if (node == null) {
+				if (logger.trace())
+					logger.trace("Received window update on closed stream, skip it: "
+						+ currentFrameHeader);
+				return new SkipFrame(currentFrameHeader.getStreamId());
+			}
+			if (logger.trace())
+				logger.trace("Received window update on closed stream with pending data, process it: "
+					+ currentFrameHeader);
+			return new ProcessWindowUpdateFrame(currentFrameHeader.getStreamId());
+		default:
+			// The identifier of a newly established stream MUST be numerically
+			// greater than all streams that the initiating endpoint has opened or reserved.
+			connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid stream id");
+			return null;
+		}
 	}
 	
 	private DataStreamHandler openRemoteStream(int id) {
@@ -301,63 +322,107 @@ public abstract class StreamsManager {
 		DataStreamHandler stream = new DataStreamHandler(id);
 		dataStreams.put(id, stream);
 		synchronized (dependencyTree) {
+			// check if maximum is reached
+			if (localSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
+				// we may need to close stream
+				dependencyTree.cleanStreams();
+				if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
+					connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
+						+ dependencyNodes.size() + "/" + localSettings.getMaxConcurrentStreams() + ")");
+					return null;
+				}
+			}
 			addStreamNode(dependencyTree, id, 16);
 		}
 		return stream;
 	}
 	
 	private int openLocalStream() {
-		lastLocalStreamId += 2;
-		DataStreamHandler stream = new DataStreamHandler(lastLocalStreamId);
-		dataStreams.put(lastLocalStreamId, stream);
 		synchronized (dependencyTree) {
+			// check we did not reach the maximum specified by the remote
+			if (remoteSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > remoteSettings.getMaxConcurrentStreams())
+				return -1;
+			lastLocalStreamId += 2;
+			DataStreamHandler stream = new DataStreamHandler(lastLocalStreamId);
+			dataStreams.put(lastLocalStreamId, stream);
 			addStreamNode(dependencyTree, lastLocalStreamId, 16);
 		}
 		return lastLocalStreamId;
 	}
 	
-	public AsyncSupplier<HPackCompress, NoException> reserveCompressionContext(int streamId) {
+	public AsyncSupplier<HPackCompress, IOException> reserveCompressionContext(int streamId) {
 		synchronized (compressionContextRequests) {
 			if (currentCompressionStreamId == -1) {
 				currentCompressionStreamId = streamId;
 				return new AsyncSupplier<>(compressionContext, null);
 			}
-			AsyncSupplier<HPackCompress, NoException> result = new AsyncSupplier<>();
-			AsyncSupplier<Pair<HPackCompress, Integer>, NoException> request = new AsyncSupplier<>();
+			AsyncSupplier<HPackCompress, IOException> result = new AsyncSupplier<>();
+			AsyncSupplier<Pair<HPackCompress, Integer>, IOException> request = new AsyncSupplier<>();
 			compressionContextRequests.add(new Pair<>(Integer.valueOf(streamId), request));
 			request.onDone(p -> result.unblockSuccess(p.getValue1()), result);
 			return result;
 		}
 	}
 
-	public AsyncSupplier<Pair<HPackCompress, Integer>, NoException> reserveCompressionContextAndOpenStream() {
+	public AsyncSupplier<Pair<HPackCompress, Integer>, IOException> reserveCompressionContextAndOpenStream() {
 		synchronized (compressionContextRequests) {
+			if (closing)
+				return new AsyncSupplier<>(null, new ClosedChannelException());
 			if (currentCompressionStreamId == -1) {
 				currentCompressionStreamId = openLocalStream();
-				return new AsyncSupplier<>(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)), null);
+				if (currentCompressionStreamId != -1)
+					return new AsyncSupplier<>(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)), null);
 			}
-			AsyncSupplier<Pair<HPackCompress, Integer>, NoException> request = new AsyncSupplier<>();
+			AsyncSupplier<Pair<HPackCompress, Integer>, IOException> request = new AsyncSupplier<>();
 			compressionContextRequests.add(new Pair<>(null, request));
 			return request;
 		}
 	}
 	
 	public void releaseCompressionContext(int streamId) {
+		Pair<Integer, AsyncSupplier<Pair<HPackCompress, Integer>, IOException>> request;
 		synchronized (compressionContextRequests) {
 			if (currentCompressionStreamId != streamId)
 				return;
-			Pair<Integer, AsyncSupplier<Pair<HPackCompress, Integer>, NoException>> request = compressionContextRequests.poll();
+			request = compressionContextRequests.poll();
 			if (request == null) {
 				currentCompressionStreamId = -1;
 				return;
 			}
 			if (request.getValue1() == null) {
 				currentCompressionStreamId = openLocalStream();
+				if (currentCompressionStreamId == -1) {
+					compressionContextRequests.addFirst(request);
+					return;
+				}
 			} else {
 				currentCompressionStreamId = request.getValue1().intValue();
 			}
-			request.getValue2().unblockSuccess(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)));
 		}
+		request.getValue2().unblockSuccess(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)));
+	}
+	
+	@SuppressWarnings("squid:S3398") // better readability to keep this method here
+	private void streamClosed() {
+		if (closing)
+			return;
+		Task.cpu("Check pending requests to open stream", Priority.NORMAL, t -> {
+			Pair<Integer, AsyncSupplier<Pair<HPackCompress, Integer>, IOException>> request = null;
+			synchronized (compressionContextRequests) {
+				if (currentCompressionStreamId == -1 && !compressionContextRequests.isEmpty()) {
+					request = compressionContextRequests.getFirst();
+					if (request == null || request.getValue1() != null)
+						return null;
+					currentCompressionStreamId = openLocalStream();
+					if (currentCompressionStreamId == -1)
+						return null;
+					compressionContextRequests.removeFirst();
+				}
+			}
+			if (request != null)
+				request.getValue2().unblockSuccess(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)));
+			return null;
+		}).start();
 	}
 	
 	void closeStream(DataStreamHandler stream) {
@@ -375,47 +440,40 @@ public abstract class StreamsManager {
 	private Async<IOException> lastSend = new Async<>(true);
 	private static final int MAX_FRAMES_PRODUCED = 5;
 	
-	public void sendFrame(HTTP2Frame.Writer frame, boolean closeAfter) {
+	public IAsync<IOException> sendFrame(HTTP2Frame.Writer frame, boolean closeAfter) {
 		if (logger.trace()) logger.trace("Frame to send on stream " + frame.getStreamId()
 			+ ": " + HTTP2FrameHeader.getTypeName(frame.getType()));
-		synchronized (this) {
-			if (closing)
-				return;
-			
-			// if last frame, this is a connection error, we can send it as soon as possible
-			if (closeAfter) {
-				closing = true;
-				LinkedList<ByteBuffer> list = new LinkedList<>();
-				while (frame.canProduceMore()) {
-					ByteArray data = frame.produce((int)remoteSettings.getMaxFrameSize(), bufferCache);
-					list.add(data.toByteBuffer());
-				}
-				remote.send(list, sendTimeout).onDone(remote::close);
-				return;
+		if (closing)
+			return new Async<>(new ClosedChannelException());
+		
+		// if last frame, this is a connection error, we can send it as soon as possible
+		if (closeAfter) {
+			closing = true;
+			LinkedList<ByteBuffer> list = new LinkedList<>();
+			while (frame.canProduceMore()) {
+				ByteArray data = frame.produce((int)remoteSettings.getMaxFrameSize(), bufferCache);
+				list.add(data.toByteBuffer());
 			}
-			
-			if (lastSend.isDone() && !lastSend.isSuccessful()) {
-				closing = true;
-				remote.close();
-				return;
-			}
-			
-			// add the frame to the waiting list
-			synchronized (dependencyTree) {
-				DependencyNode node = dependencyNodes.get(frame.getStreamId());
-				if (node == null)
-					node = addStreamNode(dependencyTree, frame.getStreamId(), 16);
-				if (frame.getType() == HTTP2FrameHeader.TYPE_WINDOW_UPDATE)
-					node.waitingFrameProducers.addFirst(frame);
-				else
-					node.waitingFrameProducers.addLast(frame);
-
-				if (lastSend.isDone() || buffersReady.size() < MAX_FRAMES_PRODUCED)
-					launchFrameProduction();
-			}
+			IAsync<IOException> send = remote.send(list, sendTimeout);
+			send.onDone(remote::close);
+			return send;
 		}
 		
-		// TODO when nothing to send, we may update connection window size
+		// add the frame to the waiting list
+		Async<IOException> sp = new Async<>();
+		synchronized (dependencyTree) {
+			DependencyNode node = dependencyNodes.get(frame.getStreamId());
+			if (node == null)
+				node = addStreamNode(dependencyTree, frame.getStreamId(), 16);
+			if (frame.getType() == HTTP2FrameHeader.TYPE_WINDOW_UPDATE)
+				node.waitingFrameProducers.addFirst(new Pair<>(frame, sp));
+			else
+				node.waitingFrameProducers.addLast(new Pair<>(frame, sp));
+
+			if (lastSend.isDone() || buffersReady.size() < MAX_FRAMES_PRODUCED)
+				launchFrameProduction();
+		}
+		return sp;
 	}
 	
 	private Object frameProductionLock = new Object();
@@ -442,53 +500,64 @@ public abstract class StreamsManager {
 			}
 			boolean endOfProduction = false;
 			do {
-				synchronized (StreamsManager.this) {
-					synchronized (dependencyTree) {
-						// if last send is done and something has to be sent, launch a new send
-						if (lastSend.isDone() && !buffersReady.isEmpty()) {
-							lastSend = new Async<>();
-							lastSend.onDone(StreamsManager.this::launchFrameProduction);
-							remote.newDataToSendWhenPossible(dataProvider, lastSend, sendTimeout);
-						}
-						if (endOfProduction || buffersReady.size() >= MAX_FRAMES_PRODUCED) {
-							// end of production
-							return null;
-						}
+				synchronized (dependencyTree) {
+					// if last send is done and something has to be sent, launch a new send
+					if (lastSend.isDone() && !buffersReady.isEmpty())
+						launchSend();
+					if (endOfProduction || buffersReady.size() >= MAX_FRAMES_PRODUCED) {
+						// end of production
+						return null;
 					}
 				}
 				// produce frames
-				LinkedList<HTTP2Frame.Writer> list = new LinkedList<>();
+				LinkedList<Pair<HTTP2Frame.Writer, Async<IOException>>> list = new LinkedList<>();
 				synchronized (dependencyTree) {
 					dependencyTree.removeFramesToProduce(list, MAX_FRAMES_PRODUCED - buffersReady.size());
-					if (list.isEmpty()) {
-						endOfProduction = true;
-						continue;
-					}
 				}
-				LinkedList<ByteBuffer> production = new LinkedList<>();
-				for (HTTP2Frame.Writer producer : list) {
-					do {
-						int maxSize = (int)(remoteSettings != null ? remoteSettings.getMaxFrameSize()
-							: HTTP2Settings.DefaultValues.MAX_FRAME_SIZE);
-						ByteArray data = producer.produce(maxSize, bufferCache);
-						production.add(data.toByteBuffer());
-						if (producer instanceof HTTP2Data)
-							decrementSendWindowSize(producer.getStreamId(),
-								data.remaining() - HTTP2FrameHeader.LENGTH);
-						if (logger.trace()) {
-							HTTP2FrameHeader header = new HTTP2FrameHeader();
-							header.createConsumer().consume(data.toByteBuffer().asReadOnlyBuffer());
-							logger.trace("Frame ready to send: " + header);
-						}
-					} while (producer.canProduceMore() && buffersReady.size() + production.size() < MAX_FRAMES_PRODUCED);
-					if (buffersReady.size() + production.size() >= MAX_FRAMES_PRODUCED)
-						break;
+				if (list.isEmpty()) {
+					endOfProduction = true;
+					continue;
 				}
-
-				synchronized (dependencyTree) {
-					buffersReady.addAll(production);
-				}
+				produceFrames(list);
 			} while (true);
+		}
+		
+		private void launchSend() {
+			lastSend = new Async<>();
+			lastSend.onSuccess(StreamsManager.this::launchFrameProduction);
+			lastSend.onError(e -> {
+				closing = true;
+				logger.error("Error sending frames", e);
+				remote.close();
+			});
+			remote.newDataToSendWhenPossible(dataProvider, lastSend, sendTimeout);
+		}
+		
+		private void produceFrames(LinkedList<Pair<HTTP2Frame.Writer, Async<IOException>>> list) {
+			LinkedList<Pair<ByteBuffer, Async<IOException>>> production = new LinkedList<>();
+			for (Pair<HTTP2Frame.Writer, Async<IOException>> frame : list) {
+				HTTP2Frame.Writer producer = frame.getValue1();
+				do {
+					int maxSize = (int)(remoteSettings != null ? remoteSettings.getMaxFrameSize()
+						: HTTP2Settings.DefaultValues.MAX_FRAME_SIZE);
+					ByteArray data = producer.produce(maxSize, bufferCache);
+					production.add(new Pair<>(data.toByteBuffer(), producer.canProduceMore() ? null : frame.getValue2()));
+					if (producer instanceof HTTP2Data)
+						decrementSendWindowSize(producer.getStreamId(),
+							data.remaining() - HTTP2FrameHeader.LENGTH);
+					if (logger.trace()) {
+						HTTP2FrameHeader header = new HTTP2FrameHeader();
+						header.createConsumer().consume(data.toByteBuffer().asReadOnlyBuffer());
+						logger.trace("Frame ready to send: " + header);
+					}
+				} while (producer.canProduceMore() && buffersReady.size() + production.size() < MAX_FRAMES_PRODUCED);
+				if (buffersReady.size() + production.size() >= MAX_FRAMES_PRODUCED)
+					break;
+			}
+
+			synchronized (dependencyTree) {
+				buffersReady.addAll(production);
+			}
 		}
 	}
 	
@@ -496,10 +565,17 @@ public abstract class StreamsManager {
 		@Override
 		public List<ByteBuffer> get() {
 			List<ByteBuffer> list = new LinkedList<>();
+			List<Async<IOException>> sp = new LinkedList<>();
 			synchronized (dependencyTree) {
-				list.addAll(buffersReady);
+				for (Pair<ByteBuffer, Async<IOException>> p : buffersReady) {
+					list.add(p.getValue1());
+					if (p.getValue2() != null)
+						sp.add(p.getValue2());
+				}
 				buffersReady.clear();
 			}
+			for (Async<IOException> done : sp)
+				done.unblock();
 			return list;
 		}
 	}
@@ -524,8 +600,7 @@ public abstract class StreamsManager {
 	
 	void incrementConnectionSendWindowSize(long increment) {
 		if (logger.trace())
-			logger.trace("Increment connection send window: " + increment
-				+ ", new size = " + (dependencyTree.sendWindowSize + increment));
+			logger.trace("Increment connection send window by " + increment + " => " + (dependencyTree.sendWindowSize + increment));
 		synchronized (dependencyTree) {
 			boolean wasZero = dependencyTree.sendWindowSize <= 0;
 			dependencyTree.sendWindowSize += increment;
@@ -548,6 +623,7 @@ public abstract class StreamsManager {
 		}
 	}
 	
+	@SuppressWarnings("java:S3398") // better organized to keep this method here
 	private void decrementSendWindowSize(int streamId, int size) {
 		synchronized (dependencyTree) {
 			dependencyTree.sendWindowSize -= size;
@@ -562,7 +638,7 @@ public abstract class StreamsManager {
 
 	
 	private DataToSendProvider dataProvider = new DataToSendProvider();
-	private LinkedList<ByteBuffer> buffersReady = new LinkedList<>();
+	private LinkedList<Pair<ByteBuffer, Async<IOException>>> buffersReady = new LinkedList<>();
 	
 	private final DependencyNode dependencyTree = new DependencyNode(0,
 		HTTP2Settings.DefaultValues.INITIAL_WINDOW_SIZE, HTTP2Settings.DefaultValues.INITIAL_WINDOW_SIZE);
@@ -576,8 +652,8 @@ public abstract class StreamsManager {
 	private class DependencyNode {
 		
 		private int streamId;
-		private RedBlackTreeInteger<DependencyNode> dependentStreams = new RedBlackTreeInteger<>();
-		private LinkedList<HTTP2Frame.Writer> waitingFrameProducers = new LinkedList<>();
+		private RedBlackTreeInteger<List<DependencyNode>> dependentStreams = new RedBlackTreeInteger<>();
+		private LinkedList<Pair<HTTP2Frame.Writer, Async<IOException>>> waitingFrameProducers = new LinkedList<>();
 		private long sendWindowSize;
 		private long recvWindowSize;
 		private boolean eos = false;
@@ -598,116 +674,184 @@ public abstract class StreamsManager {
 		private void close() {
 			dependencyTree.remove(streamId);
 			dependencyNodes.remove(streamId);
+			streamClosed();
+		}
+		
+		private void cleanStreams() {
+			if (eos && waitingFrameProducers.isEmpty())
+				close();
+			LinkedList<DependencyNode> children = new LinkedList<>();
+			for (Iterator<List<DependencyNode>> it = dependentStreams.orderedIterator(); it.hasNext(); )
+				children.addAll(it.next());
+			for (DependencyNode child : children)
+				child.cleanStreams();
+		}
+		
+		private void forceClose(IOException error) {
+			for (Pair<HTTP2Frame.Writer, Async<IOException>> p : waitingFrameProducers)
+				if (p.getValue2() != null)
+					p.getValue2().error(error);
+			waitingFrameProducers.clear();
+			eos = true;
+			LinkedList<DependencyNode> children = new LinkedList<>();
+			for (Iterator<List<DependencyNode>> it = dependentStreams.orderedIterator(); it.hasNext(); )
+				children.addAll(it.next());
+			for (DependencyNode child : children)
+				child.forceClose(error);
+			close();
 		}
 		
 		private void takeInfoFrom(DependencyNode previous) {
-			for (Iterator<RedBlackTreeInteger.Node<DependencyNode>> it = previous.dependentStreams.nodeIterator(); it.hasNext(); ) {
-				RedBlackTreeInteger.Node<DependencyNode> n = it.next();
-				dependentStreams.add(n.getValue(), n.getElement());
+			for (Iterator<RedBlackTreeInteger.Node<List<DependencyNode>>> it = previous.dependentStreams.nodeIterator(); it.hasNext(); ) {
+				RedBlackTreeInteger.Node<List<DependencyNode>> n = it.next();
+				List<DependencyNode> list;
+				RedBlackTreeInteger.Node<List<DependencyNode>> node = dependentStreams.get(n.getValue());
+				if (node != null) {
+					list = node.getElement();
+				} else {
+					list = new LinkedList<>();
+					dependentStreams.add(n.getValue(), list);
+				}
+				list.addAll(n.getElement());
 			}
 			waitingFrameProducers = previous.waitingFrameProducers;
 			sendWindowSize = previous.sendWindowSize;
 			recvWindowSize = previous.recvWindowSize;
 		}
 		
-		private void removeFramesToProduce(List<HTTP2Frame.Writer> frames, int max) {
+		private void removeFramesToProduce(List<Pair<HTTP2Frame.Writer, Async<IOException>>> frames, int max) {
 			int deep = 0;
-			do {
-				if (!removeFramesToProduce(frames, max, deep))
+			while (max > frames.size()) {
+				LinkedList<DependencyNode> toClose = new LinkedList<>();
+				if (!removeFramesToProduce(frames, max, deep, toClose))
 					return;
-				if (frames.size() == max)
-					return;
+				if (!toClose.isEmpty()) {
+					for (DependencyNode node : toClose)
+						node.close();
+					continue;
+				}
 				deep++;
-			} while (true);
+			}
 		}
 		
-		private boolean removeFramesToProduce(List<HTTP2Frame.Writer> frames, int max, int deep) {
-			if (deep == 0) {
-				HTTP2WindowUpdate.Writer winUpdate = null;
-				for (Iterator<HTTP2Frame.Writer> it = waitingFrameProducers.iterator(); it.hasNext(); ) {
-					HTTP2Frame.Writer frame = it.next();
-					if (frame instanceof HTTP2WindowUpdate.Writer) {
-						// merge window updates on same stream
-						if (winUpdate == null)
-							winUpdate = (HTTP2WindowUpdate.Writer)frame;
-						else {
-							HTTP2WindowUpdate.Writer update = (HTTP2WindowUpdate.Writer)frame;
-							winUpdate.setIncrement(winUpdate.getIncrement() + update.getIncrement());
-							it.remove();
-							continue;
-						}
-					}
-					if (!frame.canProduceMore()) {
-						it.remove();
-						continue;
-					}
-					if (frame instanceof HTTP2Data && (dependencyTree.sendWindowSize <= 0 || sendWindowSize <= 0))
-						break;
-					frames.add(frame);
-					if (frame.canProduceSeveralFrames())
-						break;
-					it.remove();
-					if (frames.size() == max) {
-						if (eos && waitingFrameProducers.isEmpty())
-							close();
-						return false;
-					}
-				}
-				if (eos && waitingFrameProducers.isEmpty())
-					close();
-				return !dependentStreams.isEmpty();
-			}
+		private boolean removeFramesToProduce(
+			List<Pair<HTTP2Frame.Writer, Async<IOException>>> frames, int max, int deep, List<DependencyNode> toClose
+		) {
+			if (deep == 0)
+				return removeFramesToProduceAtThisLevel(frames, max, toClose);
 			boolean canHaveMore = false;
-			ArrayList<DependencyNode> children = new ArrayList<>(dependentStreams.size());
-			for (DependencyNode child : dependentStreams) children.add(child);
+			LinkedList<DependencyNode> children = new LinkedList<>();
+			for (Iterator<List<DependencyNode>> it = dependentStreams.orderedIterator(); it.hasNext(); )
+				children.addAll(it.next());
 			for (DependencyNode child : children) {
-				canHaveMore |= child.removeFramesToProduce(frames, max, deep - 1);
+				canHaveMore |= child.removeFramesToProduce(frames, max, deep - 1, toClose);
 				if (frames.size() == max)
 					return false;
 			}
 			return canHaveMore;
 		}
 		
-		private DependencyNode remove(int id) {
-			for (Iterator<RedBlackTreeInteger.Node<DependencyNode>> it = dependentStreams.nodeIterator(); it.hasNext(); ) {
-				RedBlackTreeInteger.Node<DependencyNode> node = it.next();
-				if (node.getElement().streamId != id)
-					continue;
-				// found it
-				dependentStreams.remove(node);
-				if (!node.getElement().dependentStreams.isEmpty()) {
-					/* When a stream is removed from the dependency tree, its dependencies
-   					   can be moved to become dependent on the parent of the closed stream.
-   					   The weights of new dependencies are recalculated by distributing the
-   					   weight of the dependency of the closed stream proportionally based on
-   					   the weights of its dependencies. */
-					int total = 0;
-					for (Iterator<RedBlackTreeInteger.Node<DependencyNode>> itChild =
-							node.getElement().dependentStreams.nodeIterator(); itChild.hasNext(); ) {
-						RedBlackTreeInteger.Node<DependencyNode> child = itChild.next();
-						total += child.getValue();
-					}
-					if (total <= 0) total = 1;
-					for (Iterator<RedBlackTreeInteger.Node<DependencyNode>> itChild =
-						node.getElement().dependentStreams.nodeIterator(); itChild.hasNext(); ) {
-						RedBlackTreeInteger.Node<DependencyNode> child = itChild.next();
-						dependentStreams.add(node.getValue() * child.getValue() / total, child.getElement());
+		private boolean removeFramesToProduceAtThisLevel(
+			List<Pair<HTTP2Frame.Writer, Async<IOException>>> frames, int max, List<DependencyNode> toClose
+		) {
+			HTTP2WindowUpdate.Writer winUpdate = null;
+			for (Iterator<Pair<HTTP2Frame.Writer, Async<IOException>>> it = waitingFrameProducers.iterator(); it.hasNext(); ) {
+				Pair<HTTP2Frame.Writer, Async<IOException>> p = it.next();
+				HTTP2Frame.Writer frame = p.getValue1();
+				if (frame instanceof HTTP2WindowUpdate.Writer) {
+					// merge window updates on same stream
+					if (winUpdate == null)
+						winUpdate = (HTTP2WindowUpdate.Writer)frame;
+					else {
+						HTTP2WindowUpdate.Writer update = (HTTP2WindowUpdate.Writer)frame;
+						winUpdate.setIncrement(winUpdate.getIncrement() + update.getIncrement());
+						it.remove();
+						continue;
 					}
 				}
-				return node.getElement();
+				if (!frame.canProduceMore()) {
+					it.remove();
+					continue;
+				}
+				if (frame instanceof HTTP2Data && (dependencyTree.sendWindowSize <= 0 || sendWindowSize <= 0))
+					break;
+				frames.add(p);
+				if (frame.canProduceSeveralFrames())
+					break;
+				it.remove();
+				if (frames.size() == max) {
+					if (eos && waitingFrameProducers.isEmpty())
+						toClose.add(this);
+					return false;
+				}
 			}
-			for (DependencyNode node : dependentStreams) {
-				DependencyNode removed = node.remove(id);
-				if (removed != null)
-					return removed;
+			if (eos && waitingFrameProducers.isEmpty())
+				toClose.add(this);
+			return !dependentStreams.isEmpty();
+		}
+		
+		private DependencyNode remove(int id) {
+			for (Iterator<RedBlackTreeInteger.Node<List<DependencyNode>>> it = dependentStreams.nodeIterator(); it.hasNext(); ) {
+				RedBlackTreeInteger.Node<List<DependencyNode>> nodes = it.next();
+				for (Iterator<DependencyNode> it2 = nodes.getElement().iterator(); it2.hasNext(); ) {
+					DependencyNode n = it2.next();
+					if (n.streamId != id)
+						continue;
+					// found it
+					it2.remove();
+					if (nodes.getElement().isEmpty())
+						dependentStreams.remove(nodes);
+					if (!n.dependentStreams.isEmpty())
+						moveDependenciesToParent(n, nodes.getValue());
+					return n;
+				}
+			}
+			for (List<DependencyNode> children : dependentStreams) {
+				for (DependencyNode child : children) {
+					DependencyNode removed = child.remove(id);
+					if (removed != null)
+						return removed;
+				}
 			}
 			return null;
 		}
 		
+		private void moveDependenciesToParent(DependencyNode parent, int parentWeight) {
+			/* When a stream is removed from the dependency tree, its dependencies
+			   can be moved to become dependent on the parent of the closed stream.
+			   The weights of new dependencies are recalculated by distributing the
+			   weight of the dependency of the closed stream proportionally based on
+			   the weights of its dependencies. */
+			int total = 0;
+			for (Iterator<RedBlackTreeInteger.Node<List<DependencyNode>>> itChildren = parent.dependentStreams.nodeIterator();
+				itChildren.hasNext(); ) {
+				RedBlackTreeInteger.Node<List<DependencyNode>> children = itChildren.next();
+				total += children.getValue() * children.getElement().size();
+			}
+			if (total <= 0) total = 1;
+			for (Iterator<RedBlackTreeInteger.Node<List<DependencyNode>>> itChildren = parent.dependentStreams.nodeIterator();
+				itChildren.hasNext(); ) {
+				RedBlackTreeInteger.Node<List<DependencyNode>> children = itChildren.next();
+				int val = parentWeight * children.getValue() / total;
+				List<DependencyNode> list;
+				RedBlackTreeInteger.Node<List<DependencyNode>> depNode = dependentStreams.get(val);
+				if (depNode != null) {
+					list = depNode.getElement();
+				} else {
+					list = new LinkedList<>();
+					dependentStreams.add(val, list);
+				}
+				list.addAll(children.getElement());
+			}
+		}
+		
 		private void adjustSendWindowSize(long diff) {
 			sendWindowSize += diff;
-			for (DependencyNode node : dependentStreams)
-				node.adjustSendWindowSize(diff);
+			for (List<DependencyNode> children : dependentStreams) {
+				for (DependencyNode child : children) {
+					child.adjustSendWindowSize(diff);
+				}
+			}
 		}
 		
 	}
@@ -739,7 +883,9 @@ public abstract class StreamsManager {
 			DependencyNode newNode = new DependencyNode(streamId, remoteSettings.getWindowSize(), localSettings.getWindowSize());
 			newNode.dependentStreams = dependency.dependentStreams;
 			dependency.dependentStreams = new RedBlackTreeInteger<>();
-			dependency.dependentStreams.add(dependencyWeight, newNode);
+			LinkedList<DependencyNode> list = new LinkedList<>();
+			list.add(newNode);
+			dependency.dependentStreams.add(dependencyWeight, list);
 			if (current != null)
 				newNode.takeInfoFrom(current);
 			dependencyNodes.put(streamId, newNode);
@@ -750,7 +896,14 @@ public abstract class StreamsManager {
 		DependencyNode node = new DependencyNode(id,
 			remoteSettings != null ? remoteSettings.getWindowSize() : HTTP2Settings.DefaultValues.INITIAL_WINDOW_SIZE,
 			localSettings.getWindowSize());
-		parent.dependentStreams.add(weight, node);
+		RedBlackTreeInteger.Node<List<DependencyNode>> n = parent.dependentStreams.get(weight);
+		if (n != null) {
+			n.getElement().add(node);
+		} else {
+			LinkedList<DependencyNode> list = new LinkedList<>();
+			list.add(node);
+			parent.dependentStreams.add(weight, list);
+		}
 		dependencyNodes.put(id, node);
 		return node;
 	}

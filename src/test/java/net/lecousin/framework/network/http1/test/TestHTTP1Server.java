@@ -27,9 +27,9 @@ import net.lecousin.framework.util.Triple;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TestHttp1Server extends AbstractTestHttpServer {
+public class TestHTTP1Server extends AbstractTestHttpServer {
 
-	public TestHttp1Server(boolean useSSL) {
+	public TestHTTP1Server(boolean useSSL) {
 		super(useSSL);
 	}
 	
@@ -70,7 +70,7 @@ public class TestHttp1Server extends AbstractTestHttpServer {
 	public void testConcurrentRequests() throws Exception {
 		startServer(new ProcessorForTests());
 		// open connection
-		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp1Server.class);
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHTTP1Server.class);
 		Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
 			"localhost", serverAddress.getPort(), useSSL, "/test/get?status=200&test=hello", clientConfig, logger);
 		TCPClient client = conn.getValue1();

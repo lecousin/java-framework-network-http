@@ -41,7 +41,7 @@ public interface StreamHandler {
 				return;
 			}
 			if (trace)
-				manager.getLogger().debug("Consuming frame payload using " + payloadConsumer);
+				manager.getLogger().trace("Consuming frame payload using " + payloadConsumer);
 			AsyncSupplier<Boolean, HTTP2Error> consumption = payloadConsumer.consume(data);
 			consumption.onDone(endOfFrame -> {
 				payloadPos += data.position() - dataPos;
@@ -50,7 +50,7 @@ public interface StreamHandler {
 				if (payloadPos == header.getPayloadLength()) {
 					if (!endOfFrame.booleanValue()) {
 						error(new HTTP2Error(false, HTTP2Error.Codes.INTERNAL_ERROR,
-							"Payload consumer said it needs more data but full payload has been consumer: "
+							"Payload consumer said it needs more data but full payload has been consumed: "
 							+ payloadConsumer), manager, onConsumed);
 						return;
 					}

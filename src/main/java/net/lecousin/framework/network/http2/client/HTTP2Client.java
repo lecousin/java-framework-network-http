@@ -75,6 +75,10 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	}
 	
 	private void dataReceived(ByteBuffer data) {
+		if (data == null) {
+			// end of data from the server
+			return;
+		}
 		manager.consumeDataFromRemote(data).onDone(() -> {
 			bufferCache.free(data);
 			int size = (int)settings.getMaxFrameSize() + HTTP2FrameHeader.LENGTH;
@@ -114,6 +118,10 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	@Override
 	public void close() throws Exception {
 		tcp.close();
+	}
+	
+	public ClientStreamsManager getStreamsManager() {
+		return manager;
 	}
 	
 }

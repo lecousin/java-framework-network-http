@@ -8,6 +8,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
@@ -208,6 +210,59 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			for (int i = 0; i <= 5; ++i)
 				Assert.assertEquals(i, buf[i] & 0xFF);
 		}
+	}
+	
+	@Test
+	public void testSeveralGetRequests() throws Exception {
+		startServer(new ProcessorForTests());
+		try (HTTPClientRequestSender client = createClient()) {
+			HTTPClientRequest[] requests = new HTTPClientRequest[100];
+			for (int i = 0; i < requests.length; ++i) {
+				requests[i] = new HTTPClientRequest(serverAddress.getHostString(), serverAddress.getPort(), useSSL);
+				requests[i].get().setURI("/test/get?status=" + (700 + i));
+			}
+			HTTPClientResponse[] responses = sendRequests(client, requests);
+			waitResponses(responses);
+		}
+	}
+	
+	protected HTTPClientResponse[] sendRequests(HTTPClientRequestSender client, HTTPClientRequest[] requests) {
+		HTTPClientResponse[] responses = new HTTPClientResponse[requests.length];
+		for (int i = 0; i < requests.length; ++i) {
+			responses[i] = client.send(requests[i]);
+		}
+		return responses;
+	}
+	
+	protected void waitResponses(HTTPClientResponse[] responses) throws Exception {
+		LinkedList<Pair<HTTPClientResponse, Integer>> pending = new LinkedList<>();
+		for (int i = 0; i < responses.length; ++i)
+			pending.add(new Pair<>(responses[i], Integer.valueOf(i)));
+		int notDone = 0;
+		while (!pending.isEmpty()) {
+			boolean done = false;
+			for (Iterator<Pair<HTTPClientResponse, Integer>> it = pending.iterator(); it.hasNext(); ) {
+				Pair<HTTPClientResponse, Integer> p = it.next();
+				HTTPClientResponse resp = p.getValue1();
+				resp.getTrailersReceived().blockThrow(1);
+				if (resp.getTrailersReceived().isDone()) {
+					if (resp.getTrailersReceived().isSuccessful())
+						check(resp, 700 + p.getValue2().intValue(), null);
+					else
+						throw resp.getTrailersReceived().getError();
+					it.remove();
+					done = true;
+				}
+			}
+			if (!done) {
+				if (++notDone == 10) {
+					throw new AssertionError("Some responses were not received");
+				}
+				pending.getFirst().getValue1().getTrailersReceived().blockThrow(1000);
+			} else {
+				notDone = 0;
+			}
+		}			
 	}
 	
 	protected static void check(HTTPResponse response, int status, String expectedXTest) throws Exception {

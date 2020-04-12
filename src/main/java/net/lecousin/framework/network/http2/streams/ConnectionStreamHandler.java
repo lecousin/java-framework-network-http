@@ -110,12 +110,16 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			manager.incrementConnectionSendWindowSize(((HTTP2WindowUpdate)frame).getIncrement());
 			break;
 		case HTTP2FrameHeader.TYPE_GOAWAY:
-			if (manager.getLogger().debug()) {
-				HTTP2GoAway f = (HTTP2GoAway)frame;
-				manager.getLogger().debug("GOAWAY: last stream id = " + f.getLastStreamID()
+			HTTP2GoAway f = (HTTP2GoAway)frame;
+			if (f.getErrorCode() != HTTP2Error.Codes.NO_ERROR || manager.getLogger().debug()) {
+				String msg = "GOAWAY: last stream id = " + f.getLastStreamID()
 					+ ", error = " + f.getErrorCode()
 					+ ", message = "
-					+ (f.getDebugMessage() == null ? "null" : new String(f.getDebugMessage(), StandardCharsets.US_ASCII)));
+					+ (f.getDebugMessage() == null ? "null" : new String(f.getDebugMessage(), StandardCharsets.US_ASCII));
+				if (f.getErrorCode() != HTTP2Error.Codes.NO_ERROR)
+					manager.getLogger().error(msg);
+				else
+					manager.getLogger().debug(msg);
 			}
 			manager.remote.close();
 			break;

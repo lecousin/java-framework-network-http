@@ -17,6 +17,10 @@ public abstract class HTTP2ResetStream implements HTTP2Frame {
 	public byte getType() {
 		return HTTP2FrameHeader.TYPE_RST_STREAM;
 	}
+	
+	public int getErrorCode() {
+		return errorCode;
+	}
 
 	/** HTTP/2 RST_STREAM frame reader. */
 	public static class Reader extends HTTP2ResetStream implements HTTP2Frame.Reader {
