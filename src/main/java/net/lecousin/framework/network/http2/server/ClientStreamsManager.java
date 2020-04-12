@@ -14,7 +14,7 @@ class ClientStreamsManager extends StreamsManager {
 	private HTTP2ServerProtocol server;
 	
 	ClientStreamsManager(HTTP2ServerProtocol server, TCPServerClient client, HTTP2Settings initialSettings) {
-		super(client, false, server.getSettings(), initialSettings, server.getSendDataTimeout(), server.logger, server.bufferCache);
+		super(client, false, server.getSettings(), false, initialSettings, server.getSendDataTimeout(), server.logger, server.bufferCache);
 		this.server = server;
 	}
 	

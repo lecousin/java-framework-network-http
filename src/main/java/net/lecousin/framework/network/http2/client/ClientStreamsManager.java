@@ -31,11 +31,11 @@ public class ClientStreamsManager extends StreamsManager {
 
 	public ClientStreamsManager(
 		TCPClient remote,
-		HTTP2Settings localSettings, HTTP2Settings initialRemoteSettings,
+		HTTP2Settings localSettings, boolean localSettingsSent, HTTP2Settings initialRemoteSettings,
 		int sendTimeout,
 		Logger logger, ByteArrayCache bufferCache
 	) {
-		super(remote, true, localSettings, initialRemoteSettings, sendTimeout, logger, bufferCache);
+		super(remote, true, localSettings, localSettingsSent, initialRemoteSettings, sendTimeout, logger, bufferCache);
 	}
 	
 	private Map<Integer, ClientRequestDataHandler> dataHandlers = new HashMap<>();

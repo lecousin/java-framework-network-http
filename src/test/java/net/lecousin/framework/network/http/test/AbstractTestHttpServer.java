@@ -93,7 +93,8 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	
 	@After
 	public void closeServer() {
-		server.close();
+		if (server != null)
+			server.close();
 	}
 	
 	@Test

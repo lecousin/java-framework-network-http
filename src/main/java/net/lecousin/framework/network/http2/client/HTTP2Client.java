@@ -4,23 +4,30 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
+import net.lecousin.framework.concurrent.util.AsyncProducer;
+import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.IO;
+import net.lecousin.framework.io.data.ByteArray;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientConnection;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
+import net.lecousin.framework.text.ByteArrayStringIso8859;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
@@ -68,10 +75,56 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	
 	private void startConnectionWithPriorKnowledge() {
 		tcp.send(ByteBuffer.wrap(HTTP1_TO_HTTP2_REQUEST).asReadOnlyBuffer(), config.getTimeouts().getSend());
-		manager = new ClientStreamsManager(tcp, settings, null, config.getTimeouts().getSend(), logger, bufferCache);
+		manager = new ClientStreamsManager(tcp, settings, false, null, config.getTimeouts().getSend(), logger, bufferCache);
 		// we expect the settings frame to come immediately
 		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, ready);
 		manager.getConnectionReady().onDone(ready);
+	}
+	
+	public Async<IOException> connectWithUpgrade(InetSocketAddress address, String hostname, boolean isSecure) {
+		Pair<? extends TCPClient, IAsync<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(address, hostname, isSecure, config, logger);
+		tcp = conn.getValue1();
+		IAsync<IOException> connect = conn.getValue2();
+		connect.thenStart("Upgrade to HTTP/2", Priority.NORMAL, () -> upgradeConnection(address, hostname, isSecure), ready);
+		return ready;
+	}
+	
+	private void upgradeConnection(InetSocketAddress address, String hostname, boolean isSecure) {
+		ByteArray settingsFrame = new HTTP2Settings.Writer(settings, true).produce(2048, bufferCache);
+		byte[] settingsBase64 = Base64Encoding.instanceURL.encode(settingsFrame.getArray(),
+			HTTP2FrameHeader.LENGTH, settingsFrame.remaining() - HTTP2FrameHeader.LENGTH);
+		HTTPClientRequest request = new HTTPClientRequest(hostname, isSecure);
+		request.setMethod("OPTIONS")
+			.setEncodedPath(new ByteArrayStringIso8859Buffer(new ByteArrayStringIso8859((byte)'*')))
+			.addHeader(HTTPConstants.Headers.Request.HOST, hostname
+				+ (address.getPort() != HTTPConstants.DEFAULT_HTTP_PORT ? ":" + address.getPort() : "")
+			)
+			.addHeader(HTTPConstants.Headers.CONNECTION, "Upgrade, HTTP2-Setting")
+			.addHeader(HTTPConstants.Headers.Request.UPGRADE, "h2c")
+			.addHeader("HTTP2-Settings", new String(settingsBase64, StandardCharsets.US_ASCII));
+		
+		// send HTTP request
+		HTTP1ClientConnection sender = new HTTP1ClientConnection(tcp, new Async<>(true), 1, config);
+		HTTPClientRequestContext ctx = new HTTPClientRequestContext(sender, request);
+		ctx.setRequestBody(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()));
+		ctx.setOnHeadersReceived(response -> {
+			if (logger.debug())
+				logger.debug("Response received to upgrade request: " + response.getStatusCode());
+			if (response.getStatusCode() != 101) {
+				ready.error(new IOException("Server does not support websocket on this address, response received is "
+					+ response.getStatusCode()));
+				return Boolean.TRUE;
+			}
+			if (logger.trace())
+				logger.trace("HTTP protocol upgraded to h2c");
+			manager = new ClientStreamsManager(tcp, settings, true, null, config.getTimeouts().getSend(), logger, bufferCache);
+			tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, ready);
+			manager.getConnectionReady().onDone(ready);
+			return Boolean.FALSE;
+		});
+		sender.reserve(ctx);
+		sender.sendReserved(ctx);
 	}
 	
 	private void dataReceived(ByteBuffer data) {

@@ -2,8 +2,8 @@ package net.lecousin.framework.network.http2.test;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.function.IntFunction;
 
 import net.lecousin.framework.application.LCCore;
@@ -31,15 +31,29 @@ import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runners.Parameterized.Parameters;
 
 public class TestHttp2Server extends AbstractTestHttpServer {
 
-	public TestHttp2Server(boolean useSSL) {
+	public enum TestCase {
+		PRIOR_KNOWLEDGE,
+		UPGRADE;
+	}
+	
+	@Parameters(name = "ssl = {0}, case = {1}")
+	public static Collection<Object[]> parameters() {
+		return addTestParameter(AbstractTestHttpServer.parameters(), TestCase.PRIOR_KNOWLEDGE, TestCase.UPGRADE);
+	}
+	
+	public TestHttp2Server(boolean useSSL, TestCase testCase) {
 		super(useSSL);
+		this.testCase = testCase;
 	}
 
+	private TestCase testCase;
 	private HTTP1ServerProtocol protocol1;
 	private HTTP2ServerProtocol protocol2;
 	
@@ -87,7 +101,14 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			return client;
 		}
 		HTTP2Client client = new HTTP2Client(clientConfig);
-		client.connectWithPriorKnowledge(serverAddress, "localhost", useSSL).blockThrow(0);
+		switch (testCase) {
+		case PRIOR_KNOWLEDGE:
+			client.connectWithPriorKnowledge(serverAddress, "localhost", useSSL).blockThrow(0);
+			break;
+		case UPGRADE:
+			client.connectWithUpgrade(serverAddress, "localhost", useSSL).blockThrow(0);
+			break;
+		}
 		if (makeClientAggressive)
 			client.getStreamsManager().getServerSettings().setMaxConcurrentStreams(-1);
 		return client;
@@ -95,30 +116,33 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Test
 	public void testHttp1Request() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		useHttp1Client = true;
 		testGetStatus();
 	}
 	
 	@Test
 	public void testAggressiveClient() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		makeClientAggressive = true;
 		try {
 			testSeveralGetRequests();
 			throw new AssertionError();
-		} catch (Exception e) {
+		} catch (Throwable e) {
 			// this is expected as the server should close this aggressive client
-			Assert.assertTrue(e instanceof ClosedChannelException || e.getCause() instanceof ClosedChannelException);
 		}
 	}
 	
 	@Test
 	public void testOnlyTwoConcurrentStreams() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		makeServerRestrictive = true;
 		testSeveralGetRequests();
 	}
 	
 	@Test
 	public void testSendInvalidFrames() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		startServer(new ProcessorForTests());
 		
 		// test send SETTINGS on data stream
@@ -184,6 +208,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Test
 	public void testWrongHttp2Connections() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		startServer(new ProcessorForTests());
 		testWrongHttp2Connection("PRI * HTTP/2.1\r\n\r\nSM\r\n\r\n");
 		testWrongHttp2Connection("PRO * HTTP/2.0\r\n\r\nSM\r\n\r\n");

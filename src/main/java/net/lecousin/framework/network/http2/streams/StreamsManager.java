@@ -68,7 +68,7 @@ public abstract class StreamsManager {
 	
 	public StreamsManager(
 		TCPRemote remote, boolean clientMode,
-		HTTP2Settings localSettings, HTTP2Settings initialRemoteSettings,
+		HTTP2Settings localSettings, boolean localSettingsSent, HTTP2Settings initialRemoteSettings,
 		int sendTimeout,
 		Logger logger, ByteArrayCache bufferCache
 	) {
@@ -88,7 +88,8 @@ public abstract class StreamsManager {
 		dependencyNodes.put(0, dependencyTree);
 		
 		// send our settings
-		sendFrame(new HTTP2Settings.Writer(localSettings, true), false);
+		if (!localSettingsSent)
+			sendFrame(new HTTP2Settings.Writer(localSettings, true), false);
 		
 		if (remoteSettings != null) {
 			// send ACK
