@@ -170,7 +170,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	
 	@Override
 	public int getInputBufferSize(TCPServerClient client) {
-		HTTP1ServerUpgradeProtocol proto = (HTTP1ServerUpgradeProtocol)client.getAttribute(UPGRADED_PROTOCOL_ATTRIBUTE);
+		ServerProtocol proto = (ServerProtocol)client.getAttribute(UPGRADED_PROTOCOL_ATTRIBUTE);
 		if (proto != null)
 			return proto.getInputBufferSize(client);
 		ReceiveStatus status = (ReceiveStatus)client.getAttribute(RECEIVE_STATUS_ATTRIBUTE);
