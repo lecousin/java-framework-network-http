@@ -146,7 +146,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		startServer(new ProcessorForTests());
 		
 		// test send SETTINGS on data stream
-		sendInvalidFramesOnDataStream(true, id -> new HTTP2Frame.Writer() {
+		sendInvalidFrame(true, id -> new HTTP2Frame.Writer() {
 			private boolean sent = false;
 			@Override
 			public byte getType() { return HTTP2FrameHeader.TYPE_SETTINGS; }
@@ -166,7 +166,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		});
 		
 		// test send HEADERS on connection stream
-		sendInvalidFramesOnDataStream(false, id -> new HTTP2Frame.Writer() {
+		sendInvalidFrame(false, id -> new HTTP2Frame.Writer() {
 			private boolean sent = false;
 			@Override
 			public byte getType() { return HTTP2FrameHeader.TYPE_SETTINGS; }
@@ -186,7 +186,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		});
 	}
 	
-	private void sendInvalidFramesOnDataStream(boolean needDataStream, IntFunction<HTTP2Frame.Writer> frameProvider) throws Exception {
+	private void sendInvalidFrame(boolean needDataStream, IntFunction<HTTP2Frame.Writer> frameProvider) throws Exception {
 		try (HTTP2Client client = (HTTP2Client)createClient()) {
 			IAsync<IOException> send;
 			if (needDataStream) {
@@ -202,7 +202,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			Async<Exception> sp = new Async<>();
 			client.getConnection().onclosed(sp::unblock);
 			sp.blockThrow(5000);
-			Assert.assertTrue(sp.isDone());
+			Assert.assertTrue(sp.isDone() || client.getConnection().isClosed());
 		}
 	}
 	

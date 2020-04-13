@@ -8,6 +8,7 @@ import net.lecousin.framework.io.data.Bytes;
 import net.lecousin.framework.network.http.HTTPProtocolVersion;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.exception.HTTPError;
+import net.lecousin.framework.network.mime.MimeUtil;
 import net.lecousin.framework.text.ByteArrayStringIso8859;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 
@@ -39,7 +40,7 @@ public class HTTP1RequestCommandConsumer extends PartialAsyncConsumer.ConsumerQu
 					str = null;
 					return new AsyncSupplier<>(Boolean.TRUE, null);
 				}
-				if (!HTTPRequest.isValidMethodChar(b))
+				if (!MimeUtil.isValidTokenCharacter(b))
 					return new AsyncSupplier<>(null, new HTTPError(HttpURLConnection.HTTP_BAD_REQUEST,
 						"Invalid method character: " + (b & 0xFF)));
 				if (str.length() >= HTTPRequest.MAX_METHOD_LENGTH)

@@ -158,6 +158,8 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 			} else {
 				queryParameters = new HashMap<>();
 			}
+		} else if (encodedQueryString != null) {
+			encodedQueryString = null;
 		}
 		queryParameters.put(name, value);
 		return this;
@@ -230,22 +232,6 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 		return setEncodedPathAndQuery((ByteArrayStringIso8859Buffer)uri);
 	}
 	
-	/** Return true if this is a valid character for a method. */
-	public static boolean isValidMethodChar(byte b) {
-		if (b < 0x21) return false;
-		if (b > 0x5A) {
-			if (b < 0x5E) return false;
-			if (b < 0x7B) return true;
-			return b == 0x7C || b == 0x7E;
-		}
-		if (b >= 0x41) return true;
-		if (b == 0x40) return false;
-		if (b >= 0x30) return true;
-		if (b >= 0x2A)
-			return b != 0x2F && b != 0x2C;
-		return b != 0x22;
-	}
-	
 	/** Return true if this is a valid character for an URI. */
 	public static boolean isValidURIChar(byte b) {
 		if (b < 0x5B) {
@@ -265,10 +251,8 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 		s.setNewArrayStringCapacity(512);
 		HTTP1RequestCommandProducer.generate(this, s);
 		MimeHeaders headers = getHeaders();
-		if (headers != null) {
-			s.append("\r\n");
-			headers.appendTo(s);
-		}
+		s.append("\r\n");
+		headers.appendTo(s);
 		return s.asString();
 	}
 	
@@ -276,8 +260,6 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	public boolean isExpectingBody() {
 		if (!methodMayContainBody(method)) return false;
 		MimeHeaders headers = getHeaders();
-		if (headers == null)
-			return false;
 		Long size = headers.getContentLength();
 		if (size != null)
 			return size.longValue() != 0;

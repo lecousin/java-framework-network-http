@@ -8,6 +8,7 @@ import net.lecousin.framework.network.http.HTTPProtocolVersion;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandConsumer;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -95,6 +96,54 @@ public class TestHTTPRequest extends LCCoreAbstractTest {
 
 		r.addHeader("Cookie", "toto=tutu; toto=tata");
 		Assert.assertEquals(3, r.getCookies("toto").size());
+	}
+	
+	@Test
+	public void testPathAndQuery() {
+		HTTPRequest r = new HTTPRequest();
+		Assert.assertNull(r.getDecodedPath());
+		Assert.assertNull(r.getQueryParameter("test"));
+		Assert.assertEquals(0, r.getQueryParameters().size());
+		r.setEncodedPath(new ByteArrayStringIso8859Buffer("/x+y/z%3Aa"));
+		Assert.assertEquals("/x y/z:a", r.getDecodedPath());
+		Assert.assertEquals("/x y/z:a", r.getDecodedPath());
+		r.setDecodedPath("/a b/c:d");
+		Assert.assertEquals("/a+b/c%3Ad", r.getEncodedPath().asString());
+		Assert.assertEquals("/a+b/c%3Ad", r.getEncodedPath().asString());
+		r.setQueryParameter("test", "ok");
+		Assert.assertEquals("ok", r.getQueryParameter("test"));
+		r.setEncodedQueryString(new ByteArrayStringIso8859Buffer("a=b&c=%3A&d=1"));
+		Assert.assertEquals("b", r.getQueryParameter("a"));
+		Assert.assertEquals(":", r.getQueryParameter("c"));
+		Assert.assertEquals("1", r.getQueryParameter("d"));
+		r.setEncodedQueryString(new ByteArrayStringIso8859Buffer("a=b&c=%3A&d=1"));
+		Assert.assertEquals(3, r.getQueryParameters().size());
+		Assert.assertEquals("b", r.getQueryParameters().get("a"));
+		Assert.assertEquals(":", r.getQueryParameters().get("c"));
+		Assert.assertEquals("1", r.getQueryParameters().get("d"));
+		r.setEncodedQueryString(new ByteArrayStringIso8859Buffer("a=1&b=2"));
+		r.setQueryParameter("c", "3");
+		Assert.assertEquals("1", r.getQueryParameter("a"));
+		Assert.assertEquals("2", r.getQueryParameter("b"));
+		Assert.assertEquals("3", r.getQueryParameter("c"));
+		r = new HTTPRequest();
+		r.setQueryParameter("test", "ok");
+		Assert.assertEquals("ok", r.getQueryParameter("test"));
+		r = new HTTPRequest();
+		r.getQueryParameters();
+		Assert.assertEquals("", r.getEncodedQueryString().asString());
+		r.setQueryParameter("a", ":");
+		Assert.assertEquals("a=%3A", r.getEncodedQueryString().asString());
+	}
+	
+	@Test
+	public void testToString() {
+		HTTPRequest r = new HTTPRequest();
+		r.setMethod("TEST").setDecodedPath("/a:b").setProtocolVersion(new HTTPProtocolVersion((byte)0, (byte)9)).addHeader("X-test", "ok");
+		Assert.assertEquals("TEST /a%3Ab HTTP/0.9\r\nX-test: ok\r\n", r.toString());
+		r = new HTTPRequest();
+		r.setMethod("TEST").setDecodedPath("/a:b").setProtocolVersion(new HTTPProtocolVersion((byte)0, (byte)9));
+		Assert.assertEquals("TEST /a%3Ab HTTP/0.9\r\n", r.toString());
 	}
 	
 }
