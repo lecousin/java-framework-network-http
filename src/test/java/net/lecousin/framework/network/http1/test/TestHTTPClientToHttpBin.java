@@ -40,10 +40,13 @@ public class TestHTTPClientToHttpBin extends LCCoreAbstractTest {
 	public void test() throws Exception {
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		try (HTTPClient client = new HTTPClient(config)) {
+			client.getDescription();
 			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, test.request);
 			ctx.setMaxRedirections(test.maxRedirection);
 			client.send(ctx);
+			client.getDescription();
 			ctx.getResponse().getBodyReceived().blockThrow(0);
+			client.getDescription();
 			test.check(ctx.getResponse(), null);
 		}
 	}

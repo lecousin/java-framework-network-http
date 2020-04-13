@@ -16,11 +16,11 @@ public class ProcessorForTests implements HTTPRequestProcessor {
 	public void process(HTTPRequestContext ctx) {
 		String path = ctx.getRequest().getDecodedPath();
 		if (!path.startsWith("/")) {
-			ctx.getErrorHandler().setError(ctx, 500, "Path must start with a slash", null);
+			ctx.getErrorHandler().setError(ctx, 501, "Path must start with a slash", null);
 			return;
 		}
 		if (!path.startsWith("/test/")) {
-			ctx.getErrorHandler().setError(ctx, 500, "Path must start with /test/", null);
+			ctx.getErrorHandler().setError(ctx, 502, "Path must start with /test/", null);
 			return;
 		}
 		String method = path.substring(6);
@@ -28,11 +28,11 @@ public class ProcessorForTests implements HTTPRequestProcessor {
 		int code;
 		try { code = Integer.parseInt(expectedStatus); }
 		catch (Exception e) {
-			ctx.getErrorHandler().setError(ctx, 500, "Invalid expected status " + expectedStatus, null);
+			ctx.getErrorHandler().setError(ctx, 503, "Invalid expected status " + expectedStatus, null);
 			return;
 		}
 		if (!method.equalsIgnoreCase(ctx.getRequest().getMethod())) {
-			ctx.getErrorHandler().setError(ctx, 500, "Method received is " + ctx.getRequest().getMethod(), null);
+			ctx.getErrorHandler().setError(ctx, 504, "Method received is " + ctx.getRequest().getMethod(), null);
 			return;
 		}
 		

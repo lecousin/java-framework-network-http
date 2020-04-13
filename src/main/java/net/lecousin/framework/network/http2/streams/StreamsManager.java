@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -28,6 +29,7 @@ import net.lecousin.framework.network.http2.frame.HTTP2Data;
 import net.lecousin.framework.network.http2.frame.HTTP2Frame;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2GoAway;
+import net.lecousin.framework.network.http2.frame.HTTP2Ping;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.http2.frame.HTTP2WindowUpdate;
 import net.lecousin.framework.network.http2.hpack.HPackCompress;
@@ -65,6 +67,8 @@ public abstract class StreamsManager {
 	private HTTP2FrameHeader currentFrameHeader = null;
 	private HTTP2FrameHeader.Consumer currentFrameHeaderConsumer = null;
 	private StreamHandler currentStream = null;
+	
+	private List<Pair<byte[], Runnable>> pings = new LinkedList<>();
 	
 	public StreamsManager(
 		TCPRemote remote, boolean clientMode,
@@ -249,6 +253,29 @@ public abstract class StreamsManager {
 		HTTP2GoAway.Writer frame = new HTTP2GoAway.Writer(lastRemoteStreamId, errorCode,
 			debugMessage != null ? debugMessage.getBytes(StandardCharsets.UTF_8) : null);
 		sendFrame(frame, true);
+	}
+	
+	public void sendPing(byte[] data, Runnable onResponseReceived) {
+		synchronized (pings) {
+			pings.add(new Pair<>(data, onResponseReceived));
+		}
+		sendFrame(new HTTP2Ping.Writer(data, false), false);
+	}
+	
+	void pingResponse(byte[] data) {
+		Runnable listener = null;
+		synchronized (pings) {
+			for (Iterator<Pair<byte[], Runnable>> it = pings.iterator(); it.hasNext(); ) {
+				Pair<byte[], Runnable> p = it.next();
+				if (Arrays.equals(data, p.getValue1())) {
+					listener = p.getValue2();
+					it.remove();
+					break;
+				}
+			}
+		}
+		if (listener != null)
+			listener.run();
 	}
 	
 	/** Start processing a frame, return the stream handler or null to stop everything. */
@@ -471,7 +498,7 @@ public abstract class StreamsManager {
 			DependencyNode node = dependencyNodes.get(frame.getStreamId());
 			if (node == null)
 				node = addStreamNode(dependencyTree, frame.getStreamId(), 16);
-			if (frame.getType() == HTTP2FrameHeader.TYPE_WINDOW_UPDATE)
+			if (frame.getType() == HTTP2FrameHeader.TYPE_WINDOW_UPDATE || frame.getType() == HTTP2FrameHeader.TYPE_PING)
 				node.waitingFrameProducers.addFirst(new Pair<>(frame, sp));
 			else
 				node.waitingFrameProducers.addLast(new Pair<>(frame, sp));

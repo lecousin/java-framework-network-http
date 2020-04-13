@@ -104,7 +104,10 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 			manager.applyRemoteSettings((HTTP2Settings.Reader)frame);
 			break;
 		case HTTP2FrameHeader.TYPE_PING:
-			manager.sendFrame(new HTTP2Ping.Writer(((HTTP2Ping)frame).getOpaqueData(), true), false);
+			if ((header.getFlags() & HTTP2Ping.FLAG_ACK) != 0)
+				manager.pingResponse(((HTTP2Ping)frame).getOpaqueData());
+			else
+				manager.sendFrame(new HTTP2Ping.Writer(((HTTP2Ping)frame).getOpaqueData(), true), false);
 			break;
 		case HTTP2FrameHeader.TYPE_WINDOW_UPDATE:
 			manager.incrementConnectionSendWindowSize(((HTTP2WindowUpdate)frame).getIncrement());

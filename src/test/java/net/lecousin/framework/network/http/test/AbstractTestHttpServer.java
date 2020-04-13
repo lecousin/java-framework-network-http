@@ -41,6 +41,7 @@ import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.network.test.AbstractNetworkTest;
+import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.After;
@@ -433,6 +434,18 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			Assert.assertEquals("s is", s);
 			s = IOUtil.readFullyAsStringSync(((BinaryEntity)multipart.getParts().get(1)).getContent(), StandardCharsets.US_ASCII);
 			Assert.assertEquals("esource", s);
+		}
+	}
+	
+	@Test
+	public void testCustomMethod() throws Exception {
+		startServer(new ProcessorForTests());
+		try (HTTPClientRequestSender client = createClient()) {
+			HTTPClientRequest request = new HTTPClientRequest(serverAddress, useSSL);
+			request.setMethod("TEST").setEncodedPath(new ByteArrayStringIso8859Buffer("/test/test?status=499"));
+			HTTPClientResponse response = client.send(request);
+			response.getTrailersReceived().blockThrow(0);
+			Assert.assertEquals(499, response.getStatusCode());
 		}
 	}
 }

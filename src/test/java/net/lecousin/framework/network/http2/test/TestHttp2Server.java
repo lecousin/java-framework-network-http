@@ -10,6 +10,7 @@ import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
+import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.data.ByteArray;
@@ -238,6 +239,48 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		String line = IOUtil.readFullyAsStringSync(io, StandardCharsets.US_ASCII);
 		Assert.assertTrue(line.contains(" 400 "));
 		tcp.close();
+	}
+	
+	@Test
+	public void testPing() throws Exception {
+		startServer(new ProcessorForTests());
+		try (HTTP2Client client = (HTTP2Client)createClient()) {
+			Async<NoException> done = new Async<>();
+			client.getStreamsManager().sendPing(new byte[] { 1,  2, 3, 4, 5, 6, 7, 8 }, done::unblock);
+			done.block(5000);
+			Assert.assertTrue(done.isDone());
+		}
+	}
+	
+	@Test
+	public void testUnknownFrame() throws Exception {
+		startServer(new ProcessorForTests());
+		try (HTTP2Client client = (HTTP2Client)createClient()) {
+			IAsync<IOException> send = client.getStreamsManager().sendFrame(new HTTP2Frame.Writer() {
+				private boolean sent = false;
+				@Override
+				public byte getType() { return (byte)99; }
+				@Override
+				public int getStreamId() { return 0; }
+				@Override
+				public boolean canProduceSeveralFrames() { return false; }
+				@Override
+				public boolean canProduceMore() { return !sent; }
+				@Override
+				public ByteArray produce(int maxFrameSize, ByteArrayCache cache) {
+					byte[] b = new byte[HTTP2FrameHeader.LENGTH];
+					HTTP2FrameHeader.write(b, 0, 0, (byte)99, (byte)0, 0);
+					sent = true;
+					return new ByteArray.Writable(b, true);
+				}
+			}, false);
+			send.blockThrow(0);
+			// send a ping, connection should still be operational
+			Async<NoException> done = new Async<>();
+			client.getStreamsManager().sendPing(new byte[] { 1,  2, 3, 4, 5, 6, 7, 8 }, done::unblock);
+			done.block(5000);
+			Assert.assertTrue(done.isDone());
+		}
 	}
 	
 }
