@@ -533,7 +533,7 @@ public abstract class StreamsManager {
 			lastSend.onSuccess(StreamsManager.this::launchFrameProduction);
 			lastSend.onError(e -> {
 				closing = true;
-				logger.error("Error sending frames", e);
+				logger.error("Error sending frames on " + remote, e);
 				remote.close();
 			});
 			remote.newDataToSendWhenPossible(dataProvider, lastSend, sendTimeout);

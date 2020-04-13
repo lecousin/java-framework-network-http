@@ -254,7 +254,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 					if (resp.getTrailersReceived().isSuccessful())
 						check(resp, 700 + p.getValue2().intValue(), null);
 					else
-						throw new Exception("Error receiving response " + p.getValue2(), resp.getTrailersReceived().getError());
+						throw new Exception("Error receiving response " + p.getValue2() + " from " + serverAddress, resp.getTrailersReceived().getError());
 					it.remove();
 					done = true;
 				}

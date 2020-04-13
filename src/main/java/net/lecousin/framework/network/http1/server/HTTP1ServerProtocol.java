@@ -564,26 +564,34 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		if (logger.debug())
 			logger.debug("Sending response with body size " + bodySize + " and headers:\n" + headers);
 		boolean closeAfter = !ctx.getRequest().isConnectionPersistent() || response.isForceClose();
-		AsyncConsumer<ByteBuffer, IOException> clientConsumer = ctx.getClient().asConsumer(closeAfter ? 1 : 3, sendDataTimeout);
-		IAsync<IOException> sendHeaders = clientConsumer.push(Arrays.asList(buffers));
+		IAsync<IOException> sendHeaders;
+		try {
+			sendHeaders = ctx.getClient().send(Arrays.asList(buffers), sendDataTimeout,
+				closeAfter && !isChunked && bodySize.longValue() == 0);
+		} catch (ClosedChannelException e) {
+			response.getSent().error(e);
+			return;
+		}
 		
 		sendHeaders.onError(error -> {
 			if (logger.error())
 				logger.error("Error sending HTTP response headers", error);
+			response.getSent().error(error);
 			ctx.getClient().close();
 		});
 		
 		if (!isChunked && bodySize.longValue() == 0) {
 			// empty body
 			sendHeaders.onDone(response.getSent());
-			if (closeAfter)
-				sendHeaders.onSuccess(ctx.getClient()::close);
 			return;
 		}
+		
+		AsyncConsumer<ByteBuffer, IOException> consumer;
 		if (isChunked)
-			clientConsumer = new ChunkedTransfer.Sender(clientConsumer, trailerSupplier);
+			consumer = new ChunkedTransfer.Sender(ctx.getClient().asConsumer(1, sendDataTimeout), trailerSupplier);
+		else
+			consumer = ctx.getClient().asConsumer(1, sendDataTimeout);
 
-		AsyncConsumer<ByteBuffer, IOException> consumer = clientConsumer;
 		sendHeaders.thenStart("Send HTTP response body", Task.getCurrentPriority(), () -> {
 			if (logger.trace())
 				logger.trace("Headers sent, start to send response body");
