@@ -171,7 +171,7 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 		testInvalidRequest("GET tutu FTP/10.51\r\n\r\n", 400);
 		testInvalidRequest("GET /test HTTP/1.1\r\n\tFollowing: nothing\r\n\r\n", 400);
 		//testInvalidRequest("POST /test/post?status=200 HTTP/1.1\r\nTransfer-Encoding: identity\r\n\r\n", serverPort, 400);
-		testInvalidRequest("GET /titi HTTP/1.1\r\n\r\n", 500);
+		testInvalidRequest("GET /titi HTTP/1.1\r\n\r\n", 502);
 	}
 	
 	private void testInvalidRequest(String request, int expectedStatus) throws Exception {

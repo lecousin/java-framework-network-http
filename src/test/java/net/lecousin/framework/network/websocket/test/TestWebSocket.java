@@ -389,7 +389,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 				sp.get().unblock();
 		});
 		client.sendMessage(9999, new EmptyReadable("empty", Task.Priority.NORMAL)).blockThrow(0);
-		sp.get().blockThrow(5000);
+		sp.get().blockThrow(2000);
 		Assert.assertFalse(sp.get().isDone());
 		client.close();
 	}

@@ -608,9 +608,9 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		Task.cpu("Send HTTP Request headers", Priority.NORMAL, t -> {
 			IAsync<IOException> send = clientConsumer.push(Arrays.asList(r.headers.getResult()));
 			send.onDone(r.headersSent);
-			r.headersSent.onDone(HTTP1ClientConnection.this::doNextJob);
 			return null;
-		}).start();
+		}).start().getOutput().onError(err -> r.headersSent.error(IO.error(err)));
+		r.headersSent.onDone(HTTP1ClientConnection.this::doNextJob);
 	}
 	
 	private void stop(Request r, boolean andClose) {

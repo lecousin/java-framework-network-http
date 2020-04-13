@@ -37,19 +37,23 @@ public class ProcessorForTests implements HTTPRequestProcessor {
 		}
 		
 		if (ctx.getRequest().isExpectingBody()) {
-			BinaryEntity entity = new BinaryEntity(null, ctx.getRequest().getHeaders());
-			ctx.getRequest().setEntity(entity);
-			OutputToInput o2i = new OutputToInput(new IOInMemoryOrFile(64 * 1024, Task.Priority.NORMAL, "request body"), "request body");
-			entity.setContent(o2i);
-			entity = new BinaryEntity(null, ctx.getResponse().getHeaders());
-			ParameterizedHeaderValue type;
-			try { type = ctx.getRequest().getHeaders().getContentType(); }
-			catch (Exception e) { type = null; }
-			if (type != null)
-				entity.addHeader(MimeHeaders.CONTENT_TYPE, type);
-			entity.setContent(o2i);
-			ctx.getResponse().setEntity(entity);
-			ctx.getResponse().getSent().onDone(o2i::closeAsync);
+			if (ctx.getRequest().getEntity() == null) {
+				BinaryEntity entity = new BinaryEntity(null, ctx.getRequest().getHeaders());
+				ctx.getRequest().setEntity(entity);
+				OutputToInput o2i = new OutputToInput(new IOInMemoryOrFile(64 * 1024, Task.Priority.NORMAL, "request body"), "request body");
+				entity.setContent(o2i);
+				entity = new BinaryEntity(null, ctx.getResponse().getHeaders());
+				ParameterizedHeaderValue type;
+				try { type = ctx.getRequest().getHeaders().getContentType(); }
+				catch (Exception e) { type = null; }
+				if (type != null)
+					entity.addHeader(MimeHeaders.CONTENT_TYPE, type);
+				entity.setContent(o2i);
+				ctx.getResponse().setEntity(entity);
+				ctx.getResponse().getSent().onDone(o2i::closeAsync);
+			} else {
+				ctx.getResponse().setEntity(ctx.getRequest().getEntity());
+			}
 		}
 		
 		ctx.getResponse().setStatus(code, "Test OK");
