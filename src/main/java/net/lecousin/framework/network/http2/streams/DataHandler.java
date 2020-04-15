@@ -23,4 +23,6 @@ public interface DataHandler {
 	
 	void endOfTrailers(StreamsManager manager, DataStreamHandler stream);
 	
+	void close();
+	
 }

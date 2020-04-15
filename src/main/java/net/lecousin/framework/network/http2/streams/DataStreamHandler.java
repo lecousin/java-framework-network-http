@@ -2,6 +2,7 @@ package net.lecousin.framework.network.http2.streams;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -55,6 +56,16 @@ public class DataStreamHandler extends StreamHandler.Default {
 		return id;
 	}
 	
+	@Override
+	public void closed() {
+		if (dataHandler != null)
+			dataHandler.close();
+		if (bodyConsumer != null) {
+			bodyConsumer.error(new ClosedChannelException());
+			bodyConsumer = null;
+		}
+	}
+
 	@Override
 	public boolean startFrame(StreamsManager manager, HTTP2FrameHeader header) {
 		payloadPos = 0;

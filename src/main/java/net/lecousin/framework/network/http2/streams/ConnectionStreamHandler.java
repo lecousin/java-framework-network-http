@@ -19,6 +19,11 @@ class ConnectionStreamHandler extends StreamHandler.Default {
 	public int getStreamId() {
 		return 0;
 	}
+	
+	@Override
+	public void closed() {
+		// nothing
+	}
 
 	/** Start processing a frame. Return false if nothing else should be done. */
 	@Override

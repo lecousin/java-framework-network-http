@@ -17,6 +17,11 @@ public class ProcessWindowUpdateFrame extends StreamHandler.Default {
 	private int streamId;
 	
 	@Override
+	public void closed() {
+		// nothing
+	}
+
+	@Override
 	public boolean startFrame(StreamsManager manager, HTTP2FrameHeader header) {
 		frame = new HTTP2WindowUpdate.Reader();
 		payloadConsumer = frame.createConsumer();

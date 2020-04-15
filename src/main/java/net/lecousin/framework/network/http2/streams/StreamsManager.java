@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -118,6 +119,15 @@ public abstract class StreamsManager {
 				dependencyTree.forceClose(closed);
 				dependencyNodes.clear();
 			}
+			List<StreamHandler> handlers;
+			synchronized (dataStreams) {
+				handlers = new ArrayList<>(dataStreams.size());
+				for (Iterator<StreamHandler> it = dataStreams.values(); it.hasNext(); )
+					handlers.add(it.next());
+				dataStreams.clear();
+			}
+			for (StreamHandler handler : handlers)
+				handler.closed();
 			return null;
 		}).start());
 	}
@@ -284,6 +294,10 @@ public abstract class StreamsManager {
 			return null;
 		if (logger.trace())
 			logger.trace("Received frame: " + currentFrameHeader);
+		if (currentFrameHeader.getPayloadLength() > localSettings.getMaxFrameSize()) {
+			connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Your frame is larger than what i asked you");
+			return null;
+		}
 		StreamHandler stream;
 		if (currentFrameHeader.getStreamId() == 0) {
 			stream = connectionStream;
@@ -349,25 +363,36 @@ public abstract class StreamsManager {
 		lastRemoteStreamId = id;
 		DataStreamHandler stream = new DataStreamHandler(id);
 		dataStreams.put(id, stream);
-		boolean tooManyStreams = false;
-		synchronized (dependencyTree) {
-			// check if maximum is reached
-			if (localSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
-				// we may need to close stream
-				dependencyTree.cleanStreams();
-				if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
-					tooManyStreams = true;
+		for (int trial = 0; true; trial++) {
+			boolean tooManyStreams = false;
+			synchronized (dependencyTree) {
+				// check if maximum is reached
+				if (localSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
+					// we may need to close stream
+					dependencyTree.cleanStreams();
+					if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
+						tooManyStreams = true;
+					}
 				}
+				if (!tooManyStreams)
+					addStreamNode(dependencyTree, id, 16);
 			}
-			if (!tooManyStreams)
-				addStreamNode(dependencyTree, id, 16);
+			if (tooManyStreams) {
+				Task<Void, NoException> task = null;
+				synchronized (endOfStreamTasks) {
+					if (!endOfStreamTasks.isEmpty())
+						task = endOfStreamTasks.get(0);
+				}
+				if (task != null && trial < 10) {
+					task.getOutput().block(1000);
+					continue;
+				}
+				connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
+					+ dependencyNodes.size() + "/" + localSettings.getMaxConcurrentStreams() + ")");
+				return null;
+			}
+			return stream;
 		}
-		if (tooManyStreams) {
-			connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
-				+ dependencyNodes.size() + "/" + localSettings.getMaxConcurrentStreams() + ")");
-			return null;
-		}
-		return stream;
 	}
 	
 	private int openLocalStream() {
@@ -460,6 +485,22 @@ public abstract class StreamsManager {
 	
 	void closeStream(DataStreamHandler stream) {
 		dataStreams.remove(stream.getStreamId());
+	}
+	
+	private List<Task<Void, NoException>> endOfStreamTasks = new LinkedList<>();
+	
+	public void taskEndOfStream(int streamId) {
+		Task<Void, NoException> task = Task.cpu("Close HTTP/2 stream", Priority.RATHER_IMPORTANT, t -> {
+			endOfStream(streamId);
+			synchronized (endOfStreamTasks) {
+				endOfStreamTasks.remove(t);
+			}
+			return null;
+		});
+		synchronized (endOfStreamTasks) {
+			endOfStreamTasks.add(task);
+		}
+		task.start();
 	}
 	
 	public void endOfStream(int streamId) {
@@ -698,10 +739,9 @@ public abstract class StreamsManager {
 		}
 		
 		public void endOfStream() {
+			eos = true;
 			if (waitingFrameProducers.isEmpty())
 				close();
-			else
-				eos = true;
 		}
 		
 		private void close() {

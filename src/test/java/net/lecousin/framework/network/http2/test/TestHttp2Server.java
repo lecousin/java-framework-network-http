@@ -79,6 +79,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 
 	private boolean makeClientAggressive = false;
 	private boolean makeServerRestrictive = false;
+	private boolean makeServerOpenToConcurrency = false;
 	private boolean useHttp1Client = false;
 
 	@Override
@@ -87,6 +88,8 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		protocol2 = new HTTP2ServerProtocol(protocol1);
 		if (makeClientAggressive || makeServerRestrictive)
 			protocol2.getSettings().setMaxConcurrentStreams(2);
+		else if (makeServerOpenToConcurrency)
+			protocol2.getSettings().setMaxConcurrentStreams(-1);
 		return protocol1;
 	}
 	
@@ -142,6 +145,13 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	}
 	
 	@Test
+	public void testNoConcurrentStreamsLimit() throws Exception {
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
+		makeServerOpenToConcurrency = true;
+		testSeveralGetRequests();
+	}
+	
+	@Test
 	public void testSendInvalidFrames() throws Exception {
 		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
 		startServer(new ProcessorForTests());
@@ -181,6 +191,26 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			public ByteArray produce(int maxFrameSize, ByteArrayCache cache) {
 				byte[] b = new byte[HTTP2FrameHeader.LENGTH];
 				HTTP2FrameHeader.write(b, 0, 0, HTTP2FrameHeader.TYPE_HEADERS, (byte)0, id);
+				sent = true;
+				return new ByteArray.Writable(b, true);
+			}
+		});
+		
+		// test send giant payload
+		sendInvalidFrame(true, id -> new HTTP2Frame.Writer() {
+			private boolean sent = false;
+			@Override
+			public byte getType() { return HTTP2FrameHeader.TYPE_HEADERS; }
+			@Override
+			public int getStreamId() { return id; }
+			@Override
+			public boolean canProduceSeveralFrames() { return false; }
+			@Override
+			public boolean canProduceMore() { return !sent; }
+			@Override
+			public ByteArray produce(int maxFrameSize, ByteArrayCache cache) {
+				byte[] b = new byte[HTTP2FrameHeader.LENGTH];
+				HTTP2FrameHeader.write(b, 0, Integer.MAX_VALUE, HTTP2FrameHeader.TYPE_HEADERS, (byte)0, id);
 				sent = true;
 				return new ByteArray.Writable(b, true);
 			}

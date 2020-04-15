@@ -16,6 +16,11 @@ class SkipFrame implements StreamHandler {
 	private int payloadPos = 0;
 	
 	@Override
+	public void closed() {
+		// nothing
+	}
+	
+	@Override
 	public boolean startFrame(StreamsManager manager, HTTP2FrameHeader header) {
 		return true;
 	}

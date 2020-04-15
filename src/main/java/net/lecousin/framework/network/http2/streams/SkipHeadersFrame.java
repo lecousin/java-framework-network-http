@@ -20,11 +20,14 @@ class SkipHeadersFrame extends StreamHandler.Default {
 	}
 	
 	@Override
+	public void closed() {
+		// nothing
+	}
+
+	@Override
 	public boolean startFrame(StreamsManager manager, HTTP2FrameHeader header) {
-		if (header.getPayloadLength() == 0) {
-			if (manager.currentDecompressionStreamId == streamId)
-				manager.currentDecompressionStreamId = -1;
-		}
+		if (header.getPayloadLength() == 0 && manager.currentDecompressionStreamId == streamId)
+			manager.currentDecompressionStreamId = -1;
 
 		// we need to consume using decompressionContext
 		if (manager.currentDecompressionStreamId != -1 && manager.currentDecompressionStreamId != streamId) {

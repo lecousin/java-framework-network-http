@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 
 import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
@@ -31,6 +32,18 @@ class ClientRequestDataHandler implements DataHandler {
 	}
 	
 	private HTTPClientRequestContext ctx;
+	
+	@Override
+	public void close() {
+		if (!ctx.getRequestSent().isDone())
+			ctx.getRequestSent().error(new ClosedChannelException());
+		else if (!ctx.getResponse().getHeadersReceived().isDone())
+			ctx.getResponse().getHeadersReceived().error(new ClosedChannelException());
+		else if (!ctx.getResponse().getBodyReceived().isDone())
+			ctx.getResponse().getBodyReceived().error(new ClosedChannelException());
+		else if (!ctx.getResponse().getTrailersReceived().isDone())
+			ctx.getResponse().getTrailersReceived().error(new ClosedChannelException());
+	}
 
 	@Override
 	public MimeHeaders getReceivedHeaders() {

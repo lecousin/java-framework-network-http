@@ -2,6 +2,7 @@ package net.lecousin.framework.network.http2.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -43,6 +44,12 @@ class ClientDataHandler implements DataHandler {
 		this.streamId = streamId;
 		this.server = server;
 	}
+	
+	@Override
+	public void close() {
+		if (!ctx.getResponse().getSent().isDone())
+			ctx.getResponse().getSent().error(new ClosedChannelException());
+	}
 
 	@Override
 	public MimeHeaders getReceivedHeaders() {
@@ -74,12 +81,12 @@ class ClientDataHandler implements DataHandler {
 		server.getProcessor().process(ctx);
 		
 		ctx.getResponse().getReady().onDone(() -> sendHeaders(manager, ctx));
-		ctx.getResponse().getSent().thenStart("Close HTTP/2 stream", Priority.NORMAL, () -> {
-			manager.endOfStream(streamId);
+		ctx.getResponse().getSent().onDone(() -> {
+			manager.taskEndOfStream(streamId);
 			if (server.logger.debug())
 				server.logger.debug("Response sent to " + ctx.getClient()
 					+ " for " + HTTP1RequestCommandProducer.generateString(ctx.getRequest()));
-		}, true);
+		});
 
 		if (ctx.getRequest().getEntity() == null) {
 			if (!ctx.getRequest().isExpectingBody())
@@ -103,7 +110,8 @@ class ClientDataHandler implements DataHandler {
 	@SuppressWarnings("java:S1602") // better readability to keep curly braces
 	private void sendHeaders(StreamsManager manager, HTTPRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
-			// TODO if getReady() has an error, send an error
+			if (ctx.getResponse().getStatusCode() < 100)
+				ctx.getResponse().setStatus(ctx.getResponse().getReady().hasError() ? 500 : 200);
 			
 			if (((ClientStreamsManager)manager).getServer().rangeRequestsEnabled())
 				HTTP1ServerProtocol.handleRangeRequest(ctx, manager.getLogger());
@@ -140,6 +148,10 @@ class ClientDataHandler implements DataHandler {
 			manager.reserveCompressionContext(streamId).thenStart("Send HTTP/2 headers", Priority.NORMAL, compressionContext -> {
 				manager.sendFrame(new HTTP2Headers.Writer(streamId, headers, eos, compressionContext, () -> {
 					manager.releaseCompressionContext(streamId);
+					if (eos) {
+						ctx.getResponse().getSent().unblock();
+						return;
+					}
 					bodyProducer.onDone(() -> DataStreamHandler.sendBody(
 						manager, streamId, ctx.getResponse(), ctx.getResponse().getSent(),
 						bodyProducer.getResult().getValue1(), bodyProducer.getResult().getValue2(),

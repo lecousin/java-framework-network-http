@@ -23,6 +23,9 @@ public interface StreamHandler {
 	/** Consume frame. */
 	void consumeFramePayload(StreamsManager manager, ByteBuffer data, Async<IOException> onConsumed);
 	
+	/** Called when the stream is closed or the remote connection is closed to free or unblock any remaining resources. */
+	void closed();
+	
 	public abstract static class Default implements StreamHandler {
 		
 		protected int payloadPos = 0;
