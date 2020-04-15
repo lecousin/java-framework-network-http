@@ -256,8 +256,6 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	}
 	
 	private void testWrongHttp2Connection(String upgradeString) throws Exception {
-		activateNetworkTraces();
-		System.out.println("!!!!");
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Server.class);
 		Pair<? extends TCPClient, IAsync<IOException>> conn =
 			HTTP1ClientConnection.openDirectConnection(serverAddress, "localhost", useSSL, clientConfig, logger);

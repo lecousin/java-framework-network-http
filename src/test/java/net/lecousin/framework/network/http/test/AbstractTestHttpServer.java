@@ -218,6 +218,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	public void testSeveralGetRequests() throws Exception {
 		startServer(new ProcessorForTests());
 		try (HTTPClientRequestSender client = createClient()) {
+			stopLogging();
 			HTTPClientRequest[] requests = new HTTPClientRequest[100];
 			for (int i = 0; i < requests.length; ++i) {
 				requests[i] = new HTTPClientRequest(serverAddress.getHostString(), serverAddress.getPort(), useSSL);
@@ -225,6 +226,8 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			}
 			HTTPClientResponse[] responses = sendRequests(client, requests);
 			waitResponses(responses);
+		} finally {
+			resumeLogging();
 		}
 	}
 	
@@ -296,7 +299,6 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	@Test
 	public void testPostLargeBody() throws Exception {
 		stopLogging();
-		AbstractNetworkTest.deactivateNetworkTraces();
 		startServer(new ProcessorForTests());
 		byte[] buf = new byte[10 * 1024 * 1024];
 		for (int i = 0; i < buf.length; ++i)

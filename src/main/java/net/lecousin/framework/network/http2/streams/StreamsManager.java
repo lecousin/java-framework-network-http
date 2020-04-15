@@ -303,7 +303,9 @@ public abstract class StreamsManager {
 			stream = connectionStream;
 		} else {
 			// client stream identifiers MUST be odd, server stream even
-			stream = dataStreams.get(currentFrameHeader.getStreamId());
+			synchronized (dataStreams) {
+				stream = dataStreams.get(currentFrameHeader.getStreamId());
+			}
 			if (stream == null) {
 				// it may be a request to open a new stream, or remaining frames on a previous stream
 				if ((currentFrameHeader.getStreamId() % 2) == (clientMode ? 1 : 0) ||
@@ -362,7 +364,9 @@ public abstract class StreamsManager {
 	private DataStreamHandler openRemoteStream(int id) {
 		lastRemoteStreamId = id;
 		DataStreamHandler stream = new DataStreamHandler(id);
-		dataStreams.put(id, stream);
+		synchronized (dataStreams) {
+			dataStreams.put(id, stream);
+		}
 		for (int trial = 0; true; trial++) {
 			boolean tooManyStreams = false;
 			synchronized (dependencyTree) {
@@ -402,7 +406,9 @@ public abstract class StreamsManager {
 				return -1;
 			lastLocalStreamId += 2;
 			DataStreamHandler stream = new DataStreamHandler(lastLocalStreamId);
-			dataStreams.put(lastLocalStreamId, stream);
+			synchronized (dataStreams) {
+				dataStreams.put(lastLocalStreamId, stream);
+			}
 			addStreamNode(dependencyTree, lastLocalStreamId, 16);
 		}
 		return lastLocalStreamId;
@@ -484,7 +490,9 @@ public abstract class StreamsManager {
 	}
 	
 	void closeStream(DataStreamHandler stream) {
-		dataStreams.remove(stream.getStreamId());
+		synchronized (dataStreams) {
+			dataStreams.remove(stream.getStreamId());
+		}
 	}
 	
 	private List<Task<Void, NoException>> endOfStreamTasks = new LinkedList<>();

@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.frame.HTTP2Frame;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
@@ -46,12 +47,18 @@ public interface StreamHandler {
 			if (trace)
 				manager.getLogger().trace("Consuming frame payload using " + payloadConsumer);
 			AsyncSupplier<Boolean, HTTP2Error> consumption = payloadConsumer.consume(data);
-			consumption.onDone(endOfFrame -> {
+			consumption.thenDoOrStart("HTTP/2 frame payload consumed", Priority.NORMAL, () -> {
+				if (!consumption.isSuccessful()) {
+					if (consumption.hasError())
+						error(consumption.getError(), manager, onConsumed);
+					else
+						error(new HTTP2Error(false, HTTP2Error.Codes.CANCEL, null), manager, onConsumed);
+				}
 				payloadPos += data.position() - dataPos;
 				if (trace)
 					manager.getLogger().trace("Frame payload consumed: " + payloadPos + " / " + header.getPayloadLength());
 				if (payloadPos == header.getPayloadLength()) {
-					if (!endOfFrame.booleanValue()) {
+					if (!consumption.getResult().booleanValue()) {
 						error(new HTTP2Error(false, HTTP2Error.Codes.INTERNAL_ERROR,
 							"Payload consumer said it needs more data but full payload has been consumed: "
 							+ payloadConsumer), manager, onConsumed);
@@ -76,10 +83,7 @@ public interface StreamHandler {
 					return;
 				}
 				onConsumed.unblock();
-			},
-			error -> error(error, manager, onConsumed),
-			cancel -> error(new HTTP2Error(false, HTTP2Error.Codes.CANCEL, null), manager, onConsumed)
-			);
+			});
 		}
 		
 		protected abstract void error(HTTP2Error error, StreamsManager manager, Async<IOException> onConsumed);
