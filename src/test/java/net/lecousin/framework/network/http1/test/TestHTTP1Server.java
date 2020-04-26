@@ -4,8 +4,10 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import net.lecousin.framework.application.LCCore;
+import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
@@ -21,7 +23,9 @@ import net.lecousin.framework.network.http.test.ProcessorForTests;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.header.MimeHeaders.HeadersConsumer;
+import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.Triple;
 
 import org.junit.Assert;
@@ -57,6 +61,11 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 	}
 	
 	@Override
+	protected ALPNServerProtocol[] getALPNProtocols() {
+		return new ALPNServerProtocol[0];
+	}
+	
+	@Override
 	protected void enableRangeRequests() {
 		protocol.enableRangeRequests();
 	}
@@ -71,8 +80,14 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 		startServer(new ProcessorForTests());
 		// open connection
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHTTP1Server.class);
-		Triple<? extends TCPClient, IAsync<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
-			"localhost", serverAddress.getPort(), useSSL, "/test/get?status=200&test=hello", clientConfig, logger);
+		SSLConnectionConfig sslConfig = null;
+		if (useSSL) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList("localhost"));
+			sslConfig.setContext(clientConfig.getSSLContext());
+		}
+		Triple<? extends TCPClient, Async<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
+			"localhost", serverAddress.getPort(), "/test/get?status=200&test=hello", clientConfig, sslConfig, logger);
 		TCPClient client = conn.getValue1();
 		IAsync<IOException> connection = conn.getValue2();
 		// tests
@@ -140,7 +155,12 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 	@Test
 	public void testSendRequestBySmallPackets() throws Exception {
 		startServer(new ProcessorForTests());
-		try (TCPClient client = useSSL ? new SSLClient(sslTest) : new TCPClient()) {
+		SSLConnectionConfig sslConfig = null;
+		if (useSSL) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setContext(sslTest);
+		}
+		try (TCPClient client = useSSL ? new SSLClient(sslConfig) : new TCPClient()) {
 			client.connect(new InetSocketAddress("localhost", serverAddress.getPort()), 10000).blockThrow(0);
 			String req =
 				"GET /test/get?status=200&test=world HTTP/1.1\r\n" +
@@ -175,7 +195,12 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 	}
 	
 	private void testInvalidRequest(String request, int expectedStatus) throws Exception {
-		try (TCPClient client = useSSL ? new SSLClient(sslTest) : new TCPClient()) {
+		SSLConnectionConfig sslConfig = null;
+		if (useSSL) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setContext(sslTest);
+		}
+		try (TCPClient client = useSSL ? new SSLClient(sslConfig) : new TCPClient()) {
 			client.connect(new InetSocketAddress("localhost", serverAddress.getPort()), 10000).blockThrow(0);
 			client.send(ByteBuffer.wrap(request.getBytes(StandardCharsets.US_ASCII)), 10000);
 			HTTPClientConfiguration config = new HTTPClientConfiguration();

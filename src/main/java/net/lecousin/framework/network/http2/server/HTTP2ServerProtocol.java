@@ -24,12 +24,13 @@ import net.lecousin.framework.network.http2.HTTP2Constants;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 
 /**
  * HTTP/2 Server protocol.
  * <a href="https://tools.ietf.org/html/rfc7540">Specification</a>
  */
-public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
+public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServerProtocol {
 
 	/** Default constructor. */
 	public HTTP2ServerProtocol(HTTPRequestProcessor processor) {
@@ -58,6 +59,16 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 		.setMaxConcurrentStreams(10) // limit pending requests for a client
 		.setEnablePush(false); // we do not do that for now
 	private boolean enableRangeRequests = false;
+	
+	@Override
+	public String getALPNName() {
+		return "h2";
+	}
+	
+	@Override
+	public String toString() {
+		return "HTTP/2 protocol using processor " + processor;
+	}
 	
 	public HTTPRequestProcessor getProcessor() {
 		return processor;
@@ -157,7 +168,6 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 	@Override
 	public int startProtocol(TCPServerClient client) {
 		// check if we are using the upgrade mechanism
-		HTTP2Settings clientSettings;
 		if (client.hasAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_REQUEST_CONTEXT_ATTRIBUTE)) {
 			HTTPRequestContext ctx = (HTTPRequestContext)client.getAttribute(
 				HTTP1ServerProtocol.UPGRADED_PROTOCOL_REQUEST_CONTEXT_ATTRIBUTE);
@@ -168,12 +178,14 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 			resp.addHeader("Upgrade", "h2c");
 			resp.setForceNoContent(true);
 			resp.getReady().unblock();
-			clientSettings = (HTTP2Settings)client.removeAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE);
-		} else {
-			clientSettings = null;
+			HTTP2Settings clientSettings = (HTTP2Settings)client.removeAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE);
+			ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
+			client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+		} else if (client.hasAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE)) {
+			// preface already received
+			ClientStreamsManager manager = new ClientStreamsManager(this, client, null);
+			client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
 		}
-		ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
-		client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
 		
 		return receiveDataTimeout;
 	}
@@ -185,10 +197,47 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol {
 
 	private static final String ATTRIBUTE_SETTINGS_FROM_UPGRADE = "http2.server.upgrade.settings";
 	private static final String ATTRIBUTE_CLIENT_STREAMS_MANAGER = "http2.server.streams-manager";
+	private static final String ATTRIBUTE_CLIENT_PREFACE_POSITION = "http2.preface.position";
+	private static final byte[] HTTP2_PREFACE = new byte[] {
+		'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2', '.', '0', '\r', '\n',
+		'\r', '\n',
+		'S', 'M', '\r', '\n',
+		'\r', '\n'
+	};
 
 	@Override
 	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data) {
 		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
+		if (manager == null) {
+			// we expect the preface to come
+			Integer posInt = (Integer)client.getAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION);
+			int pos;
+			if (posInt == null)
+				pos = 0;
+			else
+				pos = posInt.intValue();
+			while (data.hasRemaining() && pos < HTTP2_PREFACE.length) {
+				byte b = data.get();
+				if (b != HTTP2_PREFACE[pos++]) {
+					logger.warn("Invalid client preface from " + client);
+					client.close();
+					return;
+				}
+			}
+			if (pos < HTTP2_PREFACE.length) {
+				client.setAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION, Integer.valueOf(pos));
+			} else {
+				client.removeAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION);
+				manager = new ClientStreamsManager(this, client, null);
+				client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+			}
+			if (!data.hasRemaining()) {
+				bufferCache.free(data);
+				try { client.waitForData(receiveDataTimeout); }
+				catch (ClosedChannelException e) { /* ignore. */ }
+				return;
+			}
+		}
 		Async<IOException> consume = manager.consumeDataFromRemote(data);
 		consume.onSuccess(() -> {
 			bufferCache.free(data);

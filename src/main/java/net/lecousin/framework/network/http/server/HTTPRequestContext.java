@@ -6,6 +6,13 @@ import net.lecousin.framework.network.server.TCPServerClient;
 
 /** Context for processing a request. */
 public class HTTPRequestContext {
+	
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_START = "timing.start";
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_HEADERS_RECEIVED = "timing.headers_received";
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_BODY_RECEIVED = "timing.body_received";
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_PROCESSING_START = "timing.processing_start";
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_READY = "timing.response_ready";
+	public static final String REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_SEND_START = "timing.send_start";
 
 	private TCPServerClient client;
 	private HTTPRequest request;

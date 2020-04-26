@@ -48,7 +48,7 @@ public class TestRequest {
 			checker.check(request, response, error);
 	}
 	
-	public static Collection<Object[]> toParameters(List<TestRequest> tests) {
+	public static Collection<Object[]> toParameters(List<? extends TestRequest> tests) {
 		Collection<Object[]> list = new ArrayList<>(tests.size());
 		for (TestRequest t : tests)
 			list.add(new Object[] { t });

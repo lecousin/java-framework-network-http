@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
+import net.lecousin.framework.core.test.runners.LCSequentialRunner;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
@@ -36,7 +37,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
 
-@RunWith(BlockJUnit4ClassRunner.class)
+@RunWith(LCSequentialRunner.class)
 public class TestWebSocketDispatcher extends LCCoreAbstractTest {
 
 	private static class Handler extends WebSocketHandler {

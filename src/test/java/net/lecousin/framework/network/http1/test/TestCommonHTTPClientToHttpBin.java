@@ -15,7 +15,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized.Parameters;
 
-@RunWith(LCConcurrentRunner.Parameterized.class)
+@RunWith(LCConcurrentRunner.Parameterized.class) @org.junit.runners.Parameterized.UseParametersRunnerFactory(LCConcurrentRunner.ConcurrentParameterizedRunnedFactory.class)
 public class TestCommonHTTPClientToHttpBin extends LCCoreAbstractTest {
 
 	@Parameters(name = "{0}")

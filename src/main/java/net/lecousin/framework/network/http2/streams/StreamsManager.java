@@ -104,30 +104,7 @@ public abstract class StreamsManager {
 		}
 
 		remote.onclosed(() -> Task.cpu("Closing HTTP/2 streams", Priority.NORMAL, t -> {
-			closing = true;
-			if (logger.debug())
-				logger.debug("Remote closed - clean HTTP/2 streams");
-			ClosedChannelException closed = new ClosedChannelException();
-			synchronized (compressionContextRequests) {
-				while (!compressionContextRequests.isEmpty())
-					compressionContextRequests.removeFirst().getValue2().error(closed);
-			}
-			synchronized (dependencyTree) {
-				for (Pair<ByteBuffer, Async<IOException>> p : buffersReady)
-					if (p.getValue2() != null)
-						p.getValue2().error(closed);
-				dependencyTree.forceClose(closed);
-				dependencyNodes.clear();
-			}
-			List<StreamHandler> handlers;
-			synchronized (dataStreams) {
-				handlers = new ArrayList<>(dataStreams.size());
-				for (Iterator<StreamHandler> it = dataStreams.values(); it.hasNext(); )
-					handlers.add(it.next());
-				dataStreams.clear();
-			}
-			for (StreamHandler handler : handlers)
-				handler.closed();
+			close();
 			return null;
 		}).start());
 	}
@@ -152,6 +129,33 @@ public abstract class StreamsManager {
 	
 	public Logger getLogger() {
 		return logger;
+	}
+	
+	public void close() {
+		closing = true;
+		if (logger.debug())
+			logger.debug("Remote closed - clean HTTP/2 streams");
+		ClosedChannelException closed = new ClosedChannelException();
+		synchronized (compressionContextRequests) {
+			while (!compressionContextRequests.isEmpty())
+				compressionContextRequests.removeFirst().getValue2().error(closed);
+		}
+		synchronized (dependencyTree) {
+			for (Pair<ByteBuffer, Async<IOException>> p : buffersReady)
+				if (p.getValue2() != null)
+					p.getValue2().error(closed);
+			dependencyTree.forceClose(closed);
+			dependencyNodes.clear();
+		}
+		List<StreamHandler> handlers;
+		synchronized (dataStreams) {
+			handlers = new ArrayList<>(dataStreams.size());
+			for (Iterator<StreamHandler> it = dataStreams.values(); it.hasNext(); )
+				handlers.add(it.next());
+			dataStreams.clear();
+		}
+		for (StreamHandler handler : handlers)
+			handler.closed();
 	}
 	
 	private enum FrameState {
@@ -359,6 +363,14 @@ public abstract class StreamsManager {
 			connectionError(HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid stream id");
 			return null;
 		}
+	}
+	
+	public int getLastLocalStreamId() {
+		return lastLocalStreamId;
+	}
+	
+	public int getLastRemoteStreamId() {
+		return lastRemoteStreamId;
 	}
 	
 	private DataStreamHandler openRemoteStream(int id) {
@@ -609,6 +621,8 @@ public abstract class StreamsManager {
 			lastSend.onSuccess(StreamsManager.this::launchFrameProduction);
 			lastSend.onError(e -> {
 				closing = true;
+				if (e instanceof ClosedChannelException)
+					return;
 				logger.error("Error sending frames on " + remote, e);
 				remote.close();
 			});
@@ -785,11 +799,8 @@ public abstract class StreamsManager {
 		private void takeInfoFrom(DependencyNode previous) {
 			for (Iterator<RedBlackTreeInteger.Node<List<DependencyNode>>> it = previous.dependentStreams.nodeIterator(); it.hasNext(); ) {
 				RedBlackTreeInteger.Node<List<DependencyNode>> n = it.next();
-				List<DependencyNode> list;
-				RedBlackTreeInteger.Node<List<DependencyNode>> node = dependentStreams.get(n.getValue());
-				if (node != null) {
-					list = node.getElement();
-				} else {
+				List<DependencyNode> list = dependentStreams.get(n.getValue());
+				if (list == null) {
 					list = new LinkedList<>();
 					dependentStreams.add(n.getValue(), list);
 				}
@@ -916,11 +927,8 @@ public abstract class StreamsManager {
 				itChildren.hasNext(); ) {
 				RedBlackTreeInteger.Node<List<DependencyNode>> children = itChildren.next();
 				int val = parentWeight * children.getValue() / total;
-				List<DependencyNode> list;
-				RedBlackTreeInteger.Node<List<DependencyNode>> depNode = dependentStreams.get(val);
-				if (depNode != null) {
-					list = depNode.getElement();
-				} else {
+				List<DependencyNode> list = dependentStreams.get(val);
+				if (list == null) {
 					list = new LinkedList<>();
 					dependentStreams.add(val, list);
 				}
@@ -979,11 +987,11 @@ public abstract class StreamsManager {
 		DependencyNode node = new DependencyNode(id,
 			remoteSettings != null ? remoteSettings.getWindowSize() : HTTP2Settings.DefaultValues.INITIAL_WINDOW_SIZE,
 			localSettings.getWindowSize());
-		RedBlackTreeInteger.Node<List<DependencyNode>> n = parent.dependentStreams.get(weight);
-		if (n != null) {
-			n.getElement().add(node);
+		List<DependencyNode> list = parent.dependentStreams.get(weight);
+		if (list != null) {
+			list.add(node);
 		} else {
-			LinkedList<DependencyNode> list = new LinkedList<>();
+			list = new LinkedList<>();
 			list.add(node);
 			parent.dependentStreams.add(weight, list);
 		}

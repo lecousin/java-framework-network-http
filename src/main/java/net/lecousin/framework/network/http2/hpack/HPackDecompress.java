@@ -213,29 +213,34 @@ public class HPackDecompress extends HPack {
 		public void consume(ByteBuffer data, HTTP2PseudoHeaderHandler headerHandler) throws HTTP2Error {
 			do {
 				byte b = data.get();
-				if (str == null)
-					consumeLength(b);
-				else if (consumeString(b))
+				if (str == null) {
+					if (consumeLength(b))
+						return;
+				} else if (consumeString(b)) {
 					return;
+				}
 			} while (data.hasRemaining());
 		}
 		
-		private void consumeLength(byte b) {
+		private boolean consumeLength(byte b) {
 			if (strLength == 0) {
 				useHuffman = (b & 0x80) == 0x80;
 				strLength = b & 0x7F;
-				if (strLength == 0x7F)
+				if (strLength == 0x7F) {
 					m = 0;
-				else
-					str = new char[useHuffman ? strLength * 3 : strLength];
-				return;
+					return false;
+				}
+				str = new char[useHuffman ? strLength * 3 : strLength];
+				return strLength == 0;
 			}
 			strLength += (b & 0x7F) << m;
 			m += 7;
 			if ((b & 0x80) == 0) {
 				// the end
 				str = new char[strLength];
+				return strLength == 0;
 			}
+			return false;
 		}
 		
 		private boolean consumeString(byte b) throws HTTP2Error {

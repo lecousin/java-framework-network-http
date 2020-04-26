@@ -5,35 +5,40 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
-import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.encoding.Base64Encoding;
+import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.data.ByteArray;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.ByteArrayCache;
+import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
-import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.text.ByteArrayStringIso8859;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
-public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
+public class HTTP2Client extends HTTPClientConnection {
 	
-	private static final byte[] HTTP1_TO_HTTP2_REQUEST = new byte[] {
+	private static final byte[] HTTP2_PREFACE = new byte[] {
 		'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2', '.', '0', '\r', '\n',
 		'\r', '\n',
 		'S', 'M', '\r', '\n',
@@ -43,10 +48,10 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	private HTTPClientConfiguration config;
 	private Logger logger;
 	private ByteArrayCache bufferCache;
-	private TCPClient tcp;
 	private ClientStreamsManager manager;
 	private HTTP2Settings settings;
-	private Async<IOException> ready = new Async<>();
+	private List<HTTPClientRequestContext> pendingRequests = new LinkedList<>();
+	private long idleStart = System.currentTimeMillis();
 	
 	public HTTP2Client(HTTPClientConfiguration config, HTTP2Settings settings, Logger logger, ByteArrayCache bufferCache) {
 		if (config == null) config = new HTTPClientConfiguration();
@@ -59,34 +64,128 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 		settings.setEnablePush(false); // for now, we don't want
 		this.settings = settings;
 	}
+	
+	public HTTP2Client(TCPClient client, Async<IOException> connect, HTTPClientConfiguration config) {
+		this(config, null, null, null);
+		setConnection(client, connect);
+	}
 
 	public HTTP2Client(HTTPClientConfiguration config) {
 		this(config, null, null, null);
 	}
 	
+	@Override
+	public boolean hasPendingRequest() {
+		return !pendingRequests.isEmpty();
+	}
+	
+	@Override
+	public boolean isAvailableForReuse() {
+		return manager.getLastLocalStreamId() + pendingRequests.size() * 2 < 0x7FFFFF00;
+	}
+	
+	@Override
+	public long getIdleTime() {
+		return idleStart;
+	}
+	
+	@Override
+	public String getDescription() {
+		if (idleStart > 0)
+			return "Idle since " + ((System.currentTimeMillis() - idleStart) / 1000) + "s.";
+		return pendingRequests.size() + " pending request(s)";
+	}
+	
+	@Override
+	public void reserve(HTTPClientRequestContext reservedFor) {
+		synchronized (pendingRequests) {
+			pendingRequests.add(reservedFor);
+		}
+	}
+	
+	@Override
+	public AsyncSupplier<Boolean, NoException> sendReserved(HTTPClientRequestContext request) {
+		// TODO be able to say no if connection is closing
+		manager.send(request);
+		followRequest(request);
+		return new AsyncSupplier<>(Boolean.TRUE, null);
+	}
+	
+	@Override
+	public void send(HTTPClientRequestContext request) {
+		// TODO if not yet connected
+		idleStart = -1;
+		reserve(request);
+		sendReserved(request);
+	}
+	
+	private void followRequest(HTTPClientRequestContext request) {
+		request.getResponse().getTrailersReceived().onDone(() -> {
+			synchronized (pendingRequests) {
+				pendingRequests.remove(request);
+				if (pendingRequests.isEmpty())
+					idleStart = System.currentTimeMillis();
+			}
+		});
+	}
+	
+	public Async<IOException> connectWithALPN(InetSocketAddress address, String hostname) {
+		SSLConnectionConfig sslConfig = new SSLConnectionConfig();
+		sslConfig.setContext(config.getSSLContext());
+		sslConfig.setHostNames(Arrays.asList(hostname));
+		sslConfig.setApplicationProtocols(Arrays.asList("h2"));
+		Pair<? extends TCPClient, Async<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		Async<IOException> ready = new Async<>();
+		setConnection(conn.getValue1(), ready);
+		conn.getValue2().thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnection, ready);
+		return ready;
+	}
+	
+	private void startConnection() {
+		if (!"h2".equals(((SSLClient)tcp).getApplicationProtocol())) {
+			connect.error(new IOException("Remote server does not support h2 protocol using ALPN"));
+			tcp.close();
+			return;
+		}
+		startConnectionWithPriorKnowledge();
+	}
+
 	public Async<IOException> connectWithPriorKnowledge(InetSocketAddress address, String hostname, boolean isSecure) {
-		Pair<? extends TCPClient, IAsync<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(address, hostname, isSecure, config, logger);
-		tcp = conn.getValue1();
-		IAsync<IOException> connect = conn.getValue2();
-		connect.thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnectionWithPriorKnowledge, ready);
+		SSLConnectionConfig sslConfig = null;
+		if (isSecure) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList(hostname));
+			sslConfig.setContext(config.getSSLContext());
+		}
+		Pair<? extends TCPClient, Async<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		Async<IOException> ready = new Async<>();
+		setConnection(conn.getValue1(), ready);
+		conn.getValue2().thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnectionWithPriorKnowledge, ready);
 		return ready;
 	}
 	
 	private void startConnectionWithPriorKnowledge() {
-		tcp.send(ByteBuffer.wrap(HTTP1_TO_HTTP2_REQUEST).asReadOnlyBuffer(), config.getTimeouts().getSend());
+		tcp.send(ByteBuffer.wrap(HTTP2_PREFACE).asReadOnlyBuffer(), config.getTimeouts().getSend());
 		manager = new ClientStreamsManager(tcp, settings, false, null, config.getTimeouts().getSend(), logger, bufferCache);
 		// we expect the settings frame to come immediately
-		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, ready);
-		manager.getConnectionReady().onDone(ready);
+		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
+		manager.getConnectionReady().onDone(connect);
 	}
 	
 	public Async<IOException> connectWithUpgrade(InetSocketAddress address, String hostname, boolean isSecure) {
-		Pair<? extends TCPClient, IAsync<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(address, hostname, isSecure, config, logger);
-		tcp = conn.getValue1();
-		IAsync<IOException> connect = conn.getValue2();
-		connect.thenStart("Upgrade to HTTP/2", Priority.NORMAL, () -> upgradeConnection(address, hostname, isSecure), ready);
+		SSLConnectionConfig sslConfig = null;
+		if (isSecure) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList(hostname));
+			sslConfig.setContext(config.getSSLContext());
+		}
+		Pair<? extends TCPClient, Async<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		Async<IOException> ready = new Async<>();
+		setConnection(conn.getValue1(), ready);
+		conn.getValue2().thenStart("Upgrade to HTTP/2", Priority.NORMAL, () -> upgradeConnection(address, hostname, isSecure), ready);
 		return ready;
 	}
 	
@@ -112,15 +211,15 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 			if (logger.debug())
 				logger.debug("Response received to upgrade request: " + response.getStatusCode());
 			if (response.getStatusCode() != 101) {
-				ready.error(new IOException("Server does not support websocket on this address, response received is "
+				connect.error(new IOException("Server does not support the upgrade requested, response received is "
 					+ response.getStatusCode()));
 				return Boolean.TRUE;
 			}
 			if (logger.trace())
 				logger.trace("HTTP protocol upgraded to h2c");
 			manager = new ClientStreamsManager(tcp, settings, true, null, config.getTimeouts().getSend(), logger, bufferCache);
-			tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, ready);
-			manager.getConnectionReady().onDone(ready);
+			tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
+			manager.getConnectionReady().onDone(connect);
 			return Boolean.FALSE;
 		});
 		sender.reserve(ctx);
@@ -141,11 +240,6 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 	}
 	
 	@Override
-	public void send(HTTPClientRequestContext request) {
-		manager.send(request);
-	}
-	
-	@Override
 	public void redirectTo(HTTPClientRequestContext ctx, URI targetUri) {
 		if (HTTPClientConnection.isCompatible(targetUri, tcp, ctx.getRequest().getHostname(), ctx.getRequest().getPort())) {
 			if (logger.debug()) logger.debug("Reuse same HTTP/2 connection for redirection to " + targetUri);
@@ -153,11 +247,17 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 			return;
 		}
 		if (logger.debug()) logger.debug("Open new connection for redirection to " + targetUri);
-		Triple<? extends TCPClient, IAsync<IOException>, Boolean> newClient;
+		Triple<? extends TCPClient, Async<IOException>, Boolean> newClient;
 		try {
+			// TODO use ALPN is already used
+			SSLConnectionConfig sslConfig = null;
+			if (HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme())) {
+				sslConfig = new SSLConnectionConfig();
+				sslConfig.setHostNames(Arrays.asList(targetUri.getHost()));
+				sslConfig.setContext(config.getSSLContext());
+			}
 			newClient = HTTP1ClientConnection.openConnection(targetUri.getHost(), targetUri.getPort(),
-				HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme()),
-				targetUri.getPath(), config, logger);
+				targetUri.getPath(), config, sslConfig, logger);
 		} catch (Exception e) {
 			ctx.getRequestSent().error(IO.error(e));
 			return;
@@ -166,11 +266,6 @@ public class HTTP2Client implements HTTPClientRequestSender, AutoCloseable {
 		ctx.setThroughProxy(newClient.getValue3().booleanValue());
 		newConn.send(ctx);
 		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
-	}
-	
-	@Override
-	public void close() throws Exception {
-		tcp.close();
 	}
 	
 	public ClientStreamsManager getStreamsManager() {

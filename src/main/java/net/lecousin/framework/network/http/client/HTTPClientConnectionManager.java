@@ -16,6 +16,7 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.Pair;
 
 class HTTPClientConnectionManager {
@@ -147,10 +148,10 @@ class HTTPClientConnectionManager {
 	private HTTPClientConnection createDirectConnection(HTTPClientRequestContext reservedFor) {
 		TCPClient tcp;
 		if (reservedFor.getRequest().isSecure()) {
-			@SuppressWarnings("resource")
-			SSLClient ssl = new SSLClient(config.getSSLContext());
-			ssl.setHostNames(Arrays.asList(reservedFor.getRequest().getHostname()));
-			tcp = ssl;
+			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList(reservedFor.getRequest().getHostname()));
+			sslConfig.setContext(config.getSSLContext());
+			tcp = new SSLClient(sslConfig);
 		} else {
 			tcp = new TCPClient();
 		}
@@ -162,9 +163,16 @@ class HTTPClientConnectionManager {
 	@SuppressWarnings("java:S2095") // proxyClient will be closed later
 	private HTTPClientConnection createProxyConnection(HTTPClientRequestContext reservedFor) {
 		HTTPClientRequest request = reservedFor.getRequest();
-		Pair<TCPClient, IAsync<IOException>> proxyConnection = request.isSecure()
-			? HTTP1ClientConnection.openTunnelOnProxy(serverAddress, request.getHostname(), request.getPort(), true, config, logger)
-			: HTTP1ClientConnection.openDirectConnection(serverAddress, config, logger);
+		Pair<TCPClient, Async<IOException>> proxyConnection;
+		if (request.isSecure()) {
+			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList(reservedFor.getRequest().getHostname()));
+			sslConfig.setContext(config.getSSLContext());
+			proxyConnection = HTTP1ClientConnection.openTunnelOnProxy(serverAddress, request.getHostname(), request.getPort(),
+				config, sslConfig, logger);
+		} else {
+			proxyConnection = HTTP1ClientConnection.openDirectConnection(serverAddress, config, logger);
+		}
 			
 		HTTP1ClientConnection connection = new HTTP1ClientConnection(proxyConnection.getValue1(), proxyConnection.getValue2(), 2, config);
 		return addConnection(connection, proxyConnection.getValue1(), proxyConnection.getValue2(), reservedFor);

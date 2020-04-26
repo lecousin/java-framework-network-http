@@ -2,15 +2,21 @@ package net.lecousin.framework.network.http.client;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
+import java.util.Arrays;
 
 import net.lecousin.framework.concurrent.CancelException;
+import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
-import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.http2.client.HTTP2Client;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 
 /** Abstract class to handle a connection to a HTTP server, with capability
  * to queue requests or to send several requests in parallel. 
@@ -23,10 +29,10 @@ public abstract class HTTPClientConnection implements AutoCloseable, Closeable, 
 	}
 
 	protected TCPClient tcp;
-	protected IAsync<IOException> connect;
+	protected Async<IOException> connect;
 	protected boolean stopping = false;
 	
-	public void setConnection(TCPClient tcp, IAsync<IOException> connect) {
+	public void setConnection(TCPClient tcp, Async<IOException> connect) {
 		this.tcp = tcp;
 		this.connect = connect;
 	}
@@ -91,6 +97,37 @@ public abstract class HTTPClientConnection implements AutoCloseable, Closeable, 
 				p = HTTPConstants.DEFAULT_HTTP_PORT;
 		}
 		return p == port;
+	}
+	
+	@SuppressWarnings("java:S2095") // SSLClient is given to HTTP1 or HTTP2 client
+	public static AsyncSupplier<HTTPClientConnection, IOException> directConnectionUsingALPN(
+		String hostname, InetAddress address, int port, HTTPClientConfiguration config
+	) {
+		if (!SSLConnectionConfig.ALPN_SUPPORTED)
+			return new AsyncSupplier<>(null, new IOException("ALPN not supported"));
+		SSLConnectionConfig sslConfig = new SSLConnectionConfig();
+		sslConfig.setContext(config.getSSLContext());
+		sslConfig.setHostNames(Arrays.asList(hostname));
+		sslConfig.setApplicationProtocols(Arrays.asList("h2", "http/1.1"));
+		SSLClient client = new SSLClient(sslConfig);
+		Async<IOException> connect = client.connect(
+			new InetSocketAddress(address, port), config.getTimeouts().getConnection(), config.getSocketOptionsArray());
+		AsyncSupplier<HTTPClientConnection, IOException> result = new AsyncSupplier<>();
+		connect.onDone(() -> {
+			String p = client.getApplicationProtocol();
+			if (p == null)
+				result.error(new IOException("Remote server does not support ALPN"));
+			else if ("h2".equals(p)) {
+				HTTP2Client h2 = new HTTP2Client(client, connect, config);
+				result.unblockSuccess(h2);
+			} else if ("http/1.1".equals(p)) {
+				HTTP1ClientConnection h1 = new HTTP1ClientConnection(client, connect, 2, config);
+				result.unblockSuccess(h1);
+			} else {
+				result.error(new IOException("Remote server does not support h2 nor http/1.1 protocols"));
+			}
+		}, result);
+		return result;
 	}
 
 }

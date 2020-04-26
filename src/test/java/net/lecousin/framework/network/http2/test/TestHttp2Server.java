@@ -3,6 +3,7 @@ package net.lecousin.framework.network.http2.test;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.function.IntFunction;
 
@@ -28,7 +29,9 @@ import net.lecousin.framework.network.http2.client.HTTP2Client;
 import net.lecousin.framework.network.http2.frame.HTTP2Frame;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.server.HTTP2ServerProtocol;
+import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
@@ -41,12 +44,13 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 
 	public enum TestCase {
 		PRIOR_KNOWLEDGE,
-		UPGRADE;
+		UPGRADE,
+		ALPN;
 	}
 	
 	@Parameters(name = "ssl = {0}, case = {1}")
 	public static Collection<Object[]> parameters() {
-		return addTestParameter(AbstractTestHttpServer.parameters(), TestCase.PRIOR_KNOWLEDGE, TestCase.UPGRADE);
+		return addTestParameter(AbstractTestHttpServer.parameters(), TestCase.PRIOR_KNOWLEDGE, TestCase.UPGRADE, TestCase.ALPN);
 	}
 	
 	public TestHttp2Server(boolean useSSL, TestCase testCase) {
@@ -94,6 +98,14 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	}
 	
 	@Override
+	protected ALPNServerProtocol[] getALPNProtocols() {
+		return new ALPNServerProtocol[] {
+			protocol2,
+			protocol1
+		};
+	}
+
+	@Override
 	protected void enableRangeRequests() {
 		protocol2.enableRangeRequests(true);
 	}
@@ -111,6 +123,11 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			break;
 		case UPGRADE:
 			client.connectWithUpgrade(serverAddress, "localhost", useSSL).blockThrow(0);
+			break;
+		case ALPN:
+			Assume.assumeTrue(SSLConnectionConfig.ALPN_SUPPORTED);
+			Assume.assumeTrue(useSSL);
+			client.connectWithALPN(serverAddress, "localhost").blockThrow(0);
 			break;
 		}
 		if (makeClientAggressive)
@@ -257,8 +274,14 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	private void testWrongHttp2Connection(String upgradeString) throws Exception {
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Server.class);
-		Pair<? extends TCPClient, IAsync<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(serverAddress, "localhost", useSSL, clientConfig, logger);
+		SSLConnectionConfig sslConfig = null;
+		if (useSSL) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setContext(clientConfig.getSSLContext());
+			sslConfig.setHostNames(Arrays.asList("localhost"));
+		}
+		Pair<? extends TCPClient, Async<IOException>> conn =
+			HTTP1ClientConnection.openDirectConnection(serverAddress, clientConfig, sslConfig, logger);
 		TCPClient tcp = conn.getValue1();
 		IAsync<IOException> connect = conn.getValue2();
 		connect.blockThrow(0);

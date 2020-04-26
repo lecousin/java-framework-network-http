@@ -48,6 +48,7 @@ import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.network.server.TCPServerClient;
+import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.text.CharArrayString;
@@ -55,16 +56,13 @@ import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
 
 /** Implements the HTTP protocol on server side. */
-public class HTTP1ServerProtocol implements ServerProtocol {
+public class HTTP1ServerProtocol implements ALPNServerProtocol {
 
 	public static final String REQUEST_ATTRIBUTE = "protocol.http.request";
 	private static final String LIMITER_ATTRIBUTE = "protocol.http.request.limiter";
 	private static final String RECEIVE_STATUS_ATTRIBUTE = "protocol.http.receive_status";
 	private static final String RECEIVE_CONSUMER_ATTRIBUTE = "protocol.http.receive_consumer";
 	
-	public static final String REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE = "protocol.http.request.receive.start.nanotime";
-	public static final String REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE = "protocol.http.request.receive.end.nanotime";
-	public static final String REQUEST_END_PROCESS_NANOTIME_ATTRIBUTE = "protocol.http.request.process.end.nanotime";
 	public static final String UPGRADED_PROTOCOL_ATTRIBUTE = "protocol.http.upgrade";
 	public static final String UPGRADED_PROTOCOL_REQUEST_CONTEXT_ATTRIBUTE = "protocol.http.upgrade.response";
 	
@@ -95,6 +93,16 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	private List<AlternativeService> alternativeServices = new LinkedList<>();
 	
 	public HTTPRequestProcessor getProcessor() { return processor; }
+	
+	@Override
+	public String getALPNName() {
+		return "http/1.1";
+	}
+	
+	@Override
+	public String toString() {
+		return "HTTP/1.1 using processor " + processor;
+	}
 	
 	public int getReceiveDataTimeout() {
 		return receiveDataTimeout;
@@ -182,9 +190,6 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	@SuppressWarnings("unchecked")
 	@Override
 	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data) {
-		if (client.getAttribute(REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE) == null)
-			client.setAttribute(REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
-		
 		if (logger.trace())
 			logger.trace("Received from client: " + data.remaining());
 		
@@ -199,6 +204,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		PartialAsyncConsumer<ByteBuffer, Exception> consumer;
 		if (ReceiveStatus.START.equals(status)) {
 			HTTPRequest request = new HTTPRequest();
+			request.setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_START, Long.valueOf(System.nanoTime()));
 			client.setAttribute(REQUEST_ATTRIBUTE, request);
 			if (!data.hasArray())
 				data = ByteArray.Writable.fromByteBuffer(data).toByteBuffer();
@@ -251,7 +257,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 				(request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE));
 			break;
 		case BODY:
-			endOfBody(client);
+			endOfBody(client, request);
 			needMoreData = request.isConnectionPersistent() && !client.hasAttribute(UPGRADED_PROTOCOL_ATTRIBUTE);
 			break;
 		default:
@@ -297,6 +303,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 	}
 	
 	private boolean endOfHeaders(TCPServerClient client, HTTPRequest request, ByteBuffer data) {
+		request.setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_HEADERS_RECEIVED, Long.valueOf(System.nanoTime()));
 		if (logger.trace())
 			logger.trace("End of headers received");
 		
@@ -325,12 +332,13 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		
 		if (!hasBody) {
 			request.setEntity(new EmptyEntity(null, request.getHeaders()));
-			endOfBody(client);
+			endOfBody(client, request);
 		}
 		
 		if (logger.trace())
 			logger.trace("Processing request");
 		try {
+			request.setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_PROCESSING_START, Long.valueOf(System.nanoTime()));
 			processor.process(ctx);
 		} catch (Exception e) {
 			logger.error("HTTPRequestProcessor error", e);
@@ -363,8 +371,8 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		return true;
 	}
 	
-	private static void endOfBody(TCPServerClient client) {
-		client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
+	private static void endOfBody(TCPServerClient client, HTTPRequest request) {
+		request.setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_BODY_RECEIVED, Long.valueOf(System.nanoTime()));
 		client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.START);
 		client.removeAttribute(REQUEST_ATTRIBUTE);
 		client.removeAttribute(RECEIVE_CONSUMER_ATTRIBUTE);
@@ -399,7 +407,11 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 			HTTPRequestContext ctx = new HTTPRequestContext(client, request, response, errorHandler);
 			AsyncTimeoutManager.timeout(response.getReady(), maximumRequestProcessingTime,
 				() -> ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_GATEWAY_TIMEOUT, "Timeout", null));
-			response.getReady().onDone(() -> previous.onSuccess(() -> sendResponse(ctx)));
+			response.getReady().onDone(() -> {
+				ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_READY,
+					Long.valueOf(System.nanoTime()));
+				previous.onSuccess(() -> sendResponse(ctx));
+			});
 			return ctx;
 		}
 		
@@ -465,7 +477,6 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 			return false;
 		
 		// the protocol accepts the request, start it
-		client.setAttribute(REQUEST_END_RECEIVE_NANOTIME_ATTRIBUTE, Long.valueOf(System.nanoTime()));
 		client.setAttribute(UPGRADED_PROTOCOL_ATTRIBUTE, proto);
 		if (!isCustomProtocol) {
 			RequestProcessingLimiter limiter = (RequestProcessingLimiter)client.getAttribute(LIMITER_ATTRIBUTE);
@@ -564,6 +575,7 @@ public class HTTP1ServerProtocol implements ServerProtocol {
 		if (logger.debug())
 			logger.debug("Sending response with body size " + bodySize + " and headers:\n" + headers);
 		boolean closeAfter = !ctx.getRequest().isConnectionPersistent() || response.isForceClose();
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_SEND_START, Long.valueOf(System.nanoTime()));
 		IAsync<IOException> sendHeaders;
 		try {
 			sendHeaders = ctx.getClient().send(Arrays.asList(buffers), sendDataTimeout,

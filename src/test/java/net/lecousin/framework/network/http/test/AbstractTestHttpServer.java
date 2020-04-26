@@ -12,14 +12,13 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 
-import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.core.test.runners.LCSequentialRunner;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.PreBufferedReadable;
 import net.lecousin.framework.io.buffering.ReadableToSeekable;
-import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
@@ -30,7 +29,6 @@ import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http.server.processor.StaticProcessor;
-import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
@@ -38,6 +36,7 @@ import net.lecousin.framework.network.mime.entity.MultipartEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.network.server.TCPServer;
+import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.SSLServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.network.test.AbstractNetworkTest;
@@ -49,10 +48,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-@RunWith(Parameterized.class)
+@RunWith(LCSequentialRunner.Parameterized.class) @org.junit.runners.Parameterized.UseParametersRunnerFactory(LCSequentialRunner.SequentialParameterizedRunnedFactory.class)
 public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 
 	@Parameters(name = "ssl = {0}")
@@ -71,6 +69,8 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	
 	protected abstract ServerProtocol createProtocol(HTTPRequestProcessor processor);
 	
+	protected abstract ALPNServerProtocol[] getALPNProtocols();
+	
 	protected abstract HTTPClientRequestSender createClient() throws Exception;
 	
 	protected abstract void stopLogging();
@@ -85,10 +85,13 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	protected void startServer(HTTPRequestProcessor processor) throws Exception {
 		server = new TCPServer();
 		ServerProtocol protocol = createProtocol(processor);
-		if (useSSL) protocol = new SSLServerProtocol(sslTest, protocol);
+		if (useSSL) protocol = new SSLServerProtocol(sslTest, protocol, getALPNProtocols());
 		server.setProtocol(protocol);
 		serverAddress = (InetSocketAddress)server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
 		clientConfig = new HTTPClientConfiguration();
+		clientConfig.getTimeouts().setConnection(10000);
+		clientConfig.getTimeouts().setReceive(10000);
+		clientConfig.getTimeouts().setSend(10000);
 		if (useSSL) clientConfig.setSSLContext(sslTest);
 	}
 	
@@ -328,7 +331,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			response.setStatus(200);
 			BinaryEntity entity = new BinaryEntity(new ByteArrayIO(new byte[123456], "test"));
 			response.setEntity(entity);
-			response.addHeader("X-Time-Start", ctx.getClient().getAttribute(HTTP1ServerProtocol.REQUEST_START_RECEIVE_NANOTIME_ATTRIBUTE).toString());
+			response.addHeader("X-Time-Start", ctx.getRequest().getAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_START).toString());
 			response.addHeader("X-Time-Send", Long.toString(System.nanoTime()));
 			response.addTrailerHeader("X-Time-End", () -> Long.toString(System.nanoTime()));
 			response.addTrailerHeader("X-Final", () -> "test");
@@ -340,8 +343,6 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 	@Test
 	public void testTrailerTime() throws Exception {
 		startServer(new TestTrailerTimeProcessor());
-		LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.INFO);
-		LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.INFO);
 		try (HTTPClientRequestSender client = createClient()) {
 			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, new HTTPClientRequest(serverAddress, useSSL).get("/tutu"));
 			ctx.setEntityFactory(BinaryEntity::new);
@@ -358,9 +359,6 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			Assert.assertTrue(send >= start);
 			Assert.assertTrue(end >= send);
 			Assert.assertEquals("test", response.getHeaders().getFirstRawValue("X-Final"));
-		} finally {
-			LCCore.getApplication().getLoggerFactory().getLogger("network-data").setLevel(Level.TRACE);
-			LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ServerProtocol.class).setLevel(Level.TRACE);
 		}
 	}
 	

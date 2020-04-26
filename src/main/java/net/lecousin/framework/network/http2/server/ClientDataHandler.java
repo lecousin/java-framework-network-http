@@ -64,10 +64,13 @@ class ClientDataHandler implements DataHandler {
 	@Override
 	public void emptyEntityReceived(StreamsManager manager, DataStreamHandler stream) {
 		ctx.getRequest().setEntity(new EmptyEntity(null, ctx.getRequest().getHeaders()));
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_BODY_RECEIVED, Long.valueOf(System.nanoTime()));
 	}
 	
 	@Override
 	public AsyncConsumer<ByteBuffer, IOException> endOfHeaders(StreamsManager manager, DataStreamHandler stream) {
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_START, Long.valueOf(stream.getCreationNanoTime()));
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_HEADERS_RECEIVED, Long.valueOf(System.nanoTime()));
 		// we can start processing the request
 		if (manager.isClosing())
 			return null;
@@ -78,6 +81,7 @@ class ClientDataHandler implements DataHandler {
 				+ "\n" + ctx.getRequest().getHeaders().generateString(1024).asString()
 			);
 
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_PROCESSING_START, Long.valueOf(System.nanoTime()));
 		server.getProcessor().process(ctx);
 		
 		ctx.getResponse().getReady().onDone(() -> sendHeaders(manager, ctx));
@@ -99,7 +103,7 @@ class ClientDataHandler implements DataHandler {
 	
 	@Override
 	public void endOfBody(StreamsManager manager, DataStreamHandler stream) {
-		// nothing
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_BODY_RECEIVED, Long.valueOf(System.nanoTime()));
 	}
 	
 	@Override
@@ -109,6 +113,7 @@ class ClientDataHandler implements DataHandler {
 	
 	@SuppressWarnings("java:S1602") // better readability to keep curly braces
 	private void sendHeaders(StreamsManager manager, HTTPRequestContext ctx) {
+		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_READY, Long.valueOf(System.nanoTime()));
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
 			if (ctx.getResponse().getStatusCode() < 100)
 				ctx.getResponse().setStatus(ctx.getResponse().getReady().hasError() ? 500 : 200);
@@ -146,6 +151,8 @@ class ClientDataHandler implements DataHandler {
 			// send headers/continuation frames, then body, then trailers
 			final boolean eos = isEndOfStream;
 			manager.reserveCompressionContext(streamId).thenStart("Send HTTP/2 headers", Priority.NORMAL, compressionContext -> {
+				ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_RESPONSE_SEND_START,
+					Long.valueOf(System.nanoTime()));
 				manager.sendFrame(new HTTP2Headers.Writer(streamId, headers, eos, compressionContext, () -> {
 					manager.releaseCompressionContext(streamId);
 					if (eos) {

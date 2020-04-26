@@ -7,6 +7,7 @@ import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.Random;
 import java.util.function.Consumer;
 
@@ -29,6 +30,7 @@ import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.DebugUtil;
 import net.lecousin.framework.util.Pair;
 import net.lecousin.framework.util.Triple;
@@ -66,8 +68,14 @@ public class WebSocketClient implements Closeable {
 	public AsyncSupplier<String, IOException> connect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
-		Triple<? extends TCPClient, IAsync<IOException>, Boolean> connect;
-		try { connect = HTTP1ClientConnection.openConnection(hostname, port, secure, path, config, logger); }
+		Triple<? extends TCPClient, Async<IOException>, Boolean> connect;
+		SSLConnectionConfig sslConfig = null;
+		if (secure) {
+			sslConfig = new SSLConnectionConfig();
+			sslConfig.setHostNames(Arrays.asList(hostname));
+			sslConfig.setContext(config.getSSLContext());
+		}
+		try { connect = HTTP1ClientConnection.openConnection(hostname, port, path, config, sslConfig, logger); }
 		catch (URISyntaxException e) {
 			return new AsyncSupplier<>(null, IO.error(e));
 		}

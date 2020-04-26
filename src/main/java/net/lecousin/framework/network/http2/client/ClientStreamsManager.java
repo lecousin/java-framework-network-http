@@ -47,13 +47,23 @@ public class ClientStreamsManager extends StreamsManager {
 		}
 	}
 	
+	@Override
+	public void close() {
+		super.close();
+		synchronized (dataHandlers) {
+			for (ClientRequestDataHandler h : dataHandlers.values())
+				h.close();
+			dataHandlers.clear();
+		}
+	}
+	
 	TCPClient getRemote() {
 		return (TCPClient)remote;
 	}
 
 	void send(HTTPClientRequestContext ctx) {
 		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
-			if (remote.isClosed()) {
+			if (remote.isClosed() || isClosing()) {
 				ctx.getRequestSent().error(new ClosedChannelException());
 				return null;
 			}

@@ -99,16 +99,14 @@ class ClientRequestDataHandler implements DataHandler {
 	public void endOfBody(StreamsManager manager, DataStreamHandler stream) {
 		if (manager.getLogger().debug())
 			manager.getLogger().debug("End of body on stream " + stream.getStreamId());
-		if (ctx != null)
-			ctx.getResponse().getBodyReceived().unblock();
+		ctx.getResponse().getBodyReceived().unblock();
 	}
 	
 	@Override
 	public void endOfTrailers(StreamsManager manager, DataStreamHandler stream) {
 		if (manager.getLogger().debug())
 			manager.getLogger().debug("End of trailers on stream " + stream.getStreamId());
-		if (ctx != null)
-			ctx.getResponse().getTrailersReceived().unblock();
+		ctx.getResponse().getTrailersReceived().unblock();
 	}
 
 	

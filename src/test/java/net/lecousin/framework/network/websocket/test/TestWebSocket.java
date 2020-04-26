@@ -22,6 +22,7 @@ import net.lecousin.framework.application.Version;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.threads.Task;
+import net.lecousin.framework.core.test.runners.LCSequentialRunner;
 import net.lecousin.framework.io.IO.Readable.Seekable;
 import net.lecousin.framework.io.IO.Seekable.SeekType;
 import net.lecousin.framework.io.IOUtil;
@@ -58,9 +59,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.BlockJUnit4ClassRunner;
 
-@RunWith(BlockJUnit4ClassRunner.class)
+@RunWith(LCSequentialRunner.class)
 public class TestWebSocket extends AbstractNetworkTest {
 
 	@SuppressWarnings("resource")

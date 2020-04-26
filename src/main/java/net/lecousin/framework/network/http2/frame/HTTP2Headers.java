@@ -145,10 +145,10 @@ public abstract class HTTP2Headers extends HTTP2Priority {
 				public Boolean apply(ByteBuffer data) throws HTTP2Error {
 					ByteBuffer b;
 					int len = data.remaining();
-					if (len <= header.getPayloadLength() - pos) {
+					if (len <= size - pos) {
 						b = data;
 					} else {
-						len = header.getPayloadLength() - pos;
+						len = size - pos;
 						b = data.duplicate();
 						b.limit(b.position() + len);
 					}

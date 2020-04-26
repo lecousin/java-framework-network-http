@@ -32,9 +32,11 @@ public class DataStreamHandler extends StreamHandler.Default {
 	
 	DataStreamHandler(int id) {
 		this.id = id;
+		creationNanoTime = System.nanoTime();
 	}
 	
 	private int id;
+	private long creationNanoTime;
 	private StreamState state = StreamState.IDLE;
 	private DataHandler dataHandler = null;
 	private boolean noBody = false;
@@ -54,6 +56,10 @@ public class DataStreamHandler extends StreamHandler.Default {
 	@Override
 	public int getStreamId() {
 		return id;
+	}
+	
+	public long getCreationNanoTime() {
+		return creationNanoTime;
 	}
 	
 	@Override
@@ -113,6 +119,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 				dataHandler = manager.createDataHandler(id);
 			} else if (StreamState.OPEN_DATA.equals(state)) {
 				// start trailers
+				// TODO we can cancel sending any pending window update as we won't receive data anymore on this stream
 				if (bodyConsumer != null) {
 					bodyConsumer.end();
 					bodyConsumer = null;
@@ -157,6 +164,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 				manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 				return true;
 			}
+			// TODO if end_of_stream, we can cancel sending any pending window update as we won't receive data anymore on this stream
 			if (header.getPayloadLength() == 0) {
 				onEndOfPayload(manager, header);
 				return true;
