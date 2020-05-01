@@ -26,6 +26,7 @@ import net.lecousin.framework.math.RangeLong;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
+import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.exception.HTTPError;
 import net.lecousin.framework.network.http.exception.HTTPException;
 import net.lecousin.framework.network.http.exception.UnsupportedHTTPProtocolException;
@@ -508,8 +509,14 @@ public class HTTP1ServerProtocol implements ALPNServerProtocol {
 			ctx.getClient().close();
 			return;
 		}
-		if (response.getStatusCode() < 100)
-			response.setStatus(response.getReady().hasError() ? 500 : 200);
+		if (response.getStatusCode() < 100) {
+			if (response.getReady().hasError()) {
+				logger.error("Error processing request", response.getReady().getError());
+				response.setStatus(500, "Internal Server Error " + response.getReady().getError().getMessage());
+			} else {
+				response.setStatus(200);
+			}
+		}
 
 		if (enableRangeRequests)
 			handleRangeRequest(ctx, logger);
@@ -559,6 +566,9 @@ public class HTTP1ServerProtocol implements ALPNServerProtocol {
 				response.getHeaders().remove(MimeHeaders.CONTENT_LENGTH);
 				isChunked = true;
 			}
+			if (!response.getHeaders().has(HTTPConstants.Headers.Response.SERVER))
+				response.getHeaders().setRawValue(HTTPConstants.Headers.Response.SERVER,
+					"net.lecousin.framework.network.http1/" + LibraryVersion.VERSION);
 		}
 
 		if (logger.debug())

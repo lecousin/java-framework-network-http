@@ -12,7 +12,9 @@ import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.exception.NoException;
+import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
+import net.lecousin.framework.network.http.LibraryVersion;
 import net.lecousin.framework.network.http.server.HTTPRequestContext;
 import net.lecousin.framework.network.http.server.HTTPServerResponse;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
@@ -145,6 +147,9 @@ class ClientDataHandler implements DataHandler {
 			}
 			List<Pair<String, String>> headers = new LinkedList<>();
 			headers.add(new Pair<>(HTTP2Constants.Headers.Response.Pseudo.STATUS, Integer.toString(ctx.getResponse().getStatusCode())));
+			if (!ctx.getResponse().getHeaders().has(HTTPConstants.Headers.Response.SERVER))
+				ctx.getResponse().getHeaders().setRawValue(HTTPConstants.Headers.Response.SERVER,
+					"net.lecousin.framework.network.http2/" + LibraryVersion.VERSION);
 			for (MimeHeader h : ctx.getResponse().getHeaders().getHeaders())
 				headers.add(new Pair<>(h.getNameLowerCase(), h.getRawValue()));
 			// if available, add the content-length
