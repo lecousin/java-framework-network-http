@@ -4,16 +4,16 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.client.SSLClient;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConnection;
+import net.lecousin.framework.network.http.client.HTTPClientConnection.OpenConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
@@ -26,7 +26,6 @@ import net.lecousin.framework.network.mime.header.MimeHeaders.HeadersConsumer;
 import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.network.ssl.SSLConnectionConfig;
-import net.lecousin.framework.util.Triple;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -80,16 +79,10 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 		startServer(new ProcessorForTests());
 		// open connection
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHTTP1Server.class);
-		SSLConnectionConfig sslConfig = null;
-		if (useSSL) {
-			sslConfig = new SSLConnectionConfig();
-			sslConfig.setHostNames(Arrays.asList("localhost"));
-			sslConfig.setContext(clientConfig.getSSLContext());
-		}
-		Triple<? extends TCPClient, Async<IOException>, Boolean> conn = HTTP1ClientConnection.openConnection(
-			"localhost", serverAddress.getPort(), "/test/get?status=200&test=hello", clientConfig, sslConfig, logger);
-		TCPClient client = conn.getValue1();
-		IAsync<IOException> connection = conn.getValue2();
+		OpenConnection conn = HTTPClientConnection.openConnection(
+			"localhost", serverAddress.getPort(), "/test/get?status=200&test=hello", useSSL, clientConfig, logger);
+		TCPClient client = conn.getClient();;
+		IAsync<IOException> connection = conn.getConnect();
 		// tests
 		HTTPClientRequest req1 = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get("/test/get?status=200&test=hello");
 		HTTPClientRequest req2 = new HTTPClientRequest("localhost", serverAddress.getPort(), false).get("/test/get?status=602");
@@ -116,25 +109,25 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 		connection.blockThrow(0);
 		client.send(ByteBuffer.wrap(multiRequest.getBytes(StandardCharsets.US_ASCII)), 15000);
 		
-		HTTPClientResponse resp1 = HTTP1ClientConnection.receiveResponse(client, req1, clientConfig);
+		HTTPClientResponse resp1 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req1, clientConfig);
 		resp1.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp2 = HTTP1ClientConnection.receiveResponse(client, req2, clientConfig);
+		HTTPClientResponse resp2 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req2, clientConfig);
 		resp2.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp3 = HTTP1ClientConnection.receiveResponse(client, req3, clientConfig);
+		HTTPClientResponse resp3 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req3, clientConfig);
 		resp3.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp4 = HTTP1ClientConnection.receiveResponse(client, req4, clientConfig);
+		HTTPClientResponse resp4 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req4, clientConfig);
 		resp4.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp5 = HTTP1ClientConnection.receiveResponse(client, req5, clientConfig);
+		HTTPClientResponse resp5 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req5, clientConfig);
 		resp5.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp6 = HTTP1ClientConnection.receiveResponse(client, req6, clientConfig);
+		HTTPClientResponse resp6 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req6, clientConfig);
 		resp6.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp7 = HTTP1ClientConnection.receiveResponse(client, req7, clientConfig);
+		HTTPClientResponse resp7 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req7, clientConfig);
 		resp7.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp8 = HTTP1ClientConnection.receiveResponse(client, req8, clientConfig);
+		HTTPClientResponse resp8 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req8, clientConfig);
 		resp8.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp9 = HTTP1ClientConnection.receiveResponse(client, req9, clientConfig);
+		HTTPClientResponse resp9 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req9, clientConfig);
 		resp9.getTrailersReceived().blockThrow(0);
-		HTTPClientResponse resp10 = HTTP1ClientConnection.receiveResponse(client, req10, clientConfig);
+		HTTPClientResponse resp10 = HTTP1ClientConnection.receiveResponse(client, conn.isThroughProxy(), req10, clientConfig);
 		resp10.getTrailersReceived().blockThrow(0);
 		
 		client.close();
@@ -175,7 +168,7 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 				Thread.sleep(100);
 			}
 			HTTPClientConfiguration config = new HTTPClientConfiguration();
-			HTTPClientResponse resp = HTTP1ClientConnection.receiveResponse(client, new HTTPClientRequest("localhost", serverAddress.getPort(), false), config);
+			HTTPClientResponse resp = HTTP1ClientConnection.receiveResponse(client, false, new HTTPClientRequest("localhost", serverAddress.getPort(), false), config);
 			resp.getTrailersReceived().blockThrow(0);
 			
 			check(resp, 200, "world");
@@ -204,7 +197,7 @@ public class TestHTTP1Server extends AbstractTestHttpServer {
 			client.connect(new InetSocketAddress("localhost", serverAddress.getPort()), 10000).blockThrow(0);
 			client.send(ByteBuffer.wrap(request.getBytes(StandardCharsets.US_ASCII)), 10000);
 			HTTPClientConfiguration config = new HTTPClientConfiguration();
-			HTTPClientResponse response = HTTP1ClientConnection.receiveResponse(client, new HTTPClientRequest("localhost", serverAddress.getPort(), false), config);
+			HTTPClientResponse response = HTTP1ClientConnection.receiveResponse(client, false, new HTTPClientRequest("localhost", serverAddress.getPort(), false), config);
 			response.getTrailersReceived().blockThrow(0);
 			Assert.assertEquals(expectedStatus, response.getStatusCode());
 		}

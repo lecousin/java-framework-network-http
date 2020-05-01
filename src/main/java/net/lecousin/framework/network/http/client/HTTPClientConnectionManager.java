@@ -8,14 +8,13 @@ import java.util.LinkedList;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.async.Async;
-import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
+import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.log.Logger;
-import net.lecousin.framework.network.client.SSLClient;
-import net.lecousin.framework.network.client.TCPClient;
-import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
+import net.lecousin.framework.network.http.client.HTTPClientConnection.OpenConnection;
 import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.Pair;
 
@@ -37,6 +36,8 @@ class HTTPClientConnectionManager {
 	private int maxConnections;
 	private HTTPClientConfiguration config;
 	private LinkedList<HTTPClientConnection> openConnections = new LinkedList<>();
+	private LinkedList<Pair<AsyncSupplier<HTTPClientConnection, IOException>, List<HTTPClientRequestContext>>> openingConnections =
+		new LinkedList<>();
 	private long lastNewConnectionFailed = -1;
 	private long lastConnectionFailed = -1;
 	private long lastUsage = 0;
@@ -46,12 +47,24 @@ class HTTPClientConnectionManager {
 	}
 	
 	void close() {
+		List<HTTPClientRequestContext> requests = new LinkedList<>();
+		List<AsyncSupplier<HTTPClientConnection, IOException>> opening = new LinkedList<>();
 		synchronized (openConnections) {
 			ArrayList<HTTPClientConnection> list = new ArrayList<>(openConnections);
 			for (HTTPClientConnection c : list)
 				c.close();
 			openConnections.clear();
+			for (Pair<AsyncSupplier<HTTPClientConnection, IOException>, List<HTTPClientRequestContext>> p : openingConnections) {
+				requests.addAll(p.getValue2());
+				p.getValue2().clear();
+				opening.add(p.getValue1());
+			}
+			openingConnections.clear();
 		}
+		for (AsyncSupplier<HTTPClientConnection, IOException> o : opening)
+			o.onDone(HTTPClientConnection::close);
+		for (HTTPClientRequestContext r : requests)
+			client.retryConnection(r);
 	}
 	
 	String getDescription() {
@@ -61,12 +74,16 @@ class HTTPClientConnectionManager {
 			s.append(openConnections.size());
 			for (HTTPClientConnection c : openConnections)
 				s.append("\n    - ").append(c.getDescription());
+			if (!openingConnections.isEmpty())
+				s.append("\n    - ").append(openingConnections.size()).append(" connecting");
 		}
 		return s.toString();
 	}
 	
 	boolean isUsed() {
 		synchronized (openConnections) {
+			if (!openingConnections.isEmpty())
+				return true;
 			for (HTTPClientConnection c : openConnections) {
 				if (c.getIdleTime() <= 0)
 					return true;
@@ -89,6 +106,8 @@ class HTTPClientConnectionManager {
 	
 	long lastUsage() {
 		synchronized (openConnections) {
+			if (!openingConnections.isEmpty())
+				return System.currentTimeMillis();
 			long last = lastUsage;
 			for (HTTPClientConnection c : openConnections) {
 				long idle = c.getIdleTime();
@@ -101,7 +120,7 @@ class HTTPClientConnectionManager {
 		}
 	}
 	
-	/** Get a connexion that is open but available. */
+	/** Get a connection that is open but available. */
 	public HTTPClientConnection reuseAvailableConnection(HTTPClientRequestContext reservedFor) {
 		synchronized (openConnections) {
 			for (HTTPClientConnection c : openConnections) {
@@ -115,8 +134,20 @@ class HTTPClientConnectionManager {
 		return null;
 	}
 	
+	public Pair<Integer, HTTPClientConnection> getBestReusableConnection() {
+		// TODO
+		return null;
+	}
+	
+	public void reuseConnection(HTTPClientConnection connection, HTTPClientRequestContext reservedFor) {
+		synchronized (openConnections) {
+			connection.reserve(reservedFor);
+			lastUsage = System.currentTimeMillis();
+		}
+	}
+	
 	/** Create a new connection if maximum is not reached, else null is returned. */
-	public HTTPClientConnection createConnection(HTTPClientRequestContext reservedFor) {
+	public AsyncSupplier<HTTPClientConnection, IOException> createConnection(HTTPClientRequestContext reservedFor) {
 		synchronized (openConnections) {
 			if (openConnections.size() >= maxConnections)
 				return null;
@@ -145,77 +176,104 @@ class HTTPClientConnectionManager {
 		return null;
 	}
 	
-	private HTTPClientConnection createDirectConnection(HTTPClientRequestContext reservedFor) {
-		TCPClient tcp;
-		if (reservedFor.getRequest().isSecure()) {
-			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
-			sslConfig.setHostNames(Arrays.asList(reservedFor.getRequest().getHostname()));
-			sslConfig.setContext(config.getSSLContext());
-			tcp = new SSLClient(sslConfig);
-		} else {
-			tcp = new TCPClient();
-		}
-		Async<IOException> connect = tcp.connect(serverAddress, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
-		HTTP1ClientConnection connection = new HTTP1ClientConnection(tcp, connect, 2, config);
-		return addConnection(connection, tcp, connect, reservedFor);
+	private AsyncSupplier<HTTPClientConnection, IOException> createDirectConnection(HTTPClientRequestContext reservedFor) {
+		return addConnection(HTTPClientConnection.openDirectHTTPClientConnection(
+			serverAddress, reservedFor.getRequest().getHostname(), reservedFor.getRequest().isSecure(), config, logger
+		), reservedFor);
 	}
 	
 	@SuppressWarnings("java:S2095") // proxyClient will be closed later
-	private HTTPClientConnection createProxyConnection(HTTPClientRequestContext reservedFor) {
+	private AsyncSupplier<HTTPClientConnection, IOException> createProxyConnection(HTTPClientRequestContext reservedFor) {
 		HTTPClientRequest request = reservedFor.getRequest();
-		Pair<TCPClient, Async<IOException>> proxyConnection;
-		if (request.isSecure()) {
-			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
-			sslConfig.setHostNames(Arrays.asList(reservedFor.getRequest().getHostname()));
-			sslConfig.setContext(config.getSSLContext());
-			proxyConnection = HTTP1ClientConnection.openTunnelOnProxy(serverAddress, request.getHostname(), request.getPort(),
-				config, sslConfig, logger);
+		OpenConnection proxyConnection;
+		if (!request.isSecure()) {
+			HTTPClientConfiguration proxyConfig = new HTTPClientConfiguration(config);
+			proxyConfig.setAllowedProtocols(Arrays.asList(Protocol.HTTP1, Protocol.HTTP1S));
+			proxyConnection = HTTPClientConnection.openDirectClearConnection(serverAddress, proxyConfig, logger);
 		} else {
-			proxyConnection = HTTP1ClientConnection.openDirectConnection(serverAddress, config, logger);
+			SSLConnectionConfig sslConfig = HTTPClientConnection.createSSLConfig(request.getHostname(), config);
+			proxyConnection = HTTPProxyUtil.openTunnelThroughHTTPProxy(serverAddress, request.getHostname(), request.getPort(),
+				config, sslConfig, logger);
 		}
-			
-		HTTP1ClientConnection connection = new HTTP1ClientConnection(proxyConnection.getValue1(), proxyConnection.getValue2(), 2, config);
-		return addConnection(connection, proxyConnection.getValue1(), proxyConnection.getValue2(), reservedFor);
+		
+		return addConnection(HTTPClientConnection.createHTTPClientConnection(proxyConnection, config), reservedFor);
 	}
 	
-	private HTTPClientConnection addConnection(
-		HTTPClientConnection connection, TCPClient tcp, IAsync<IOException> connect, HTTPClientRequestContext reservedFor
+	private AsyncSupplier<HTTPClientConnection, IOException> addConnection(
+		AsyncSupplier<HTTPClientConnection, IOException> opening, HTTPClientRequestContext reservedFor
 	) {
-		openConnections.add(connection);
-		connection.reserve(reservedFor);
-		connect.onErrorOrCancel(() -> {
-			lastNewConnectionFailed = System.currentTimeMillis();
-			Task.cpu("Connection failed", Priority.RATHER_IMPORTANT, t -> {
-				boolean hasOpen = false;
-				synchronized (openConnections) {
-					for (HTTPClientConnection c : openConnections)
-						if (c.isConnected()) {
-							hasOpen = true;
-							break;
-						}
-					if (!hasOpen)
-						lastConnectionFailed = System.currentTimeMillis();
+		AsyncSupplier<HTTPClientConnection, IOException> result = new AsyncSupplier<>();
+		List<HTTPClientRequestContext> requests = new LinkedList<>();
+		requests.add(reservedFor);
+		if (opening.isDone()) {
+			if (opening.isSuccessful()) {
+				addConnection(opening.getResult(), requests, result);
+			} else {
+				connectionFailed(result, opening.getError(), requests);
+			}
+			return result;
+		}
+		Pair<AsyncSupplier<HTTPClientConnection, IOException>, List<HTTPClientRequestContext>> p = new Pair<>(result, requests);
+		openingConnections.add(p);
+		opening.thenStart("HTTP Connection done", Priority.NORMAL, (Task<Void, NoException> t) -> {
+			synchronized (openConnections) {
+				openingConnections.remove(p);
+				if (opening.isSuccessful()) {
+					addConnection(opening.getResult(), requests, result);
+				} else {
+					connectionFailed(result, opening.getError(), requests);
 				}
-				if (hasOpen) {
-					@SuppressWarnings("unchecked")
-					List<InetSocketAddress> remoteAddresses = (List<InetSocketAddress>)
-						reservedFor.getAttribute(HTTPClient.CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
-					remoteAddresses.add(serverAddress);
-				}
-				client.retryConnection(reservedFor);
-				return null;
-			}).start();
-		});
-		tcp.onclosed(() ->
+			}
+			return null;
+		}, true);
+		return result;
+	}
+	
+	private void addConnection(
+		HTTPClientConnection conn, List<HTTPClientRequestContext> requests, AsyncSupplier<HTTPClientConnection, IOException> result
+	) {
+		openConnections.add(conn);
+		for (HTTPClientRequestContext r : requests)
+			conn.reserve(r);
+		conn.tcp.onclosed(() ->
 			Task.cpu("Connection closed", Priority.RATHER_IMPORTANT, t -> {
 				synchronized (openConnections) {
-					openConnections.remove(connection);
+					openConnections.remove(conn);
 				}
 				client.connectionClosed();
 				return null;
 			}).start()
 		);
-		return connection;
+		result.unblockSuccess(conn);
+	}
+	
+	private void connectionFailed(
+		AsyncSupplier<HTTPClientConnection, IOException> result, IOException error, List<HTTPClientRequestContext> requests
+	) {
+		lastNewConnectionFailed = System.currentTimeMillis();
+		Task.cpu("Connection failed", Priority.RATHER_IMPORTANT, t -> {
+			boolean hasOpen = false;
+			synchronized (openConnections) {
+				for (HTTPClientConnection c : openConnections)
+					if (c.isConnected()) {
+						hasOpen = true;
+						break;
+					}
+				if (!hasOpen)
+					lastConnectionFailed = System.currentTimeMillis();
+			}
+			for (HTTPClientRequestContext r : requests) {
+				if (hasOpen) {
+					@SuppressWarnings("unchecked")
+					List<InetSocketAddress> remoteAddresses = (List<InetSocketAddress>)
+						r.getAttribute(HTTPClient.CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
+					remoteAddresses.add(serverAddress);
+				}
+				client.retryConnection(r);
+			}
+			return null;
+		}).start();
+		result.error(error);
 	}
 	
 }

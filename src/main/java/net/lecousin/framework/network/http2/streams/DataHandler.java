@@ -25,4 +25,6 @@ public interface DataHandler {
 	
 	void close();
 	
+	void error(int errorCode);
+	
 }

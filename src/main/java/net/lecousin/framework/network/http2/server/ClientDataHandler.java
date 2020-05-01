@@ -27,6 +27,8 @@ import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
+import net.lecousin.framework.network.mime.transfer.ContentDecoderFactory;
+import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 import net.lecousin.framework.network.server.TCPServerClient;
 import net.lecousin.framework.util.Pair;
 
@@ -49,6 +51,12 @@ class ClientDataHandler implements DataHandler {
 	public void close() {
 		if (!ctx.getResponse().getSent().isDone())
 			ctx.getResponse().getSent().error(new ClosedChannelException());
+	}
+	
+	@Override
+	public void error(int errorCode) {
+		if (!ctx.getResponse().getSent().isDone())
+			ctx.getResponse().getSent().error(new IOException("Client returned HTTP/2 error " + errorCode));
 	}
 
 	@Override
@@ -98,7 +106,15 @@ class ClientDataHandler implements DataHandler {
 			server.logger.warn("Processor did not set an entity to receive the request body, default to binary");
 			ctx.getRequest().setEntity(new BinaryEntity(null, ctx.getRequest().getHeaders()));
 		}
-		return ctx.getRequest().getEntity().createConsumer(ctx.getRequest().getHeaders().getContentLength());
+
+		AsyncConsumer<ByteBuffer, IOException> consumer =
+				ctx.getRequest().getEntity().createConsumer(ctx.getRequest().getHeaders().getContentLength());
+		LinkedList<String> encoding = new LinkedList<>();
+		TransferEncodingFactory.addEncodingFromHeader(ctx.getResponse().getHeaders(), MimeHeaders.CONTENT_ENCODING, encoding);
+		for (String coding : encoding)
+			consumer = ContentDecoderFactory.createDecoder(consumer, coding);
+		return consumer;
+
 	}
 	
 	@Override

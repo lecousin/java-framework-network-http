@@ -62,9 +62,7 @@ public class TestRequest {
 		StringBuilder s = new StringBuilder();
 		s.append(name).append(": ")
 		.append(request.getMethod()).append(' ')
-		.append(request.isSecure() ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME)
-		.append("://").append(request.getHostname())
-		.append(':').append(request.getPort())
+		.append(request.getHostname())
 		.append(request.getEncodedPath().asString());
 		return s.toString();
 	}

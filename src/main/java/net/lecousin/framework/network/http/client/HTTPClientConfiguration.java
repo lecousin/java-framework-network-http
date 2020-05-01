@@ -140,10 +140,28 @@ public class HTTPClientConfiguration {
 	
 	/** HTTP client allowed protocols. */
 	public enum Protocol {
-		HTTP1,
-		HTTP1S,
-		H2C,
-		H2
+		HTTP1(false, null),
+		HTTP1S(true, "http/1.1"),
+		H2C(false, null),
+		H2(true, "h2")
+		;
+		
+		private boolean isSecure;
+		private String alpn;
+		
+		Protocol(boolean isSecure, String alpn) {
+			this.isSecure = isSecure;
+			this.alpn = alpn;
+		}
+
+		public boolean isSecure() {
+			return isSecure;
+		}
+
+		public String getAlpn() {
+			return alpn;
+		}
+		
 	}
 	
 	private Timeouts timeouts = new Timeouts();
@@ -156,7 +174,7 @@ public class HTTPClientConfiguration {
 	
 	/** Constructor. */
 	public HTTPClientConfiguration() {
-		this.allowedProtocols = new LinkedList<>(Arrays.asList(Protocol.values()));
+		this.allowedProtocols = new LinkedList<>(Arrays.asList(Protocol.H2, Protocol.HTTP1S, Protocol.HTTP1));
 		this.filters.add(new UserAgentFilter(HTTPConstants.Headers.Request.DEFAULT_USER_AGENT, false));
 		this.filters.add(new EnsureHostFilter());
 		try {

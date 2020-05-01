@@ -249,7 +249,7 @@ public class HTTPRequest extends HTTPMessage<HTTPRequest> {
 	public String toString() {
 		CharArrayStringBuffer s = new CharArrayStringBuffer();
 		s.setNewArrayStringCapacity(512);
-		HTTP1RequestCommandProducer.generate(this, s);
+		HTTP1RequestCommandProducer.generate(this, null, s);
 		MimeHeaders headers = getHeaders();
 		s.append("\r\n");
 		headers.appendTo(s);

@@ -2,8 +2,6 @@ package net.lecousin.framework.network.http1.client;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
@@ -35,11 +33,11 @@ import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
 import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
-import net.lecousin.framework.network.http.exception.HTTPResponseError;
 import net.lecousin.framework.network.http1.HTTP1RequestCommandProducer;
 import net.lecousin.framework.network.http1.HTTP1ResponseStatusConsumer;
 import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
@@ -50,172 +48,26 @@ import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
-import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.Triple;
 
 /** HTTP/1 connection that supports queuing requests. */
 public class HTTP1ClientConnection extends HTTPClientConnection {
-
-	/** Open a connection, possibly through a proxy, to the given HTTP/1 server.
-	 * It returns the TCPClient (which may be a SSLClient), the connection result, and a boolean indicating
-	 * if the connection is done through a proxy. 
-	 * @throws URISyntaxException if the path is relative
-	 */
-	public static Triple<? extends TCPClient, Async<IOException>, Boolean> openConnection(
-		String hostname, int port, String path, HTTPClientConfiguration config, SSLConnectionConfig sslConfig, Logger logger
-	) throws URISyntaxException {
-		if (port <= 0) port = sslConfig != null ? HTTPConstants.DEFAULT_HTTPS_PORT : HTTPConstants.DEFAULT_HTTP_PORT;
-		ProxySelector proxySelector = config.getProxySelector();
-		if (proxySelector == null)
-			return triple(openDirectConnection(new InetSocketAddress(hostname, port), config, sslConfig, logger), false);
-		URI uri = new URI(sslConfig != null ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME, null, hostname, port, path, null, null);
-		List<Proxy> proxies = proxySelector.select(uri);
-		Proxy proxy = null;
-		for (Proxy p : proxies) {
-			switch (p.type()) {
-			case DIRECT:
-				return triple(openDirectConnection(new InetSocketAddress(hostname, port), config, sslConfig, logger), false);
-			case HTTP:
-				if (proxy == null && p.address() instanceof InetSocketAddress)
-					proxy = p;
-				break;
-			default: break;
-			}
-		}
-		if (proxy == null)
-			return triple(openDirectConnection(new InetSocketAddress(hostname, port), config, sslConfig, logger), false);
-		return triple(openTunnelOnProxy((InetSocketAddress)proxy.address(), hostname, port, config, sslConfig, logger), true);
-	}
-	
-	private static Triple<? extends TCPClient, Async<IOException>, Boolean> triple(
-		Pair<? extends TCPClient, Async<IOException>> pair, boolean isUsingProxy
-	) {
-		return new Triple<>(pair.getValue1(), pair.getValue2(), Boolean.valueOf(isUsingProxy));
-	}
-	
-	/** Open a direct connection to a HTTP/1 server. */
-	public static Pair<? extends TCPClient, Async<IOException>> openDirectConnection(
-		InetSocketAddress serverAddress, HTTPClientConfiguration config, SSLConnectionConfig sslConfig, Logger logger
-	) {
-		if (sslConfig != null)
-			return openDirectSSLConnection(serverAddress, config, sslConfig, logger);
-		return openDirectConnection(serverAddress, config, logger);
-	}
-	
-	/** Open a direct connection to a HTTP/1 server. */
-	public static Pair<TCPClient, Async<IOException>> openDirectConnection(
-		InetSocketAddress serverAddress, HTTPClientConfiguration config, Logger logger
-	) {
-		if (logger.debug())
-			logger.debug("Open direct clear connection to HTTP server " + serverAddress);
-		TCPClient client = new TCPClient();
-		Async<IOException> connect = client.connect(
-			serverAddress, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
-		return new Pair<>(client, connect);
-	}
-	
-	/** Open a direct connection to a HTTP/1 server. */
-	public static Pair<SSLClient, Async<IOException>> openDirectSSLConnection(
-		InetSocketAddress serverAddress, HTTPClientConfiguration config, SSLConnectionConfig sslConfig, Logger logger
-	) {
-		if (logger.debug())
-			logger.debug("Open direct SSL connection to HTTPS server " + serverAddress);
-		SSLClient client = new SSLClient(sslConfig);
-		Async<IOException> connect = client.connect(
-			serverAddress, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
-		return new Pair<>(client, connect);
-	}
-	
-	/** Open a tunnel on HTTP/1 proxy server. */
-	public static Pair<TCPClient, Async<IOException>> openTunnelOnProxy(
-		InetSocketAddress proxyAddress,
-		String targetHostname, int targetPort,
-		HTTPClientConfiguration config, SSLConnectionConfig sslConfig,
-		Logger logger
-	) {
-		if (logger.debug())
-			logger.debug("Open connection to HTTP" + (sslConfig != null ? "S" : "") + " server " + targetHostname + ":" + targetPort
-				+ " through proxy " + proxyAddress);
-		
-		Pair<TCPClient, Async<IOException>> proxyConnection = openDirectConnection(proxyAddress, config, logger);
-		
-		// prepare the CONNECT request
-		String host = targetHostname + ":" + targetPort;
-		HTTPRequest connectRequest = new HTTPRequest()
-			.setMethod(HTTPRequest.METHOD_CONNECT).setEncodedPath(new ByteArrayStringIso8859Buffer(host));
-		connectRequest.addHeader(HTTPConstants.Headers.Request.HOST, host);
-		ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
-		headers.setNewArrayStringCapacity(512);
-		HTTP1RequestCommandProducer.generate(connectRequest, headers);
-		headers.append("\r\n");
-		connectRequest.getHeaders().generateString(headers);
-		ByteBuffer[] buffers = headers.asByteBuffers();
-		
-		// prepare SSL client
-		TCPClient client;
-		if (sslConfig != null) {
-			@SuppressWarnings("resource")
-			SSLClient sslClient = new SSLClient(sslConfig);
-			client = sslClient;
-		} else {
-			client = proxyConnection.getValue1();
-		}
-		
-		Async<IOException> connect = new Async<>();
-		
-		proxyConnection.getValue2().onDone(() ->
-		proxyConnection.getValue1().asConsumer(2, config.getTimeouts().getSend()).push(Arrays.asList(buffers)).onDone(() -> {
-			// once headers are sent, receive the response status line
-			HTTPResponse response = new HTTPResponse();
-			proxyConnection.getValue1().getReceiver().consume(
-				new HTTP1ResponseStatusConsumer(response)
-				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
-				4096, config.getTimeouts().getReceive())
-			.onDone(() -> {
-				// status line received
-				if (!response.isSuccess()) {
-					connect.error(new HTTPResponseError(response));
-					return;
-				}
-				// read headers
-				MimeHeaders responseHeaders = new MimeHeaders();
-				response.setHeaders(responseHeaders);
-				proxyConnection.getValue1().getReceiver().consume(
-					responseHeaders.createConsumer(config.getLimits().getHeadersLength())
-					.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error),
-					4096, config.getTimeouts().getReceive())
-				.onDone(() -> {
-					// headers received
-					// tunnel connection established
-					if (sslConfig != null) {
-						// replace connection of SSLClient by the tunnel
-						if (logger.debug())
-							logger.debug("Tunnel open through proxy " + proxyAddress + ", start SSL handshake");
-						((SSLClient)client).tunnelConnected(proxyConnection.getValue1(), connect,
-							config.getTimeouts().getReceive());
-					} else {
-						connect.unblock();
-					}
-				}, connect);
-			}, connect);
-		}, connect), connect);
-		return new Pair<>(client, connect);
-	}
-
 	
 	/** Constructor. */
 	public HTTP1ClientConnection(int maxPendingRequests, HTTPClientConfiguration config) {
 		this.maxPendingRequests = maxPendingRequests;
 		this.config = config;
+		config.getAllowedProtocols().retainAll(Arrays.asList(Protocol.HTTP1, Protocol.HTTP1S));
 		this.logger = LCCore.getApplication().getLoggerFactory().getLogger(HTTP1ClientConnection.class);
 	}
 
 	/** Constructor. */
-	public HTTP1ClientConnection(TCPClient client, Async<IOException> connect, int maxPendingRequests, HTTPClientConfiguration config) {
+	public HTTP1ClientConnection(
+		TCPClient client, Async<IOException> connect, boolean isThroughProxy, int maxPendingRequests, HTTPClientConfiguration config
+	) {
 		this(maxPendingRequests, config);
-		setConnection(client, connect);
+		setConnection(client, connect, isThroughProxy);
 	}
 	
 	private Logger logger;
@@ -238,8 +90,8 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	}
 	
 	@Override
-	public void setConnection(TCPClient tcp, Async<IOException> connect) {
-		super.setConnection(tcp, connect);
+	public void setConnection(TCPClient tcp, Async<IOException> connect, boolean isThroughProxy) {
+		super.setConnection(tcp, connect, isThroughProxy);
 		clientConsumer = tcp.asConsumer(3, config.getTimeouts().getSend());
 		connect.onDone(() -> {
 			if (!connect.isSuccessful())
@@ -331,17 +183,10 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		HTTPClientRequest req = ctx.getRequest();
 		if (connect == null) {
 			try {
-				SSLConnectionConfig sslConfig = null;
-				if (req.isSecure()) {
-					sslConfig = new SSLConnectionConfig();
-					sslConfig.setHostNames(Arrays.asList(req.getHostname()));
-					sslConfig.setContext(config.getSSLContext());
-				}
-				Triple<? extends TCPClient, Async<IOException>, Boolean> conn = openConnection(
-					req.getHostname(), req.getPort(), req.getEncodedPath().asString(),
-					config, sslConfig, logger);
-				ctx.setThroughProxy(conn.getValue3().booleanValue());
-				setConnection(conn.getValue1(), conn.getValue2());
+				OpenConnection conn = openConnection(req.getHostname(), req.getPort(), req.getEncodedPath().asString(),
+					req.isSecure(), config, logger);
+				ctx.setThroughProxy(conn.isThroughProxy());
+				setConnection(conn.getClient(), conn.getConnect(), conn.isThroughProxy());
 			} catch (Exception e) {
 				ctx.getRequestSent().error(IO.error(e));
 			}
@@ -392,22 +237,17 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			return;
 		}
 		if (logger.debug()) logger.debug("Open new connection for redirection to " + targetUri);
-		Triple<? extends TCPClient, Async<IOException>, Boolean> newClient;
+		OpenConnection newClient;
 		try {
-			SSLConnectionConfig sslConfig = null;
-			if (HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme())) {
-				sslConfig = new SSLConnectionConfig();
-				sslConfig.setHostNames(Arrays.asList(targetUri.getHost()));
-				sslConfig.setContext(config.getSSLContext());
-			}
-			newClient = openConnection(targetUri.getHost(), targetUri.getPort(),
-				targetUri.getPath(), config, sslConfig, logger);
+			newClient = openConnection(targetUri.getHost(), targetUri.getPort(), targetUri.getPath(),
+				HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme()), config, logger);
 		} catch (Exception e) {
 			ctx.getRequestSent().error(IO.error(e));
 			return;
 		}
-		HTTP1ClientConnection newConn = new HTTP1ClientConnection(newClient.getValue1(), newClient.getValue2(), 1, config);
-		ctx.setThroughProxy(newClient.getValue3().booleanValue());
+		HTTP1ClientConnection newConn = new HTTP1ClientConnection(
+			newClient.getClient(), newClient.getConnect(), newClient.isThroughProxy(), 1, config);
+		ctx.setThroughProxy(newClient.isThroughProxy());
 		newConn.send(ctx);
 		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
 	}
@@ -438,10 +278,16 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	private void prepareHeaders(Request r) {
 		r.headers = Task.cpu("Prepare HTTP Request headers", Priority.NORMAL, (Task<ByteBuffer[], NoException> t) -> {
-			HTTPRequest request = r.ctx.getRequest();
+			HTTPClientRequest request = r.ctx.getRequest();
 			ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
 			headers.setNewArrayStringCapacity(4096);
-			HTTP1RequestCommandProducer.generate(request, headers);
+			StringBuilder pathPrefix = null;
+			if (r.ctx.isThroughProxy() && !(tcp instanceof SSLClient)) {
+				pathPrefix = new StringBuilder(128);
+				pathPrefix.append(request.isSecure() ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME);
+				pathPrefix.append("://").append(request.getHostname()).append(':').append(request.getPort());
+			}
+			HTTP1RequestCommandProducer.generate(request, pathPrefix, headers);
 			headers.append("\r\n");
 			request.getHeaders().generateString(headers);
 			r.ctx.getRequestSent().onDone(this::doNextJob);
@@ -640,8 +486,10 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		doNextJob();
 	}
 	
-	public static HTTPClientResponse receiveResponse(TCPClient client, HTTPClientRequest requestSent, HTTPClientConfiguration config) {
-		HTTP1ClientConnection c = new HTTP1ClientConnection(client, new Async<>(true), 1, config);
+	public static HTTPClientResponse receiveResponse(
+		TCPClient client, boolean isThroughProxy, HTTPClientRequest requestSent, HTTPClientConfiguration config
+	) {
+		HTTP1ClientConnection c = new HTTP1ClientConnection(client, new Async<>(true), isThroughProxy, 1, config);
 		Request r = new Request();
 		r.ctx = new HTTPClientRequestContext(c, requestSent);
 		c.receiveResponse(r);

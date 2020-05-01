@@ -396,20 +396,23 @@ public class TestWebSocket extends AbstractNetworkTest {
 
 	
 	@Test
-	public void testProxyConfigurations() throws Exception {
-		WebSocketClient client = new WebSocketClient();
-		HTTPClientConfiguration config = new HTTPClientConfiguration();
-		config.setProxySelector(null);
-		AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
-		String selected = conn.blockResult(0);
-		Assert.assertEquals(1, connected.get());
-		Assert.assertEquals("test2", selected);
-		client.close();
-		
+	public void testNoProxy() throws Exception {
+		try (WebSocketClient client = new WebSocketClient()) {
+			HTTPClientConfiguration config = new HTTPClientConfiguration();
+			config.setProxySelector(null);
+			AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
+			String selected = conn.blockResult(0);
+			Assert.assertEquals(1, connected.get());
+			Assert.assertEquals("test2", selected);
+		}
+	}
+	
+	@Test
+	public void testNoSSLThroughProxy() throws Exception {
 		// start proxy server
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
 		logger.setLevel(Level.TRACE);
-		config = new HTTPClientConfiguration(new HTTPClientConfiguration());
+		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		config.setSSLContext(SSLContext.getDefault());
 		try (TCPServer proxyServer = new TCPServer(); HTTPClient proxyClient = new HTTPClient(config)) {
 			ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(proxyClient, 8192, 10000, 10000, logger);
@@ -419,7 +422,7 @@ public class TestWebSocket extends AbstractNetworkTest {
 			int proxyPort = ((InetSocketAddress)proxyAddress).getPort();
 			
 			// test websocket through proxy
-			config = new HTTPClientConfiguration(new HTTPClientConfiguration());
+			config = new HTTPClientConfiguration();
 			config.setProxySelector(new ProxySelector() {
 				private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", proxyPort));
 				@Override
@@ -431,23 +434,56 @@ public class TestWebSocket extends AbstractNetworkTest {
 				public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
 				}
 			});
-			conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
-			selected = conn.blockResult(0);
-			Assert.assertEquals(2, connected.get());
-			Assert.assertEquals("test2", selected);
-			client.close();
-			
-			// test with HTTPS
-			config.setSSLContext(sslTest);
-			conn = client.connect(getSSLServerURI(), config, "test1", "test2", "test3");
-			selected = conn.blockResult(0);
-			Assert.assertEquals(3, connected.get());
-			Assert.assertEquals("test2", selected);
-			client.close();
+			try (WebSocketClient client = new WebSocketClient()) {
+				AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
+				String selected = conn.blockResult(0);
+				Assert.assertEquals(1, connected.get());
+				Assert.assertEquals("test2", selected);
+			}
 		}
-		// proxy server stopped
-		
+	}
+	
+	@Test
+	public void testSSLThroughProxy() throws Exception {
+		// start proxy server
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger("test-proxy");
+		logger.setLevel(Level.TRACE);
+		HTTPClientConfiguration config = new HTTPClientConfiguration();
+		config.setSSLContext(SSLContext.getDefault());
+		try (TCPServer proxyServer = new TCPServer(); HTTPClient proxyClient = new HTTPClient(config)) {
+			ProxyHTTPRequestProcessor processor = new ProxyHTTPRequestProcessor(proxyClient, 8192, 10000, 10000, logger);
+			HTTP1ServerProtocol protocol = new HTTP1ServerProtocol(processor);
+			proxyServer.setProtocol(protocol);
+			SocketAddress proxyAddress = proxyServer.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100).blockResult(0);
+			int proxyPort = ((InetSocketAddress)proxyAddress).getPort();
+			
+			// test websocket through proxy
+			config = new HTTPClientConfiguration();
+			config.setSSLContext(sslTest);
+			config.setProxySelector(new ProxySelector() {
+				private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", proxyPort));
+				@Override
+				public List<Proxy> select(URI uri) {
+					return Collections.singletonList(proxy);
+				}
+				
+				@Override
+				public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
+				}
+			});
+			try (WebSocketClient client = new WebSocketClient()) {
+				AsyncSupplier<String, IOException> conn = client.connect(getSSLServerURI(), config, "test1", "test2", "test3");
+				String selected = conn.blockResult(0);
+				Assert.assertEquals(1, connected.get());
+				Assert.assertEquals("test2", selected);
+			}
+		}
+	}
+	
+	@Test
+	public void testWrongProxy() throws Exception {
 		// test wrong proxy
+		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		config.setProxySelector(new ProxySelector() {
 			private Proxy proxy = new Proxy(Proxy.Type.HTTP, serverAddress);
 			@Override
@@ -459,15 +495,16 @@ public class TestWebSocket extends AbstractNetworkTest {
 			public void connectFailed(URI uri, SocketAddress sa, IOException ioe) {
 			}
 		});
-		conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
-		try {
-			conn.blockResult(0);
-			throw new AssertionError("Using wrong proxy address should throw an error");
-		} catch (HTTPResponseError e) {
-			// ok
+		try (WebSocketClient client = new WebSocketClient()) {
+			AsyncSupplier<String, IOException> conn = client.connect(getServerURI(), config, "test1", "test2", "test3");
+			try {
+				conn.blockResult(0);
+				throw new AssertionError("Using wrong proxy address should throw an error");
+			} catch (HTTPResponseError e) {
+				// ok
+			}
+			Assert.assertEquals(0, connected.get());
 		}
-		Assert.assertEquals(3, connected.get());
-		client.close();
 	}
 	
 	@Test

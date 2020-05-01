@@ -7,7 +7,6 @@ import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.Arrays;
 import java.util.Random;
 import java.util.function.Consumer;
 
@@ -27,13 +26,13 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.network.client.TCPClient;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConnection;
+import net.lecousin.framework.network.http.client.HTTPClientConnection.OpenConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
-import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.util.DebugUtil;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.Triple;
 
 /** Client for web socket protocol. */
 public class WebSocketClient implements Closeable {
@@ -68,22 +67,16 @@ public class WebSocketClient implements Closeable {
 	public AsyncSupplier<String, IOException> connect(
 		String hostname, int port, String path, boolean secure, HTTPClientConfiguration config, String... protocols
 	) {
-		Triple<? extends TCPClient, Async<IOException>, Boolean> connect;
-		SSLConnectionConfig sslConfig = null;
-		if (secure) {
-			sslConfig = new SSLConnectionConfig();
-			sslConfig.setHostNames(Arrays.asList(hostname));
-			sslConfig.setContext(config.getSSLContext());
-		}
-		try { connect = HTTP1ClientConnection.openConnection(hostname, port, path, config, sslConfig, logger); }
+		OpenConnection connect;
+		try { connect = HTTPClientConnection.openConnection(hostname, port, path, secure, config, logger); }
 		catch (URISyntaxException e) {
 			return new AsyncSupplier<>(null, IO.error(e));
 		}
 		AsyncSupplier<String, IOException> result = new AsyncSupplier<>();
-		connect.getValue2().thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
-			() -> upgradeConnection(connect.getValue1(), hostname, port, secure, connect.getValue3().booleanValue(),
+		connect.getConnect().thenStart(UPGRADE_TASK_DESCRIPTION, Task.Priority.NORMAL,
+			() -> upgradeConnection(connect.getClient(), hostname, port, secure, connect.isThroughProxy(),
 				path, config, protocols, result), result);
-		result.onErrorOrCancel(() -> connect.getValue1().close());
+		result.onErrorOrCancel(() -> connect.getClient().close());
 		return result;
 
 	}
@@ -136,7 +129,7 @@ public class WebSocketClient implements Closeable {
 		String expectedAcceptKey = new String(buf, StandardCharsets.US_ASCII);
 		
 		// send HTTP request
-		HTTP1ClientConnection sender = new HTTP1ClientConnection(client, new Async<>(true), 1, config);
+		HTTP1ClientConnection sender = new HTTP1ClientConnection(client, new Async<>(true), isUsingProxy, 1, config);
 		HTTPClientRequestContext ctx = new HTTPClientRequestContext(sender, request);
 		ctx.setRequestBody(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()));
 		ctx.setOnHeadersReceived(response -> {

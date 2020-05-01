@@ -26,5 +26,10 @@ class ClientStreamsManager extends StreamsManager {
 	public HTTP2ServerProtocol getServer() {
 		return server;
 	}
+	
+	@Override
+	protected void streamError(int streamId, int error) {
+		// nothing
+	}
 
 }

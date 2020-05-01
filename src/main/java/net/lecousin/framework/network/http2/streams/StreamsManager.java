@@ -247,6 +247,9 @@ public abstract class StreamsManager {
 		if (remoteSettings == null) {
 			remoteSettings = settings;
 			decompressionContext = new HPackDecompress((int)settings.getHeaderTableSize());
+			// send ACK
+			sendFrame(new HTTP2Frame.EmptyWriter(
+				new HTTP2FrameHeader(0, HTTP2FrameHeader.TYPE_SETTINGS, HTTP2Settings.FLAG_ACK, 0)), false);
 			connectionReady.unblock();
 		} else {
 			long previousWindowSize = remoteSettings.getWindowSize();
@@ -501,7 +504,11 @@ public abstract class StreamsManager {
 		}).start();
 	}
 	
-	void closeStream(DataStreamHandler stream) {
+	protected abstract void streamError(int streamId, int error);
+	
+	void closeStream(DataStreamHandler stream, int error) {
+		if (error != 0)
+			streamError(stream.getStreamId(), error);
 		synchronized (dataStreams) {
 			dataStreams.remove(stream.getStreamId());
 		}

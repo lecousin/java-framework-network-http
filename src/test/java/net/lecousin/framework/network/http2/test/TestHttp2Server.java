@@ -1,7 +1,9 @@
 package net.lecousin.framework.network.http2.test;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
@@ -19,6 +21,10 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.client.TCPClient;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
+import net.lecousin.framework.network.http.client.HTTPClientConnection;
+import net.lecousin.framework.network.http.client.HTTPClientConnection.OpenConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.test.AbstractTestHttpServer;
@@ -32,7 +38,6 @@ import net.lecousin.framework.network.http2.server.HTTP2ServerProtocol;
 import net.lecousin.framework.network.server.protocol.ALPNServerProtocol;
 import net.lecousin.framework.network.server.protocol.ServerProtocol;
 import net.lecousin.framework.network.ssl.SSLConnectionConfig;
-import net.lecousin.framework.util.Pair;
 
 import org.junit.Assert;
 import org.junit.Assume;
@@ -256,39 +261,43 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	
 	@Test
 	public void testWrongHttp2Connections() throws Exception {
-		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase));
+		Assume.assumeTrue(TestCase.PRIOR_KNOWLEDGE.equals(testCase) || TestCase.ALPN.equals(testCase));
 		startServer(new ProcessorForTests());
-		testWrongHttp2Connection("PRI * HTTP/2.1\r\n\r\nSM\r\n\r\n");
-		testWrongHttp2Connection("PRO * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-		testWrongHttp2Connection("PRI x HTTP/2.0\r\n\r\nSM\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\nX: x\r\n\r\nSM\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nXM\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\rX\nSM\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSMX\r\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\rX\n\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\nX\r\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\n\rX\n");
-		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nS");
+		HTTPClientConfiguration config = clientConfig;
+		if (TestCase.PRIOR_KNOWLEDGE.equals(testCase)) {
+			config = new HTTPClientConfiguration(clientConfig);
+			config.setAllowedProtocols(Arrays.asList(Protocol.HTTP1S, Protocol.HTTP1));
+		}
+		testWrongHttp2Connection("PRI * HTTP/2.1\r\n\r\nSM\r\n\r\n", config);
+		testWrongHttp2Connection("PRO * HTTP/2.0\r\n\r\nSM\r\n\r\n", config);
+		testWrongHttp2Connection("PRI x HTTP/2.0\r\n\r\nSM\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\nX: x\r\n\r\nSM\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSX\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nXM\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\rX\nSM\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSMX\r\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\rX\n\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\nX\r\n", config);
+		testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nSM\r\n\rX\n", config);
+		if (TestCase.PRIOR_KNOWLEDGE.equals(testCase))
+			testWrongHttp2Connection("PRI * HTTP/2.0\r\n\r\nS", config);
 	}
 	
-	private void testWrongHttp2Connection(String upgradeString) throws Exception {
+	private void testWrongHttp2Connection(String upgradeString, HTTPClientConfiguration clientConfig) throws Exception {
 		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Server.class);
-		SSLConnectionConfig sslConfig = null;
-		if (useSSL) {
-			sslConfig = new SSLConnectionConfig();
-			sslConfig.setContext(clientConfig.getSSLContext());
-			sslConfig.setHostNames(Arrays.asList("localhost"));
-		}
-		Pair<? extends TCPClient, Async<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(serverAddress, clientConfig, sslConfig, logger);
-		TCPClient tcp = conn.getValue1();
-		IAsync<IOException> connect = conn.getValue2();
+		OpenConnection conn = HTTPClientConnection.openDirectConnection(serverAddress, "localhost", useSSL, clientConfig, logger);
+		TCPClient tcp = conn.getClient();
+		IAsync<IOException> connect = conn.getConnect();
 		connect.blockThrow(0);
 		tcp.send(ByteBuffer.wrap(upgradeString.getBytes(StandardCharsets.US_ASCII)), 5000).blockThrow(0);
-		ByteArrayIO io = tcp.getReceiver().readUntil((byte)'\n', 1024, 5000).blockResult(0);
-		String line = IOUtil.readFullyAsStringSync(io, StandardCharsets.US_ASCII);
-		Assert.assertTrue(line.contains(" 400 "));
+		try {
+			ByteArrayIO io = tcp.getReceiver().readUntil((byte)'\n', 1024, 5000).blockResult(0);
+			String line = IOUtil.readFullyAsStringSync(io, StandardCharsets.US_ASCII);
+			Assert.assertTrue(line.contains(" 400 "));
+		} catch (Exception e) {
+			if (!testCase.equals(TestCase.ALPN) || (!(e instanceof ClosedChannelException) && !(e instanceof EOFException)))
+				throw new Exception("Error reading bad request response", e);
+		}
 		tcp.close();
 	}
 	

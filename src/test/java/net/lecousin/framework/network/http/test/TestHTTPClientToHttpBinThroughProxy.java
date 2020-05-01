@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http1.test;
+package net.lecousin.framework.network.http.test;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -7,8 +7,10 @@ import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
@@ -18,12 +20,14 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.server.TCPServer;
+import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.After;
@@ -35,20 +39,31 @@ import org.junit.runners.Parameterized.Parameters;
 @RunWith(LCConcurrentRunner.Parameterized.class) @org.junit.runners.Parameterized.UseParametersRunnerFactory(LCConcurrentRunner.ConcurrentParameterizedRunnedFactory.class)
 public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 
-	@Parameters(name = "{0}")
+	@Parameters(name = "{0} using {1}")
 	public static Collection<Object[]> parameters() {
-		return TestRequest.toParameters(HttpBin.getTestRequest());
+		List<Object[]> parameters = new LinkedList<>();
+		for (TestRequest test : HttpBin.getTestRequest())
+			parameters.add(new Object[] { test, Protocol.HTTP1 });
+		for (TestRequest test : HttpBin.getTestRequest())
+			parameters.add(new Object[] { test, Protocol.HTTP1S });
+		if (SSLConnectionConfig.ALPN_SUPPORTED)
+			for (TestRequest test : HttpBin.getTestRequest())
+				parameters.add(new Object[] { test, Protocol.H2 });
+		return parameters;
 	}
 	
-	public TestHTTPClientToHttpBinThroughProxy(TestRequest test) {
+	public TestHTTPClientToHttpBinThroughProxy(TestRequest test, Protocol protocol) {
 		this.test = test;
+		this.protocol = protocol;
 	}
 	
 	private TestRequest test;
+	private Protocol protocol;
 	
 	@Before
 	public void initTest() throws Exception {
 		AbstractNetworkTest.deactivateNetworkTraces();
+		//LoggerFactory.get(HTTP2Client.class).setLevel(Level.TRACE);
 		test.init();
 	}
 	
@@ -77,6 +92,11 @@ public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 	@Test
 	public void test() throws Exception {
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
+		config.setAllowedProtocols(Arrays.asList(protocol));
+		if (protocol.isSecure()) {
+			test.request.setSecure(true);
+			test.request.setPort(443);
+		}
 		config.setProxySelector(new ProxySelector() {
 			private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", serverPort));
 			@Override

@@ -57,6 +57,16 @@ public class ClientStreamsManager extends StreamsManager {
 		}
 	}
 	
+	@Override
+	protected void streamError(int streamId, int error) {
+		ClientRequestDataHandler handler;
+		synchronized (dataHandlers) {
+			handler = dataHandlers.remove(Integer.valueOf(streamId >> 1));
+		}
+		if (handler != null)
+			handler.error(error);
+	}
+	
 	TCPClient getRemote() {
 		return (TCPClient)remote;
 	}
@@ -115,6 +125,8 @@ public class ClientStreamsManager extends StreamsManager {
 			else
 				headers.add(new Pair<>("content-length", size.toString()));
 		}
+		if (logger.trace())
+			logger.trace("HTTP/2 headers to send:\n" + headers);
 		if (ctx.getRequest().getTrailerHeadersSuppliers() != null)
 			isEndOfStream = false;
 		// send headers/continuation frames, then body, then trailers

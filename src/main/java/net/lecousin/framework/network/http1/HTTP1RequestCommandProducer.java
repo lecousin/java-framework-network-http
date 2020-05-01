@@ -13,11 +13,13 @@ public final class HTTP1RequestCommandProducer {
 	}
 
 	/** Generate the command line. */
-	public static void generate(HTTPRequest request, IString s) {
+	public static void generate(HTTPRequest request, CharSequence pathPrefix, IString s) {
 		if (request.getMethod() == null)
 			s.append("NULL ");
 		else
 			s.append(request.getMethod()).append(' ');
+		if (pathPrefix != null)
+			s.append(pathPrefix);
 		ByteArrayStringIso8859Buffer path = request.getEncodedPath();
 		if (path == null)
 			s.append('/');
@@ -39,7 +41,7 @@ public final class HTTP1RequestCommandProducer {
 	public static String generateString(HTTPRequest request) {
 		CharArrayStringBuffer line = new CharArrayStringBuffer();
 		line.setNewArrayStringCapacity(256);
-		generate(request, line);
+		generate(request, null, line);
 		return line.asString();
 	}
 

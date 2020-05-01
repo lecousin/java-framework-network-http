@@ -42,7 +42,6 @@ import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.name.NameService;
 import net.lecousin.framework.network.name.NameService.Resolution;
-import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
 
 /**
@@ -271,8 +270,14 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel
 			connection.getResult().sendReserved(ctx).onDone(taken -> {
-				if (!taken.booleanValue() && !retryToConnect(ctx))
-					queue.addFirst(ctx);
+				if (!taken.booleanValue())
+					Task.cpu("Retry connection", Priority.NORMAL, task -> {
+						synchronized (connectionManagers) {
+							queue.addFirst(ctx);
+							dequeue();
+						}
+						return null;
+					}).start();
 			});
 			return null;
 		}, ctx.getRequestSent());
@@ -347,17 +352,33 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		}
 		ctx.setAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE, list);
 		ctx.setThroughProxy(isProxy);
+		AsyncSupplier<HTTPClientConnection, NoException> conn;
 		synchronized (connectionManagers) {
-			HTTPClientConnection connection = tryToConnect(ctx);
-			if (connection != null)
-				result.unblockSuccess(connection);
-			else
+			conn = tryToConnect(ctx);
+			if (conn == null || conn.isDone() && conn.getResult() == null) {
 				queue.add(ctx);
+				return;
+			}
 		}
+		if (conn.isDone() && conn.getResult() != null) {
+			result.unblockSuccess(conn.getResult());
+			return;
+		}
+		conn.thenStart("HTTP Connection", Priority.NORMAL, (Task<Void, NoException> t) -> {
+			if (conn.isSuccessful())
+				result.unblockSuccess(conn.getResult());
+			else {
+				synchronized (connectionManagers) {
+					queue.add(ctx);
+					dequeue();
+				}
+			}
+			return null;
+		}, false);
 	}
 	
 	@SuppressWarnings("java:S2095")
-	private HTTPClientConnection tryToConnect(HTTPClientRequestContext reservedFor) {
+	private AsyncSupplier<HTTPClientConnection, NoException> tryToConnect(HTTPClientRequestContext reservedFor) {
 		if (closed) {
 			reservedFor.getRequestSent().cancel(new CancelException("HTTPClient closed"));
 			return null;
@@ -365,43 +386,62 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		@SuppressWarnings("unchecked")
 		List<InetSocketAddress> remoteAddresses =
 			(List<InetSocketAddress>)reservedFor.getAttribute(CLIENT_REQUEST_REMOTE_ADDRESSES_ATTRIBUTE);
-		// try to reuse existing available connection
+		
+		int bestReuse = 0;
+		HTTPClientConnection bestReuseConn = null;
+		HTTPClientConnectionManager bestReuseManager = null;
+		InetSocketAddress notConnectedAddress = null;
 		for (InetSocketAddress addr : remoteAddresses) {
 			HTTPClientConnectionManager manager = connectionManagers.get(addr);
-			if (manager == null) continue;
+			if (manager == null) {
+				if (notConnectedAddress == null)
+					notConnectedAddress = addr;
+				continue;
+			}
 			HTTPClientConnection connection = manager.reuseAvailableConnection(reservedFor);
 			if (connection != null) {
+				// open idle connection found, use it
 				if (logger.debug()) logger.debug("Reuse available connection on " + addr + " for " + reservedFor);
 				connectionUsed(manager, reservedFor);
-				return connection;
+				return new AsyncSupplier<>(connection, null);
+			}
+			Pair<Integer, HTTPClientConnection> p = manager.getBestReusableConnection();
+			if (p != null && p.getValue1().intValue() > bestReuse) {
+				bestReuse = p.getValue1().intValue();
+				bestReuseConn = p.getValue2();
+				bestReuseManager = manager;
 			}
 		}
+		
+		if (notConnectedAddress != null && nbOpenConnections.get() < config.getLimits().getOpenConnections()) {
+			// we have a remote address that we don't use yet, and and didn't reach the connection limit => open a new connection
+			HTTPClientConnectionManager manager = new HTTPClientConnectionManager(
+				this, notConnectedAddress, reservedFor.isThroughProxy(), config);
+			connectionManagers.put(notConnectedAddress, manager);
+			AsyncSupplier<HTTPClientConnection, NoException> result = createConnection(manager, reservedFor);
+			if (result != null)
+				return result;
+		}
+		
+		if (bestReuseConn != null) {
+			bestReuseManager.reuseConnection(bestReuseConn, reservedFor);
+			if (logger.debug()) logger.debug("Reuse connection on " + bestReuseManager.getAddress() + " for " + reservedFor);
+			connectionUsed(bestReuseManager, reservedFor);
+			return new AsyncSupplier<>(bestReuseConn, null);
+		}
+		
 		if (nbOpenConnections.get() < config.getLimits().getOpenConnections()) {
 			// we can open a new connection, we prefer to do so
 			for (InetSocketAddress addr : remoteAddresses) {
 				HTTPClientConnectionManager manager = connectionManagers.get(addr);
-				if (manager == null) {
-					manager = new HTTPClientConnectionManager(this, addr, reservedFor.isThroughProxy(), config);
-					connectionManagers.put(addr, manager);
-					HTTPClientConnection connection = manager.createConnection(reservedFor);
-					nbOpenConnections.inc();
-					if (logger.debug()) logger.debug("New connection on " + addr + " for " + reservedFor);
-					connectionUsed(manager, reservedFor);
-					return connection;
-				}
-			}
-			for (InetSocketAddress addr : remoteAddresses) {
-				HTTPClientConnectionManager manager = connectionManagers.get(addr);
-				HTTPClientConnection connection = manager.createConnection(reservedFor);
-				if (connection != null) {
-					nbOpenConnections.inc();
-					if (logger.debug()) logger.debug("Add connection on " + addr + " for " + reservedFor);
-					connectionUsed(manager, reservedFor);
-					return connection;
-				}
+				if (manager == null) continue;
+				AsyncSupplier<HTTPClientConnection, NoException> result = createConnection(manager, reservedFor);
+				if (result != null)
+					return result;
 			}
 		}
-		// no available connexion, try to find a connection with a single pending request
+		
+		// no available connection, try to find a connection that can handle a new request
 		for (InetSocketAddress addr : remoteAddresses) {
 			HTTPClientConnectionManager manager = connectionManagers.get(addr);
 			if (manager == null) continue;
@@ -409,10 +449,11 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			if (connection != null) {
 				if (logger.debug()) logger.debug("Reuse connection on " + addr + " for " + reservedFor);
 				connectionUsed(manager, reservedFor);
-				return connection;
+				return new AsyncSupplier<>(connection, null);
 			}
 		}
-		// if no open connection to one if the addresses, try to close an idle connection
+		
+		// if no open connection to one of the addresses, try to close an idle connection
 		if (nbOpenConnections.get() >= config.getLimits().getOpenConnections()) {
 			for (InetSocketAddress addr : remoteAddresses) {
 				HTTPClientConnectionManager manager = connectionManagers.get(addr);
@@ -426,11 +467,9 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 						nbOpenConnections.dec();
 						manager = new HTTPClientConnectionManager(this, addr, reservedFor.isThroughProxy(), config);
 						connectionManagers.put(addr, manager);
-						HTTPClientConnection connection = manager.createConnection(reservedFor);
-						nbOpenConnections.inc();
-						if (logger.debug()) logger.debug("New connection on " + addr + " for " + reservedFor);
-						connectionUsed(manager, reservedFor);
-						return connection;
+						AsyncSupplier<HTTPClientConnection, NoException> result = createConnection(manager, reservedFor);
+						if (result != null)
+							return result;
 					}
 				}
 			}
@@ -438,6 +477,39 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		// nothing available
 		if (logger.debug()) logger.debug("No connection available for " + reservedFor);
 		return null;
+	}
+	
+	private AsyncSupplier<HTTPClientConnection, NoException> createConnection(
+		HTTPClientConnectionManager manager, HTTPClientRequestContext reservedFor
+	) {
+		AsyncSupplier<HTTPClientConnection, IOException> create = manager.createConnection(reservedFor);
+		if (create == null)
+			return null;
+		if (create.isDone()) {
+			if (create.isSuccessful()) {
+				nbOpenConnections.inc();
+				if (logger.debug()) logger.debug("New connection on " + manager.getAddress() + " for " + reservedFor);
+				connectionUsed(manager, reservedFor);
+				return new AsyncSupplier<>(create.getResult(), null);
+			}
+			return null;
+		}
+		nbOpenConnections.inc();
+		AsyncSupplier<HTTPClientConnection, NoException> result = new AsyncSupplier<>();
+		create.thenStart("HTTP Connection open", Priority.NORMAL, (Task<Void, NoException> t) -> {
+			synchronized (connectionManagers) {
+				if (!create.isSuccessful()) {
+					nbOpenConnections.dec();
+					result.unblockSuccess(null);
+					return null;
+				}
+				if (logger.debug()) logger.debug("New connection on " + manager.getAddress() + " for " + reservedFor);
+				connectionUsed(manager, reservedFor);
+				result.unblockSuccess(create.getResult());
+			}
+			return null;
+		}, true);
+		return result;
 	}
 	
 	private AsyncSupplier<List<InetSocketAddress>, IOException> getProxy(HTTPClientRequest request) {
@@ -464,14 +536,6 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				result.unblockSuccess(null);
 				return null;
 			}
-			// insert scheme, host and port
-			ByteArrayStringIso8859Buffer path = request.getEncodedPath();
-			path.addFirst(
-				(request.isSecure() ? "https" : "http") + "://"
-				+ request.getHostname() + ":"
-				+ request.getPort()
-			);
-			request.setEncodedPath(path);
 			result.unblockSuccess(addresses);
 			return null;
 		}).start();
@@ -488,15 +552,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 	private void dequeueRequest() {
 		if (logger.debug()) logger.debug("Dequeue request: " + queue.size() + " pending");
 		synchronized (connectionManagers) {
-			if (queue.isEmpty())
-				return;
-			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
-				HTTPClientRequestContext c = it.next();
-				if (retryToConnect(c)) {
-					it.remove();
-					return;
-				}
-			}
+			dequeue();
 		}
 	}
 	
@@ -504,35 +560,60 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 	void connectionClosed() {
 		synchronized (connectionManagers) {
 			nbOpenConnections.dec();
-			if (queue.isEmpty())
-				return;
-			for (Iterator<HTTPClientRequestContext> it = queue.iterator(); it.hasNext(); ) {
-				HTTPClientRequestContext ctx = it.next();
-				if (retryToConnect(ctx)) {
-					it.remove();
-				}
-			}
+			dequeue();
 		}
 	}
 	
-	private boolean retryToConnect(HTTPClientRequestContext ctx) {
+	private void dequeue() {
+		if (queue.isEmpty())
+			return;
+		LinkedList<HTTPClientRequestContext> todo = new LinkedList<>(queue);
+		queue.clear();
+		for (HTTPClientRequestContext ctx : todo)
+			if (!ctx.getRequestSent().isDone()) // error or cancel
+				retryToConnect(ctx);
+	}
+	
+	private void retryToConnect(HTTPClientRequestContext ctx) {
+		// TODO limit number of retry
 		if (logger.debug()) logger.debug("Retry to connect to send " + ctx);
-		HTTPClientConnection connection = tryToConnect(ctx);
-		if (connection == null)
-			return false;
-		if (ctx.getRequestSent().isDone())
-			return true; // error or cancel
+		AsyncSupplier<HTTPClientConnection, NoException> conn = tryToConnect(ctx);
+		if (conn == null) {
+			queue.add(ctx);
+			return;
+		}
+		if (conn.isDone()) {
+			if (conn.getResult() == null) {
+				queue.add(ctx);
+				return;
+			}
+			sendReserved(conn.getResult(), ctx);
+			return;
+		}
+		conn.thenStart("HTTPClientConnection ready", Priority.NORMAL, (Task<Void, NoException> t) -> {
+			if (conn.getResult() != null) {
+				sendReserved(conn.getResult(), ctx);
+			} else {
+				synchronized (connectionManagers) {
+					queue.add(ctx);
+					dequeue();
+				}
+			}
+			return null;
+		}, true);
+	}
+	
+	private void sendReserved(HTTPClientConnection connection, HTTPClientRequestContext ctx) {
 		connection.sendReserved(ctx).onDone(taken -> {
 			if (!taken.booleanValue())
 				Task.cpu("HTTP client retry to connect", Priority.NORMAL, t -> {
 					synchronized (connectionManagers) {
-						if (!retryToConnect(ctx))
-							queue.addFirst(ctx);
+						queue.addFirst(ctx);
+						dequeue();
 					}
 					return null;
 				}).start();
 		});
-		return true;
 	}
 	
 	/** Called by HTTPClientConnectionManager to signal connection failed. */
@@ -545,8 +626,8 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			return;
 		}
 		synchronized (connectionManagers) {
-			if (!retryToConnect(ctx))
-				queue.addFirst(ctx);
+			queue.addFirst(ctx);
+			dequeue();
 		}
 	}
 

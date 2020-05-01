@@ -34,7 +34,6 @@ import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.text.ByteArrayStringIso8859;
 import net.lecousin.framework.text.ByteArrayStringIso8859Buffer;
 import net.lecousin.framework.util.Pair;
-import net.lecousin.framework.util.Triple;
 
 public class HTTP2Client extends HTTPClientConnection {
 	
@@ -65,9 +64,11 @@ public class HTTP2Client extends HTTPClientConnection {
 		this.settings = settings;
 	}
 	
-	public HTTP2Client(TCPClient client, Async<IOException> connect, HTTPClientConfiguration config) {
+	public HTTP2Client(TCPClient client, Async<IOException> connect, boolean isThroughProxy, HTTPClientConfiguration config) {
 		this(config, null, null, null);
-		setConnection(client, connect);
+		Async<IOException> ready = new Async<>();
+		setConnection(client, ready, isThroughProxy);
+		connect.thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnectionWithPriorKnowledge, ready);
 	}
 
 	public HTTP2Client(HTTPClientConfiguration config) {
@@ -106,9 +107,23 @@ public class HTTP2Client extends HTTPClientConnection {
 	@Override
 	public AsyncSupplier<Boolean, NoException> sendReserved(HTTPClientRequestContext request) {
 		// TODO be able to say no if connection is closing
-		manager.send(request);
-		followRequest(request);
-		return new AsyncSupplier<>(Boolean.TRUE, null);
+		// TODO check it is reserved
+		if (connect.isSuccessful()) {
+			manager.send(request);
+			followRequest(request);
+			return new AsyncSupplier<>(Boolean.TRUE, null);
+		}
+		AsyncSupplier<Boolean, NoException> result = new AsyncSupplier<>();
+		connect.onDone(() -> {
+			if (!connect.isSuccessful())
+				result.unblockSuccess(Boolean.FALSE);
+			else {
+				manager.send(request);
+				followRequest(request);
+				result.unblockSuccess(Boolean.TRUE);
+			}
+		});
+		return result;
 	}
 	
 	@Override
@@ -134,11 +149,11 @@ public class HTTP2Client extends HTTPClientConnection {
 		sslConfig.setContext(config.getSSLContext());
 		sslConfig.setHostNames(Arrays.asList(hostname));
 		sslConfig.setApplicationProtocols(Arrays.asList("h2"));
-		Pair<? extends TCPClient, Async<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		SSLClient client = new SSLClient(sslConfig);
+		Async<IOException> connect = client.connect(address, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
 		Async<IOException> ready = new Async<>();
-		setConnection(conn.getValue1(), ready);
-		conn.getValue2().thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnection, ready);
+		setConnection(client, ready, false);
+		connect.thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnection, ready);
 		return ready;
 	}
 	
@@ -152,17 +167,19 @@ public class HTTP2Client extends HTTPClientConnection {
 	}
 
 	public Async<IOException> connectWithPriorKnowledge(InetSocketAddress address, String hostname, boolean isSecure) {
-		SSLConnectionConfig sslConfig = null;
+		TCPClient client;
 		if (isSecure) {
-			sslConfig = new SSLConnectionConfig();
+			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
 			sslConfig.setHostNames(Arrays.asList(hostname));
 			sslConfig.setContext(config.getSSLContext());
+			client = new SSLClient(sslConfig);
+		} else {
+			client = new TCPClient();
 		}
-		Pair<? extends TCPClient, Async<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		Async<IOException> connect = client.connect(address, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
 		Async<IOException> ready = new Async<>();
-		setConnection(conn.getValue1(), ready);
-		conn.getValue2().thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnectionWithPriorKnowledge, ready);
+		setConnection(client, ready, false);
+		connect.thenStart("Start HTTP/2 client connection", Priority.NORMAL, this::startConnectionWithPriorKnowledge, ready);
 		return ready;
 	}
 	
@@ -175,17 +192,19 @@ public class HTTP2Client extends HTTPClientConnection {
 	}
 	
 	public Async<IOException> connectWithUpgrade(InetSocketAddress address, String hostname, boolean isSecure) {
-		SSLConnectionConfig sslConfig = null;
+		TCPClient client;
 		if (isSecure) {
-			sslConfig = new SSLConnectionConfig();
+			SSLConnectionConfig sslConfig = new SSLConnectionConfig();
 			sslConfig.setHostNames(Arrays.asList(hostname));
 			sslConfig.setContext(config.getSSLContext());
+			client = new SSLClient(sslConfig);
+		} else {
+			client = new TCPClient();
 		}
-		Pair<? extends TCPClient, Async<IOException>> conn =
-			HTTP1ClientConnection.openDirectConnection(address, config, sslConfig, logger);
+		Async<IOException> connect = client.connect(address, config.getTimeouts().getConnection(), config.getSocketOptionsArray());
 		Async<IOException> ready = new Async<>();
-		setConnection(conn.getValue1(), ready);
-		conn.getValue2().thenStart("Upgrade to HTTP/2", Priority.NORMAL, () -> upgradeConnection(address, hostname, isSecure), ready);
+		setConnection(client, ready, false);
+		connect.thenStart("Upgrade to HTTP/2", Priority.NORMAL, () -> upgradeConnection(address, hostname, isSecure), ready);
 		return ready;
 	}
 	
@@ -204,7 +223,7 @@ public class HTTP2Client extends HTTPClientConnection {
 			.addHeader("HTTP2-Settings", new String(settingsBase64, StandardCharsets.US_ASCII));
 		
 		// send HTTP request
-		HTTP1ClientConnection sender = new HTTP1ClientConnection(tcp, new Async<>(true), 1, config);
+		HTTP1ClientConnection sender = new HTTP1ClientConnection(tcp, new Async<>(true), isThroughProxy, 1, config);
 		HTTPClientRequestContext ctx = new HTTPClientRequestContext(sender, request);
 		ctx.setRequestBody(new Pair<>(Long.valueOf(0), new AsyncProducer.Empty<>()));
 		ctx.setOnHeadersReceived(response -> {
@@ -247,25 +266,20 @@ public class HTTP2Client extends HTTPClientConnection {
 			return;
 		}
 		if (logger.debug()) logger.debug("Open new connection for redirection to " + targetUri);
-		Triple<? extends TCPClient, Async<IOException>, Boolean> newClient;
+		AsyncSupplier<HTTPClientConnection, IOException> newConnection;
 		try {
-			// TODO use ALPN is already used
-			SSLConnectionConfig sslConfig = null;
-			if (HTTPConstants.HTTPS_SCHEME.equalsIgnoreCase(targetUri.getScheme())) {
-				sslConfig = new SSLConnectionConfig();
-				sslConfig.setHostNames(Arrays.asList(targetUri.getHost()));
-				sslConfig.setContext(config.getSSLContext());
-			}
-			newClient = HTTP1ClientConnection.openConnection(targetUri.getHost(), targetUri.getPort(),
-				targetUri.getPath(), config, sslConfig, logger);
+			newConnection = HTTPClientConnection.openHTTPClientConnection(targetUri.getHost(), targetUri.getPort(),targetUri.getPath(),
+				HTTPConstants.HTTPS_SCHEME.equals(targetUri.getScheme()), config, logger);
 		} catch (Exception e) {
 			ctx.getRequestSent().error(IO.error(e));
 			return;
 		}
-		HTTP1ClientConnection newConn = new HTTP1ClientConnection(newClient.getValue1(), newClient.getValue2(), 1, config);
-		ctx.setThroughProxy(newClient.getValue3().booleanValue());
-		newConn.send(ctx);
-		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
+		newConnection.onError(ctx.getRequestSent()::error);
+		newConnection.onSuccess(() -> {
+			ctx.setThroughProxy(newConnection.getResult().isThroughProxy());
+			newConnection.getResult().send(ctx);
+			ctx.getResponse().getTrailersReceived().onDone(newConnection.getResult()::close);
+		});
 	}
 	
 	public ClientStreamsManager getStreamsManager() {

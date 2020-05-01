@@ -216,7 +216,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 				if (header.hasFlags(HTTP2Headers.FLAG_END_HEADERS)) {
 					// end of trailers
 					dataHandler.endOfTrailers(manager, this);
-					manager.closeStream(this);
+					manager.closeStream(this, 0);
 					// if this is a response (client mode), this is the end
 					if (manager.isClientMode())
 						manager.endOfStream(id);
@@ -229,7 +229,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 						// end of headers and no body
 						dataHandler.emptyEntityReceived(manager, this);
 						noBody = true;
-						manager.closeStream(this);
+						manager.closeStream(this, 0);
 						// if this is a response (client mode), this is the end
 						if (manager.isClientMode())
 							manager.endOfStream(id);
@@ -262,7 +262,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 				if (StreamState.OPEN_TRAILERS.equals(state)) {
 					// end of trailers
 					dataHandler.endOfTrailers(manager, this);
-					manager.closeStream(this);
+					manager.closeStream(this, 0);
 					// if this is a response (client mode), this is the end
 					if (manager.isClientMode())
 						manager.endOfStream(id);
@@ -277,7 +277,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 						break;
 					}
 					if (noBody) {
-						manager.closeStream(this);
+						manager.closeStream(this, 0);
 						// if this is a response (client mode), this is the end
 						if (manager.isClientMode())
 							manager.endOfStream(id);
@@ -290,12 +290,13 @@ public class DataStreamHandler extends StreamHandler.Default {
 			manager.consumedConnectionRecvWindowSize(header.getPayloadLength());
 			if (header.hasFlags(HTTP2Data.FLAG_END_STREAM)) {
 				// end of body
-				bodyConsumer.end();
+				if (bodyConsumer != null)
+					bodyConsumer.end();
 				bodyConsumer = null;
 				dataHandler.endOfBody(manager, this);
 				// no trailer
 				dataHandler.endOfTrailers(manager, this);
-				manager.closeStream(this);
+				manager.closeStream(this, 0);
 				// if this is a response (client mode), this is the end
 				if (manager.isClientMode())
 					manager.endOfStream(id);
@@ -308,9 +309,12 @@ public class DataStreamHandler extends StreamHandler.Default {
 			
 		case HTTP2FrameHeader.TYPE_RST_STREAM:
 			int error = ((HTTP2ResetStream)frame).getErrorCode();
-			if (error != HTTP2Error.Codes.NO_ERROR)
+			if (error != HTTP2Error.Codes.NO_ERROR) {
 				manager.getLogger().error("Error " + error + " returned by remote on stream " + id);
-			manager.closeStream(this);
+				if (dataHandler != null)
+					dataHandler.error(error);
+			}
+			manager.closeStream(this, error);
 			manager.endOfStream(id);
 			break;
 			
@@ -335,7 +339,7 @@ public class DataStreamHandler extends StreamHandler.Default {
 			if (manager.getLogger().debug()) manager.getLogger().debug("Reset stream " + id + " with code " + errorCode);
 			HTTP2ResetStream.Writer frame = new HTTP2ResetStream.Writer(id, errorCode);
 			manager.sendFrame(frame, false);
-			manager.closeStream(this);
+			manager.closeStream(this, errorCode);
 		}
 		if (bodyConsumer != null) {
 			bodyConsumer.error(new IOException("HTTP/2 stream closed"));

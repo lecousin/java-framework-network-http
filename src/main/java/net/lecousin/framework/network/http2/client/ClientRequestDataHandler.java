@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
+import java.util.LinkedList;
 
 import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
@@ -24,6 +25,8 @@ import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntityFactory;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
+import net.lecousin.framework.network.mime.transfer.ContentDecoderFactory;
+import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
 
 class ClientRequestDataHandler implements DataHandler {
 	
@@ -43,6 +46,19 @@ class ClientRequestDataHandler implements DataHandler {
 			ctx.getResponse().getBodyReceived().error(new ClosedChannelException());
 		else if (!ctx.getResponse().getTrailersReceived().isDone())
 			ctx.getResponse().getTrailersReceived().error(new ClosedChannelException());
+	}
+	
+	@Override
+	public void error(int errorCode) {
+		IOException error = new IOException("Server returned HTTP/2 error " + errorCode);
+		if (!ctx.getRequestSent().isDone())
+			ctx.getRequestSent().error(error);
+		else if (!ctx.getResponse().getHeadersReceived().isDone())
+			ctx.getResponse().getHeadersReceived().error(error);
+		else if (!ctx.getResponse().getBodyReceived().isDone())
+			ctx.getResponse().getBodyReceived().error(error);
+		else if (!ctx.getResponse().getTrailersReceived().isDone())
+			ctx.getResponse().getTrailersReceived().error(error);
 	}
 
 	@Override
@@ -92,7 +108,12 @@ class ClientRequestDataHandler implements DataHandler {
 			return null;
 		}
 		
-		return ctx.getResponse().getEntity().createConsumer(length);
+		AsyncConsumer<ByteBuffer, IOException> consumer = ctx.getResponse().getEntity().createConsumer(length);
+		LinkedList<String> encoding = new LinkedList<>();
+		TransferEncodingFactory.addEncodingFromHeader(ctx.getResponse().getHeaders(), MimeHeaders.CONTENT_ENCODING, encoding);
+		for (String coding : encoding)
+			consumer = ContentDecoderFactory.createDecoder(consumer, coding);
+		return consumer;
 	}
 	
 	@Override
