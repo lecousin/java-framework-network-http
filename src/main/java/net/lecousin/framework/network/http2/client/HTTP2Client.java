@@ -237,7 +237,7 @@ public class HTTP2Client extends HTTPClientConnection {
 			if (logger.trace())
 				logger.trace("HTTP protocol upgraded to h2c");
 			manager = new ClientStreamsManager(tcp, settings, true, null, config.getTimeouts().getSend(), logger, bufferCache);
-			tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
+			tcp.getReceiver().readAvailableBytes(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
 			manager.getConnectionReady().onDone(connect);
 			return Boolean.FALSE;
 		});
