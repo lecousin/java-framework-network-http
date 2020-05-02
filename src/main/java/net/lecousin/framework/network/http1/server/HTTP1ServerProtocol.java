@@ -486,13 +486,17 @@ public class HTTP1ServerProtocol implements ALPNServerProtocol {
 		} else {
 			client.removeAttribute(LIMITER_ATTRIBUTE);
 		}
-		logger.debug("Upgrading protocol to " + proto.getUpgradeProtocolToken());
+		if (logger.debug())
+			logger.debug("Upgrading protocol to " + proto.getUpgradeProtocolToken());
 		int recvTimeout = proto.startProtocol(client);
 		client.removeAttribute(REQUEST_ATTRIBUTE);
 		if (!isCustomProtocol)
 			client.removeAttribute(UPGRADED_PROTOCOL_REQUEST_CONTEXT_ATTRIBUTE);
 		if (data.hasRemaining()) {
-			proto.dataReceivedFromClient(client, data);
+			if (recvTimeout < 0)
+				logger.error("Data from client still available, but upgraded protocol does not accept data immediately");
+			else
+				proto.dataReceivedFromClient(client, data);
 		} else {
 			bufferCache.free(data);
 			if (recvTimeout >= 0)

@@ -402,8 +402,11 @@ public abstract class StreamsManager {
 					if (!endOfStreamTasks.isEmpty())
 						task = endOfStreamTasks.get(0);
 				}
-				if (task != null && trial < 10) {
-					task.getOutput().block(1000);
+				if (trial < 10) {
+					if (task != null)
+						task.getOutput().block(1000);
+					else
+						new Async<>().block(100); // TODO we should be able to check what can be closed
 					continue;
 				}
 				connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("

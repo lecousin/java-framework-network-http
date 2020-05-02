@@ -7,6 +7,7 @@ import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
+import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.data.BytesFromIso8859String;
 import net.lecousin.framework.log.Logger;
@@ -178,10 +179,18 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 			resp.addHeader("Upgrade", "h2c");
 			resp.setForceNoContent(true);
 			resp.getReady().unblock();
-			HTTP2Settings clientSettings = (HTTP2Settings)client.removeAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE);
-			ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
-			client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
-		} else if (client.hasAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE)) {
+			// before to send frames, we need to wait for the upgrade response to be sent
+			resp.getSent().thenStart("Start HTTP/2 upgraded connection", Priority.NORMAL, t -> {
+				HTTP2Settings clientSettings = (HTTP2Settings)client.removeAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE);
+				ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
+				client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+				try { client.waitForData(receiveDataTimeout); }
+				catch (ClosedChannelException e) { client.closed(); }
+				return null;
+			}, false);
+			return -1;
+		}
+		if (client.hasAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE)) {
 			// preface already received
 			ClientStreamsManager manager = new ClientStreamsManager(this, client, null);
 			client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);

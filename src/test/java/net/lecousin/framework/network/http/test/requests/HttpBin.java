@@ -127,17 +127,18 @@ public class HttpBin {
 			if (!response.isSuccess())
 				throw new HTTPResponseError(response);
 			
+			Object o = null;
 			try {
 				JSONParser parser = new JSONParser();
-				Object o = parser.parse(new InputStreamReader(IOAsInputStream.get(((BinaryEntity)response.getEntity()).getContent(), false)));
+				o = parser.parse(new InputStreamReader(IOAsInputStream.get(((BinaryEntity)response.getEntity()).getContent(), false)));
 				Assert.assertTrue(o instanceof JSONObject);
 				JSONObject json = (JSONObject)o;
 				checkURL(json, request);
 				checkHeaders(json, request);
 				if (formData != null)
 					checkFormData(json, formData);
-			} catch (Exception e) {
-				throw new Exception("Error checking JSON response:\r\n" + response.getHeaders().generateString(1024).asString(), e);
+			} catch (Throwable e) {
+				throw new Exception("Error checking JSON response:\n" + response.getHeaders().generateString(1024).asString() + "\n" + o, e);
 			}
 		}
 		
