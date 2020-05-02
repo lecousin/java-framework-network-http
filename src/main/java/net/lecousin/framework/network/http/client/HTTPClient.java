@@ -245,11 +245,11 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		// once request is done we can try to dequeue a request
 		ctx.getResponse().getTrailersReceived().thenStart("Dequeue HTTP request", Priority.NORMAL, () -> dequeueRequest(), true);
 		
-		bodyProducer.thenStart("Prepare HTTP request", Task.getCurrentPriority(), (Task<Void, NoException> t) -> {
+		bodyProducer.thenStart(Task.cpu("Prepare HTTP request", Task.getCurrentPriority(), ctx.getContext(), t -> {
 			ctx.setRequestBody(bodyProducer.getResult());
 			sendRequest(ctx, connection);
 			return null;
-		}, ctx.getRequestSent());
+		}), ctx.getRequestSent());
 	}
 	
 	private void sendRequest(
@@ -266,12 +266,12 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			request.getHeaders().setContentLength(size.longValue());
 		}
 		
-		connection.thenStart("Send HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
+		connection.thenStart(Task.cpu("Send HTTP request", Priority.NORMAL, ctx.getContext(), t -> {
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel
 			connection.getResult().sendReserved(ctx).onDone(taken -> {
 				if (!taken.booleanValue())
-					Task.cpu("Retry connection", Priority.NORMAL, task -> {
+					Task.cpu("Retry connection", Priority.NORMAL, ctx.getContext(), task -> {
 						synchronized (connectionManagers) {
 							queue.addFirst(ctx);
 							dequeue();
@@ -280,11 +280,11 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 					}).start();
 			});
 			return null;
-		}, ctx.getRequestSent());
+		}), ctx.getRequestSent());
 	}
 	
 	private AsyncSupplier<HTTPClientConnection, IOException> getConnection(HTTPClientRequestContext ctx) {
-		AsyncSupplier<List<InetSocketAddress>, IOException> proxy = getProxy(ctx.getRequest());
+		AsyncSupplier<List<InetSocketAddress>, IOException> proxy = getProxy(ctx);
 		AsyncSupplier<HTTPClientConnection, IOException> result = new AsyncSupplier<>();
 		proxy.onDone(list -> {
 			if (list != null) {
@@ -294,7 +294,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			}
 			if (logger.debug()) logger.debug("Using direct connexion to " + ctx.getRequest().getHostname());
 			AsyncSupplier<List<Resolution>, IOException> dns = NameService.resolveName(ctx.getRequest().getHostname());
-			dns.thenStart("Get best connection for HTTP request", Priority.NORMAL, (Task<Void, NoException> t) -> {
+			dns.thenStart(Task.cpu("Get best connection for HTTP request", Priority.NORMAL, ctx.getContext(), t -> {
 				List<InetSocketAddress> addresses = new ArrayList<>(dns.getResult().size());
 				int port = ctx.getRequest().getPort();
 				for (Resolution r : dns.getResult())
@@ -302,7 +302,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				if (logger.debug()) logger.debug("Host " + ctx.getRequest().getHostname() + " resolved into " + addresses);
 				getConnection(addresses, false, ctx, result);
 				return null;
-			}, ctx.getRequestSent());
+			}), ctx.getRequestSent());
 		}, ctx.getRequestSent());
 		return result;
 	}
@@ -364,7 +364,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			result.unblockSuccess(conn.getResult());
 			return;
 		}
-		conn.thenStart("HTTP Connection", Priority.NORMAL, (Task<Void, NoException> t) -> {
+		conn.thenStart(Task.cpu("HTTP Connection", Priority.NORMAL, ctx.getContext(), t -> {
 			if (conn.isSuccessful())
 				result.unblockSuccess(conn.getResult());
 			else {
@@ -374,7 +374,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				}
 			}
 			return null;
-		}, false);
+		}), false);
 	}
 	
 	@SuppressWarnings("java:S2095")
@@ -496,7 +496,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		}
 		nbOpenConnections.inc();
 		AsyncSupplier<HTTPClientConnection, NoException> result = new AsyncSupplier<>();
-		create.thenStart("HTTP Connection open", Priority.NORMAL, (Task<Void, NoException> t) -> {
+		create.thenStart(Task.cpu("HTTP Connection open", Priority.NORMAL, reservedFor.getContext(), t -> {
 			synchronized (connectionManagers) {
 				if (!create.isSuccessful()) {
 					nbOpenConnections.dec();
@@ -508,17 +508,17 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				result.unblockSuccess(create.getResult());
 			}
 			return null;
-		}, true);
+		}), true);
 		return result;
 	}
 	
-	private AsyncSupplier<List<InetSocketAddress>, IOException> getProxy(HTTPClientRequest request) {
+	private AsyncSupplier<List<InetSocketAddress>, IOException> getProxy(HTTPClientRequestContext request) {
 		ProxySelector proxySelector = config.getProxySelector();
 		if (proxySelector == null)
 			return new AsyncSupplier<>(null, null);
 		AsyncSupplier<List<InetSocketAddress>, IOException> result = new AsyncSupplier<>();
-		Task.unmanaged("Get proxy for HTTP request", Priority.NORMAL, t -> {
-			URI uri = request.generateURI();
+		Task.unmanaged("Get proxy for HTTP request", Priority.NORMAL, request.getContext(), t -> {
+			URI uri = request.getRequest().generateURI();
 			List<Proxy> proxies = proxySelector.select(uri);
 			List<InetSocketAddress> addresses = new LinkedList<>();
 			for (Proxy p : proxies) {
@@ -590,7 +590,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 			sendReserved(conn.getResult(), ctx);
 			return;
 		}
-		conn.thenStart("HTTPClientConnection ready", Priority.NORMAL, (Task<Void, NoException> t) -> {
+		conn.thenStart(Task.cpu("HTTPClientConnection ready", Priority.NORMAL, ctx.getContext(), t -> {
 			if (conn.getResult() != null) {
 				sendReserved(conn.getResult(), ctx);
 			} else {
@@ -600,7 +600,7 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 				}
 			}
 			return null;
-		}, true);
+		}), true);
 	}
 	
 	private void sendReserved(HTTPClientConnection connection, HTTPClientRequestContext ctx) {

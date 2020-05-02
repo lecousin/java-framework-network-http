@@ -37,6 +37,7 @@ public class HTTPClientRequestContext extends AbstractAttributesContainer {
 	private Function<HTTPClientResponse, Boolean> onStatusReceived;
 	private Function<HTTPClientResponse, Boolean> onHeadersReceived;
 	private int maxRedirections = 0;
+	private Task.Context taskContext;
 	
 	/** Constructor. */
 	public HTTPClientRequestContext(HTTPClientRequestSender sender, HTTPClientRequest request) {
@@ -45,6 +46,7 @@ public class HTTPClientRequestContext extends AbstractAttributesContainer {
 		this.response = new HTTPClientResponse();
 		requestSent.onError(response.getHeadersReceived()::error);
 		requestSent.onCancel(response.getHeadersReceived()::cancel);
+		taskContext = Task.getCurrentContext();
 	}
 	
 	public HTTPClientRequestSender getSender() {
@@ -69,6 +71,10 @@ public class HTTPClientRequestContext extends AbstractAttributesContainer {
 
 	public void setMaxRedirections(int maxRedirections) {
 		this.maxRedirections = maxRedirections;
+	}
+	
+	public Task.Context getContext() {
+		return taskContext;
 	}
 	
 	/** A redirection has been received, reset the context and send the request to the new location. */

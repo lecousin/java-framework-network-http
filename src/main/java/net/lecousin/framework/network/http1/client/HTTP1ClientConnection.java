@@ -197,11 +197,11 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer =
 				ctx.prepareRequestBody();
 				
-			bodyProducer.thenStart("Prepare HTTP request", Task.getCurrentPriority(), (Task<Void, NoException> t) -> {
+			bodyProducer.thenStart(Task.cpu("Prepare HTTP request", Task.getCurrentPriority(), ctx.getContext(), t -> {
 				ctx.setRequestBody(bodyProducer.getResult());
 				requestBodyReady(ctx);
 				return null;
-			}, ctx.getRequestSent());
+			}), ctx.getRequestSent());
 		} else {
 			requestBodyReady(ctx);
 		}
@@ -277,7 +277,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	}
 	
 	private void prepareHeaders(Request r) {
-		r.headers = Task.cpu("Prepare HTTP Request headers", Priority.NORMAL, (Task<ByteBuffer[], NoException> t) -> {
+		r.headers = Task.cpu("Prepare HTTP Request headers", Priority.NORMAL, r.ctx.getContext(), (Task<ByteBuffer[], NoException> t) -> {
 			HTTPClientRequest request = r.ctx.getRequest();
 			ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
 			headers.setNewArrayStringCapacity(4096);
@@ -368,7 +368,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				stopping = true;
 				if (logger.debug()) logger.debug("Error sending headers, stop connection", r.headersSent.getError());
 				final Request req = r;
-				Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, t -> {
+				Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, r.ctx.getContext(), t -> {
 					req.headersSent.forwardIfNotSuccessful(req.ctx.getRequestSent());
 					return null;
 				}).start();
@@ -384,15 +384,12 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				if (logger.debug()) logger.debug("Send body for request " + r.ctx + " to " + tcp);
 				final Request req = r;
 				final Request prev = previous;
-				Task.cpu("Send HTTP/1 request body",  Priority.NORMAL, t -> {
+				Task.cpu("Send HTTP/1 request body", Priority.NORMAL, r.ctx.getContext(), t -> {
 					if (!req.ctx.getRequest().isExpectingBody() ||
 						(body.getValue1() != null && body.getValue1().longValue() == 0)) {
 						req.ctx.getRequestSent().unblock();
 						if (prev == null) {
-							Task.cpu("Received HTTP/1 response", Priority.NORMAL, task -> {
-								receiveResponse(req);
-								return null;
-							}).start();
+							receiveResponse(req);
 						} else {
 							prev.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
 						}
@@ -435,7 +432,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	}
 	
 	private static void unblockResult(Request r, Boolean result) {
-		Task.cpu("Signal HTTP/1 request handling", Priority.RATHER_IMPORTANT, t -> {
+		Task.cpu("Signal HTTP/1 request handling", Priority.RATHER_IMPORTANT, r.ctx.getContext(), t -> {
 			r.result.unblockSuccess(result);
 			return null;
 		}).start();
@@ -461,7 +458,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	private void sendHeaders(Request r) {
 		r.headersSent = new Async<>();
-		Task.cpu("Send HTTP Request headers", Priority.NORMAL, t -> {
+		Task.cpu("Send HTTP Request headers", Priority.NORMAL, r.ctx.getContext(), t -> {
 			IAsync<IOException> send = clientConsumer.push(Arrays.asList(r.headers.getResult()));
 			send.onDone(r.headersSent);
 			return null;
@@ -497,23 +494,30 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	}
 	
 	private void receiveResponse(Request r) {
-		PartialAsyncConsumer<ByteBuffer, IOException> statusLineConsumer = new HTTP1ResponseStatusConsumer(r.ctx.getResponse()).convert(
-			ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
-		r.receiveStatusLine = tcp.getReceiver().consume(statusLineConsumer, 4096, config.getTimeouts().getReceive());
-		r.ctx.getResponse().setHeaders(new MimeHeaders());
-		if (r.receiveStatusLine.isDone())
-			reveiceResponseHeaders(r);
-		else
-			r.receiveStatusLine.thenStart("Receive HTTP response", Task.getCurrentPriority(), () -> reveiceResponseHeaders(r), true);
+		Task.cpu("Received HTTP/1 response", Priority.NORMAL, r.ctx.getContext(), task -> {
+			PartialAsyncConsumer<ByteBuffer, IOException> statusLineConsumer = new HTTP1ResponseStatusConsumer(r.ctx.getResponse())
+				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
+			r.receiveStatusLine = tcp.getReceiver().consume(statusLineConsumer, 4096, config.getTimeouts().getReceive());
+			r.ctx.getResponse().setHeaders(new MimeHeaders());
+			if (r.receiveStatusLine.isDone())
+				receiveResponseHeaders(r);
+			else
+				r.receiveStatusLine.thenStart(Task.cpu("Receive HTTP response", Task.getCurrentPriority(), r.ctx.getContext(), t -> {
+					receiveResponseHeaders(r);
+					return null;
+				}), true);
+			return null;
+		}).start();
 	}
 	
-	private void reveiceResponseHeaders(Request r) {
+	private void receiveResponseHeaders(Request r) {
 		if (r.receiveStatusLine.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
 			if (logger.debug()) logger.debug("Receive status line error, stop connection", r.receiveStatusLine.getError());
 			stop(r, true);
 			return;
 		}
-		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode() + " for " + r.ctx + " from " + tcp);
+		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode()
+			+ " (" + r.ctx.getResponse().getStatusMessage() + ") for " + r.ctx + " from " + tcp);
 		if (r.ctx.getOnStatusReceived() != null) {
 			Boolean close = r.ctx.getOnStatusReceived().apply(r.ctx.getResponse());
 			if (close != null) {
@@ -526,12 +530,15 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 					ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
 		r.receiveHeaders = tcp.getReceiver().consume(headersConsumer, 4096, config.getTimeouts().getReceive());
 		if (r.receiveHeaders.isDone())
-			reveiceResponseBody(r);
+			receiveResponseBody(r);
 		else
-			r.receiveHeaders.thenStart("Receive HTTP response", Task.getCurrentPriority(), () -> reveiceResponseBody(r), true);
+			r.receiveHeaders.thenStart(Task.cpu("Receive HTTP response", Task.getCurrentPriority(), r.ctx.getContext(), t -> {
+				receiveResponseBody(r);
+				return null;
+			}), true);
 	}
 
-	private void reveiceResponseBody(Request r) {
+	private void receiveResponseBody(Request r) {
 		if (r.receiveHeaders.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
 			if (logger.debug()) logger.debug("Receive headers error, stop connection", r.receiveHeaders.getError());
 			stop(r, true);
@@ -657,7 +664,7 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			skipBody = new Async<>(true);
 		
 		if (logger.debug()) logger.debug("Redirect to " + location);
-		Task.cpu("Redirect HTTP request", Priority.NORMAL, t -> {
+		Task.cpu("Redirect HTTP request", Priority.NORMAL, r.ctx.getContext(), t -> {
 			try {
 				r.ctx.redirectTo(location);
 			} catch (URISyntaxException e) {

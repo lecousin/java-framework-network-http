@@ -164,7 +164,7 @@ class ClientRequestDataHandler implements DataHandler {
 		ctx = null;
 		stream.resetStream(manager, HTTP2Error.Codes.NO_ERROR);
 		
-		Task.cpu("Redirect HTTP request", Priority.NORMAL, t -> {
+		Task.cpu("Redirect HTTP request", Priority.NORMAL, ctx.getContext(), t -> {
 			try {
 				c.redirectTo(location);
 			} catch (URISyntaxException e) {
