@@ -72,7 +72,7 @@ public class ClientStreamsManager extends StreamsManager {
 	}
 
 	void send(HTTPClientRequestContext ctx) {
-		Task.cpu("Create HTTP/2 headers frame", (Task<Void, NoException> task) -> {
+		Task.cpu("Create HTTP/2 headers frame", null, ctx.getContext(), (Task<Void, NoException> task) -> {
 			if (remote.isClosed() || isClosing()) {
 				ctx.getRequestSent().error(new ClosedChannelException());
 				return null;
@@ -125,8 +125,8 @@ public class ClientStreamsManager extends StreamsManager {
 			else
 				headers.add(new Pair<>("content-length", size.toString()));
 		}
-		if (logger.trace())
-			logger.trace("HTTP/2 headers to send:\n" + headers);
+		if (logger.debug())
+			logger.debug("HTTP/2 headers to send:\n" + headers);
 		if (ctx.getRequest().getTrailerHeadersSuppliers() != null)
 			isEndOfStream = false;
 		// send headers/continuation frames, then body, then trailers

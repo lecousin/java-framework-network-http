@@ -186,7 +186,7 @@ class ClientDataHandler implements DataHandler {
 						128 * 1024
 					));
 				}), false);
-			}, false);
+			}, ctx.getResponse().getSent());
 			return null;
 		}).start();
 	}

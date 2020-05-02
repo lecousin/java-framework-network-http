@@ -19,6 +19,7 @@ import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.buffering.PreBufferedReadable;
 import net.lecousin.framework.io.buffering.ReadableToSeekable;
+import net.lecousin.framework.log.LoggerFactory;
 import net.lecousin.framework.network.http.HTTPResponse;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
@@ -247,7 +248,12 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 		for (int i = 0; i < responses.length; ++i)
 			pending.add(new Pair<>(responses[i], Integer.valueOf(i)));
 		int notDone = 0;
+		int lastLog = responses.length;
 		while (!pending.isEmpty()) {
+			if (pending.size() <= lastLog - 10) {
+				LoggerFactory.get(getClass()).info("Still " + pending.size() + "/" + responses.length + " responses to receive");
+				lastLog = pending.size();
+			}
 			boolean done = false;
 			for (Iterator<Pair<HTTPClientResponse, Integer>> it = pending.iterator(); it.hasNext(); ) {
 				Pair<HTTPClientResponse, Integer> p = it.next();
@@ -268,7 +274,7 @@ public abstract class AbstractTestHttpServer extends AbstractNetworkTest {
 			}
 			if (!done) {
 				if (++notDone == 10) {
-					throw new AssertionError("Some responses were not received");
+					throw new AssertionError("Some responses were not received: " + pending.size() + "/" + responses.length);
 				}
 				pending.getFirst().getValue1().getTrailersReceived().blockThrow(1000);
 			} else {

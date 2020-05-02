@@ -389,7 +389,7 @@ public abstract class StreamsManager {
 				if (localSettings.getMaxConcurrentStreams() > 0 && dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
 					// we may need to close stream
 					dependencyTree.cleanStreams();
-					if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams()) {
+					if (dependencyNodes.size() > localSettings.getMaxConcurrentStreams() + 1) { // we accept a +1
 						tooManyStreams = true;
 					}
 				}
@@ -406,7 +406,7 @@ public abstract class StreamsManager {
 					if (task != null)
 						task.getOutput().block(1000);
 					else
-						new Async<>().block(100); // TODO we should be able to check what can be closed
+						new Async<>().block(10);
 					continue;
 				}
 				connectionError(HTTP2Error.Codes.ENHANCE_YOUR_CALM, "Too many open streams ("
