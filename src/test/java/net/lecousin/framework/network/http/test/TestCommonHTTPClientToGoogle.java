@@ -1,4 +1,4 @@
-package net.lecousin.framework.network.http1.test;
+package net.lecousin.framework.network.http.test;
 
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.network.http.client.HTTPClient;

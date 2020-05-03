@@ -165,11 +165,12 @@ public class TestHttp2Client extends LCCoreAbstractTest {
 				throw new IllegalStateException("Invalid connect method");
 			}
 			connect.blockThrow(0);
-			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, test.request);
+			HTTPClientRequest req = new HTTPClientRequest(test.request);
+			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, req);
 			ctx.setMaxRedirections(test.maxRedirection);
 			client.send(ctx);
 			ctx.getResponse().getTrailersReceived().blockThrow(0);
-			test.check(ctx.getResponse(), null);
+			test.check(req, ctx.getResponse(), null);
 		}
 	}
 /*	

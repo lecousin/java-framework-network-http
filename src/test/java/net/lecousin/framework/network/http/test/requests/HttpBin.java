@@ -26,6 +26,7 @@ import net.lecousin.framework.network.http.test.requests.TestRequest.ResponseChe
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity;
 import net.lecousin.framework.network.mime.entity.FormDataEntity.PartFile;
+import net.lecousin.framework.network.mime.entity.FormUrlEncodedEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.ParameterizedHeaderValue;
 import net.lecousin.framework.util.Pair;
@@ -50,36 +51,51 @@ public class HttpBin {
 		tests.add(new TestRequest("bytes", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).get("/bytes/15000").addHeader("X-Test", "a test"), 0, new CheckDataResponse(15000)));
 		tests.add(new TestRequest("chunked bytes", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).get("/stream-bytes/15000").addHeader("X-Test", "a test"), 0, new CheckDataResponse(15000)));
 		
-		FormDataEntity form = new FormDataEntity();
-		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		tests.add(new TestRequest("form data with 1 field", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+		FormDataEntity formData = new FormDataEntity();
+		formData.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+		tests.add(new TestRequest("form data with 1 field", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", formData).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(formData)));
 
-		form = new FormDataEntity();
-		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		form.addField("toto", "titi", StandardCharsets.US_ASCII);
-		form.addField("hello", "world", StandardCharsets.US_ASCII);
-		tests.add(new TestRequest("form data with 3 fields", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+		formData = new FormDataEntity();
+		formData.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+		formData.addField("toto", "titi", StandardCharsets.US_ASCII);
+		formData.addField("hello", "world", StandardCharsets.US_ASCII);
+		tests.add(new TestRequest("form data with 3 fields", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", formData).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(formData)));
 
-		form = new FormDataEntity();
-		form.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		tests.add(new TestRequest("form data with 1 file", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+		formData = new FormDataEntity();
+		formData.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		tests.add(new TestRequest("form data with 1 file", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", formData).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(formData)));
 
-		form = new FormDataEntity();
-		form.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		tests.add(new TestRequest("form data with 1 file + 1 field", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+		formData = new FormDataEntity();
+		formData.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		formData.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+		tests.add(new TestRequest("form data with 1 file + 1 field", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", formData).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(formData)));
 
-		form = new FormDataEntity();
-		form.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		form.addField("myfield2", "valueofmyfield2", StandardCharsets.US_ASCII);
-		form.addFile("f2", "second.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		form.addFile("f3", "third.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
-		tests.add(new TestRequest("form data with 3 files + 2 fields", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+		formData = new FormDataEntity();
+		formData.addFile("myfile", "the_filename", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		formData.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+		formData.addField("myfield2", "valueofmyfield2", StandardCharsets.US_ASCII);
+		formData.addFile("f2", "second.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		formData.addFile("f3", "third.bin", new ParameterizedHeaderValue("application/octet-stream"), new ByteArrayIO(new byte[] { 0, 1, 2, 3, 4, 5}, "the_file"));
+		tests.add(new TestRequest("form data with 3 files + 2 fields", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", formData).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(formData)));
 
-		form = new FormDataEntity();
-		form.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
-		tests.add(new TestRequest("form data with 1 field unknown size HTTP", new Request1FieldUnknownSizeBuilder(false, form), 0, new CheckJSONResponse(form)));
+		formData = new FormDataEntity();
+		formData.addField("myfield", "valueofmyfield", StandardCharsets.US_ASCII);
+		tests.add(new TestRequest("form data with 1 field unknown size HTTP", new Request1FieldUnknownSizeBuilder(false, formData), 0, new CheckJSONResponse(formData)));
+		
+		FormUrlEncodedEntity form;
+		
+		form = new FormUrlEncodedEntity();
+		tests.add(new TestRequest("form url empty", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+
+		form = new FormUrlEncodedEntity();
+		form.add("myfield", "myvalue");
+		tests.add(new TestRequest("form url with 1 field", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
+
+		form = new FormUrlEncodedEntity();
+		form.add("myfield1", "myvalue1");
+		form.add("myfield2", "myvalue2");
+		form.add("myfield3", "myvalue3");
+		tests.add(new TestRequest("form url with 3 fields", (HTTPClientRequest)new HTTPClientRequest(HTTP_BIN_DOMAIN, false).post("/post", form).addHeader("X-Test", "a test"), 0, new CheckJSONResponse(form)));
 		
 		return tests;
 	}
@@ -118,7 +134,12 @@ public class HttpBin {
 			this.formData = formData;
 		}
 		
+		public CheckJSONResponse(FormUrlEncodedEntity form) {
+			this.form = form;
+		}
+		
 		private FormDataEntity formData;
+		private FormUrlEncodedEntity form;
 		
 		@Override
 		public void check(HTTPClientRequest request, HTTPClientResponse response, IOException error) throws Exception {
@@ -137,6 +158,8 @@ public class HttpBin {
 				checkHeaders(json, request);
 				if (formData != null)
 					checkFormData(json, formData);
+				else if (form != null)
+					checkForm(json, form);
 			} catch (Throwable e) {
 				throw new Exception("Error checking JSON response:\n" + response.getHeaders().generateString(1024).asString() + "\n" + o, e);
 			}
@@ -192,6 +215,21 @@ public class HttpBin {
 				Assert.assertEquals(expectedFiles.size(), jsonFiles.size());
 				for (PartFile expectedFile : expectedFiles) {
 					Assert.assertTrue(jsonFiles.containsKey(expectedFile.getName()));
+				}
+			}
+		}
+
+		private static void checkForm(JSONObject json, FormUrlEncodedEntity form) {
+			List<Pair<String, String>> expectedFields = form.getParameters();
+			if (!expectedFields.isEmpty()) {
+				Assert.assertTrue(json.containsKey("form"));
+				JSONObject jsonForm = (JSONObject)json.get("form");
+				Assert.assertEquals(expectedFields.size(), jsonForm.size());
+				for (Pair<String, String> expectedField : expectedFields) {
+					Assert.assertTrue(jsonForm.containsKey(expectedField.getValue1()));
+					Object o = jsonForm.get(expectedField.getValue1());
+					Assert.assertTrue(o instanceof String);
+					Assert.assertEquals(expectedField.getValue2(), o);
 				}
 			}
 		}

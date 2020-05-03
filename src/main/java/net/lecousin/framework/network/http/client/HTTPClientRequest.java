@@ -49,6 +49,14 @@ public class HTTPClientRequest extends HTTPRequest {
 		super.setURI(uri);
 	}
 	
+	/** Copy contructor. */
+	public HTTPClientRequest(HTTPClientRequest copy) {
+		super(copy);
+		this.hostname = copy.hostname;
+		this.port = copy.port;
+		this.secure = copy.secure;
+	}
+	
 	private static boolean checkScheme(String scheme) throws UnsupportedHTTPProtocolException {
 		if (scheme == null) throw new UnsupportedHTTPProtocolException(null);
 		scheme = scheme.toLowerCase();

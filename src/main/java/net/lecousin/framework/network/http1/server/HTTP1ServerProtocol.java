@@ -340,7 +340,7 @@ public class HTTP1ServerProtocol implements ALPNServerProtocol {
 			logger.trace("Processing request");
 		try {
 			request.setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_PROCESSING_START, Long.valueOf(System.nanoTime()));
-			processor.process(ctx);
+			processor.process(ctx); // TODO start a task with a new context
 		} catch (Exception e) {
 			logger.error("HTTPRequestProcessor error", e);
 			ctx.getErrorHandler().setError(ctx, HttpURLConnection.HTTP_INTERNAL_ERROR, "Internal server error", null);
@@ -365,7 +365,7 @@ public class HTTP1ServerProtocol implements ALPNServerProtocol {
 				TransferEncodingFactory.create(request.getHeaders(), bodyConsumer);
 			client.setAttribute(RECEIVE_CONSUMER_ATTRIBUTE, transfer);
 			client.setAttribute(RECEIVE_STATUS_ATTRIBUTE, ReceiveStatus.BODY);
-		} catch (IOException e) {
+		} catch (Exception e) {
 			receiveError(client, e, request);
 			return false;
 		}

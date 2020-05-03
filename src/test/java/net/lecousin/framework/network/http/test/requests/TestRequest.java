@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.util.Runnables.SupplierThrows;
@@ -43,7 +42,7 @@ public class TestRequest {
 			request = requestSupplier.get();
 	}
 	
-	public void check(HTTPClientResponse response, IOException error) throws Exception {
+	public void check(HTTPClientRequest request, HTTPClientResponse response, IOException error) throws Exception {
 		for (ResponseChecker checker : checkers)
 			checker.check(request, response, error);
 	}

@@ -8,8 +8,6 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
-import java.util.List;
-import java.util.function.Supplier;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.CancelException;
@@ -17,6 +15,7 @@ import net.lecousin.framework.concurrent.Executable;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.AsyncSupplier;
 import net.lecousin.framework.concurrent.async.IAsync;
+import net.lecousin.framework.concurrent.async.JoinPoint;
 import net.lecousin.framework.concurrent.threads.Task;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
@@ -44,7 +43,6 @@ import net.lecousin.framework.network.mime.entity.DefaultMimeEntityFactory;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntity;
 import net.lecousin.framework.network.mime.entity.MimeEntityFactory;
-import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
 import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.mime.transfer.TransferEncodingFactory;
@@ -74,44 +72,41 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	private int maxPendingRequests;
 	private HTTPClientConfiguration config;
 	private AsyncConsumer<ByteBuffer, IOException> clientConsumer;
-	private LinkedList<Request> requests = new LinkedList<>();
+	private Request previousRequest = null;
+	private int nbPendingRequests = 0;
 	private long idleStart = -1;
+	private LinkedList<Request> reserved = new LinkedList<>();
 	
 	private static class Request {
+		private Request(HTTPClientRequestContext ctx) {
+			this.ctx = ctx;
+		}
 		
 		private HTTPClientRequestContext ctx;
-		private AsyncSupplier<ByteBuffer[], NoException> headers;
-		private Async<IOException> headersSent;
-		private IAsync<IOException> receiveStatusLine;
-		private IAsync<IOException> receiveHeaders;
-		private boolean nextRequestCanBeSent = false;
-		private AsyncSupplier<Boolean, NoException> result;
+		private AsyncSupplier<ByteBuffer[], IOException> headers = new AsyncSupplier<>();
+		private AsyncSupplier<Boolean, NoException> result = new AsyncSupplier<>();
+		private Async<IOException> nextCanBeAccepted = new Async<>();
+		private Async<IOException> nextCanBeReceived = new Async<>();
 		
 	}
 	
 	@Override
 	public void setConnection(TCPClient tcp, Async<IOException> connect, boolean isThroughProxy) {
 		super.setConnection(tcp, connect, isThroughProxy);
-		clientConsumer = tcp.asConsumer(3, config.getTimeouts().getSend());
-		connect.onDone(() -> {
-			if (!connect.isSuccessful())
-				stopping = true;
-			doNextJob();
-		});
-		tcp.onclosed(() -> {
-			stopping = true;
-			doNextJob();
-		});
+		clientConsumer = tcp.asConsumer(5, config.getTimeouts().getSend());
+		Runnable onStop = () -> stopping = true;
+		connect.onErrorOrCancel(onStop);
+		tcp.onclosed(onStop);
 	}
 	
 	@Override
 	public boolean hasPendingRequest() {
-		return !requests.isEmpty();
+		return nbPendingRequests != 0;
 	}
 
 	@Override
 	public boolean isAvailableForReuse() {
-		return requests.size() < maxPendingRequests;
+		return nbPendingRequests < maxPendingRequests;
 	}
 	
 	@Override
@@ -121,58 +116,63 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 	
 	@Override
 	public String getDescription() {
-		StringBuilder s = new StringBuilder(128);
-		if (idleStart > 0) {
-			s.append("idle since ").append((System.currentTimeMillis() - idleStart) / 1000).append("s.");
-			return s.toString();
-		}
-		synchronized (requests) {
-			s.append(requests.size()).append(" pending requests");
-			if (!requests.isEmpty()) {
-				Request r = requests.getFirst();
-				s.append(", first: ");
-				if (!r.headersSent.isDone())
-					s.append("waiting to send headers");
-				else if (r.ctx.getRequestBody() != null)
-					s.append("waiting to send body");
-				else if (r.receiveStatusLine == null || !r.receiveStatusLine.isDone())
-					s.append("waiting for response status line");
-				else if (r.receiveHeaders == null || !r.receiveHeaders.isDone())
-					s.append("waiting for response headers");
-				else if (!r.ctx.getResponse().getBodyReceived().isDone())
-					s.append("waiting for response body");
-				else if (!r.ctx.getResponse().getTrailersReceived().isDone())
-					s.append("waiting for response trailers");
-				else
-					s.append("done");
-			}
-		}
-		return s.toString();
+		if (idleStart > 0)
+			return "idle since " + ((System.currentTimeMillis() - idleStart) / 1000) + "s.";
+		return nbPendingRequests + " pending requests";
 	}
 
 	@Override
 	public void reserve(HTTPClientRequestContext reservedFor) {
-		Request r = new Request();
-		r.ctx = reservedFor;
-		synchronized (requests) {
-			requests.add(r);
+		Request r = new Request(reservedFor);
+		synchronized (reserved) {
+			nbPendingRequests++;
+			reserved.add(r);
+			idleStart = -1;
 		}
+		// prepare body and headers to be sent
+		prepareBodyAndHeaders(r);
 	}
 
 	@Override
 	public AsyncSupplier<Boolean, NoException> sendReserved(HTTPClientRequestContext ctx) {
-		synchronized (requests) {
-			if (stopping)
-				return new AsyncSupplier<>(Boolean.FALSE, null);
-			for (Request r : requests) {
-				if (r.ctx == ctx) {
-					r.result = new AsyncSupplier<>();
-					prepareHeaders(r);
-					return r.result;
+		Request r = null;
+		Request previous;
+		synchronized (reserved) {
+			for (Iterator<Request> it = reserved.iterator(); it.hasNext(); ) {
+				Request req = it.next();
+				if (req.ctx == ctx) {
+					r = req;
+					it.remove();
+					break;
 				}
 			}
+			if (stopping || r == null)
+				return new AsyncSupplier<>(Boolean.FALSE, null);
+			previous = previousRequest;
+			previousRequest = r;
 		}
-		return new AsyncSupplier<>(Boolean.FALSE, null);
+		// send headers
+		Request req = r;
+		JoinPoint.from(r.headers, previous == null ? connect : previous.ctx.getRequestSent())
+		.onDone(() -> sendHeaders(req, previous), () -> req.result.unblockSuccess(Boolean.FALSE));
+		// once done
+		r.nextCanBeReceived.onDone(() -> {
+			synchronized (reserved) {
+				if (--nbPendingRequests > 0) {
+					idleStart = -1;
+					return;
+				}
+			}
+			int idle = config.getTimeouts().getIdle();
+			if (idle <= 0) {
+				stopping = true;
+				tcp.close();
+			} else {
+				idleStart = System.currentTimeMillis();
+				Task.cpu("Check HTTP1ClientConnection idle", new CheckIdle()).executeAt(idleStart + idle).start();
+			}
+		});
+		return r.result;
 	}
 	
 	@Override
@@ -191,20 +191,8 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 				ctx.getRequestSent().error(IO.error(e));
 			}
 		}
-		
-		// start to prepare request while connecting
-		if (ctx.getRequestBody() == null) {
-			AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer =
-				ctx.prepareRequestBody();
-				
-			bodyProducer.thenStart(Task.cpu("Prepare HTTP request", Task.getCurrentPriority(), ctx.getContext(), t -> {
-				ctx.setRequestBody(bodyProducer.getResult());
-				requestBodyReady(ctx);
-				return null;
-			}), ctx.getRequestSent());
-		} else {
-			requestBodyReady(ctx);
-		}
+		reserve(ctx);
+		sendReserved(ctx);
 	}
 	
 	/** Send a request and receive the response. */
@@ -252,196 +240,10 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		ctx.getResponse().getTrailersReceived().onDone(newConn::close);
 	}
 
-	private void requestBodyReady(HTTPClientRequestContext ctx) {
-		Long size = ctx.getRequestBody().getValue1();
-		Supplier<List<MimeHeader>> trailerSupplier = ctx.getRequest().getTrailerHeadersSuppliers();
-		
-		if (size == null || trailerSupplier != null) {
-			ctx.getRequest().setHeader(MimeHeaders.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
-		} else if (size.longValue() > 0 || HTTPRequest.methodMayContainBody(ctx.getRequest().getMethod())) {
-			ctx.getRequest().getHeaders().setContentLength(size.longValue());
-		}
-		
-		Request r = new Request();
-		r.ctx = ctx;
-		r.result = new AsyncSupplier<>();
-		prepareHeaders(r);
-		synchronized (requests) {
-			requests.add(r);
-		}
-		doNextJob();
-		r.result.onDone(() -> {
-			if (!r.result.getResult().booleanValue())
-				ctx.getRequestSent().cancel(new CancelException("Unable to send request"));
-		});
-	}
-	
-	private void prepareHeaders(Request r) {
-		r.headers = Task.cpu("Prepare HTTP Request headers", Priority.NORMAL, r.ctx.getContext(), (Task<ByteBuffer[], NoException> t) -> {
-			HTTPClientRequest request = r.ctx.getRequest();
-			ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
-			headers.setNewArrayStringCapacity(4096);
-			StringBuilder pathPrefix = null;
-			if (r.ctx.isThroughProxy() && !(tcp instanceof SSLClient)) {
-				pathPrefix = new StringBuilder(128);
-				pathPrefix.append(request.isSecure() ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME);
-				pathPrefix.append("://").append(request.getHostname()).append(':').append(request.getPort());
-			}
-			HTTP1RequestCommandProducer.generate(request, pathPrefix, headers);
-			headers.append("\r\n");
-			request.getHeaders().generateString(headers);
-			r.ctx.getRequestSent().onDone(this::doNextJob);
-			return headers.asByteBuffers();
-		}).start().getOutput();
-		r.headers.onDone(this::doNextJob);
-	}
-	
-	private Task<Void, NoException> nextJobTask = null;
-	private Task<Void, NoException> currentJobTask = null;
-	private Object nextJobTaskLock = new Object();
-	
-	private void doNextJob() {
-		synchronized (nextJobTaskLock) {
-			if (nextJobTask != null)
-				return;
-			nextJobTask = Task.cpu("Process HTTP/1 client requests", Priority.NORMAL, (Task<Void, NoException> t) -> {
-				synchronized (nextJobTaskLock) {
-					currentJobTask = t;
-					nextJobTask = null;
-				}
-				synchronized (requests) {
-					if (!connect.isDone())
-						return null;
-					nextJob();
-				}
-				return null;
-			});
-			if (currentJobTask != null)
-				nextJobTask.startAfter(currentJobTask);
-			else
-				nextJobTask.start();
-		}
-	}
-	
-	@SuppressWarnings("java:S3776") // complexity
-	private void nextJob() {
-		Request r = null;
-		Request previous = null;
-		for (Iterator<Request> it = requests.iterator(); it.hasNext(); previous = r) {
-			r = it.next();
-			// if only reserved, do nothing
-			if (r.result == null)
-				break;
-			
-			// if stopping, cancel requests
-			if (stopping) {
-				if (!r.result.isDone())
-					unblockResult(r, Boolean.FALSE);
-				it.remove();
-				continue;
-			}
-			
-			// if headers are not ready, do nothing
-			if (!r.headers.isDone())
-				break;
-
-			// if we don't know yet if a subsequent request can be sent, wait 
-			if (previous != null && (!previous.nextRequestCanBeSent || !previous.ctx.getRequestSent().isDone()))
-				break;
-
-			// if headers are not yet sent, send them
-			if (r.headersSent == null) {
-				if (logger.debug()) logger.debug("Send headers for request " + r.ctx + " to " + tcp);
-				sendHeaders(r);
-				unblockResult(r, Boolean.TRUE);
-				break;
-			}
-			
-			// if we are still sending headers, wait
-			if (!r.headersSent.isDone()) {
-				if (logger.debug()) logger.debug("Wait for headers to be sent");
-				break;
-			}
-			
-			// if sending headers failed, stop
-			if (!r.headersSent.isSuccessful()) {
-				stopping = true;
-				if (logger.debug()) logger.debug("Error sending headers, stop connection", r.headersSent.getError());
-				final Request req = r;
-				Task.cpu("Error sending request", Priority.RATHER_IMPORTANT, r.ctx.getContext(), t -> {
-					req.headersSent.forwardIfNotSuccessful(req.ctx.getRequestSent());
-					return null;
-				}).start();
-				it.remove();
-				continue; // cancel remaining pending requests
-			}
-			
-			// if we didn't start to send body yet
-			if (r.ctx.getRequestBody() != null) {
-				Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
-				r.ctx.setRequestBody(null);
-				// send body
-				if (logger.debug()) logger.debug("Send body for request " + r.ctx + " to " + tcp);
-				final Request req = r;
-				final Request prev = previous;
-				Task.cpu("Send HTTP/1 request body", Priority.NORMAL, r.ctx.getContext(), t -> {
-					if (!req.ctx.getRequest().isExpectingBody() ||
-						(body.getValue1() != null && body.getValue1().longValue() == 0)) {
-						req.ctx.getRequestSent().unblock();
-						if (prev == null) {
-							receiveResponse(req);
-						} else {
-							prev.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
-						}
-						return null;
-					}
-
-					AsyncConsumer<ByteBuffer, IOException> consumer = 
-						body.getValue1() == null || req.ctx.getRequest().getTrailerHeadersSuppliers() != null
-						? new ChunkedTransfer.Sender(clientConsumer, req.ctx.getRequest().getTrailerHeadersSuppliers())
-						: clientConsumer;
-					Async<IOException> sendBody = body.getValue2()
-						.toConsumer(consumer, "Send HTTP request body", Task.getCurrentPriority());
-					if (prev == null) {
-						receiveResponse(req);
-					} else {
-						prev.ctx.getResponse().getTrailersReceived().onSuccess(() -> receiveResponse(req));
-					}
-					sendBody.onErrorOrCancel(() -> {
-						sendBody.forwardIfNotSuccessful(req.ctx.getRequestSent());
-						stop(req, true);
-					});
-					sendBody.onSuccess(req.ctx.getRequestSent()::unblock);
-					return null;
-				}).start();
-			}
-		}
-		
-		if (requests.isEmpty()) {
-			int idle = config.getTimeouts().getIdle();
-			if (idle <= 0) {
-				stopping = true;
-				tcp.close();
-			} else {
-				idleStart = System.currentTimeMillis();
-				Task.cpu("Check HTTP1ClientConnection idle", new CheckIdle()).executeAt(idleStart + idle).start();
-			}
-		} else {
-			idleStart = -1;
-		}
-	}
-	
-	private static void unblockResult(Request r, Boolean result) {
-		Task.cpu("Signal HTTP/1 request handling", Priority.RATHER_IMPORTANT, r.ctx.getContext(), t -> {
-			r.result.unblockSuccess(result);
-			return null;
-		}).start();
-	}
-	
 	private class CheckIdle implements Executable<Void, NoException> {
 		@Override
 		public Void execute(Task<Void, NoException> taskContext) {
-			synchronized (requests) {
+			synchronized (reserved) {
 				if (idleStart == -1)
 					return null;
 				int idle = config.getTimeouts().getIdle();
@@ -456,115 +258,248 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		}
 	}
 	
-	private void sendHeaders(Request r) {
-		r.headersSent = new Async<>();
-		Task.cpu("Send HTTP Request headers", Priority.NORMAL, r.ctx.getContext(), t -> {
-			IAsync<IOException> send = clientConsumer.push(Arrays.asList(r.headers.getResult()));
-			send.onDone(r.headersSent);
-			return null;
-		}).start().getOutput().onError(err -> r.headersSent.error(IO.error(err)));
-		r.headersSent.onDone(HTTP1ClientConnection.this::doNextJob);
-	}
-	
-	private void stop(Request r, boolean andClose) {
-		stopping = true;
-		synchronized (requests) {
-			requests.remove(r);
-		}
-		if (andClose)
-			tcp.close();
-		doNextJob();
-	}
-	
-	private void requestDone(Request r) {
-		synchronized (requests) {
-			requests.remove(r);
-		}
-		doNextJob();
-	}
-	
 	public static HTTPClientResponse receiveResponse(
 		TCPClient client, boolean isThroughProxy, HTTPClientRequest requestSent, HTTPClientConfiguration config
 	) {
 		HTTP1ClientConnection c = new HTTP1ClientConnection(client, new Async<>(true), isThroughProxy, 1, config);
-		Request r = new Request();
-		r.ctx = new HTTPClientRequestContext(c, requestSent);
-		c.receiveResponse(r);
+		Request r = new Request(new HTTPClientRequestContext(c, requestSent));
+		c.receiveResponseStatus(r, null);
 		return r.ctx.getResponse();
 	}
 	
-	private void receiveResponse(Request r) {
-		Task.cpu("Received HTTP/1 response", Priority.NORMAL, r.ctx.getContext(), task -> {
+	private static final String CLIENT_STOPPED = "HTTP1ClientConnection closed";
+	
+	private void prepareBodyAndHeaders(Request r) {
+		Task<Void, NoException> prepareHeaders = Task.cpu("Prepare HTTP/1 Request headers", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (stopping) {
+				r.headers.cancel(new CancelException(CLIENT_STOPPED));
+				r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+				r.nextCanBeReceived.cancel(new CancelException(CLIENT_STOPPED));
+				return null;
+			}
+			HTTPClientRequest request = r.ctx.getRequest();
+			Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
+			if (body.getValue1() == null || request.getTrailerHeadersSuppliers() != null) {
+				request.setHeader(MimeHeaders.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
+				request.getHeaders().remove(MimeHeaders.CONTENT_LENGTH);
+			} else if (body.getValue1().longValue() > 0 || HTTPRequest.methodMayContainBody(request.getMethod())) {
+				request.getHeaders().setContentLength(body.getValue1().longValue());
+				request.getHeaders().remove(MimeHeaders.TRANSFER_ENCODING);
+			} else {
+				request.getHeaders().remove(MimeHeaders.TRANSFER_ENCODING);
+				request.getHeaders().remove(MimeHeaders.CONTENT_LENGTH);
+			}
+			ByteArrayStringIso8859Buffer headers = new ByteArrayStringIso8859Buffer();
+			headers.setNewArrayStringCapacity(4096);
+			StringBuilder pathPrefix = null;
+			if (r.ctx.isThroughProxy() && !(tcp instanceof SSLClient)) {
+				pathPrefix = new StringBuilder(128);
+				pathPrefix.append(request.isSecure() ? HTTPConstants.HTTPS_SCHEME : HTTPConstants.HTTP_SCHEME);
+				pathPrefix.append("://").append(request.getHostname()).append(':').append(request.getPort());
+			}
+			HTTP1RequestCommandProducer.generate(request, pathPrefix, headers);
+			headers.append("\r\n");
+			request.getHeaders().generateString(headers);
+			r.headers.unblockSuccess(headers.asByteBuffers());
+			return null;
+		});
+
+		if (r.ctx.getRequestBody() == null) {
+			AsyncSupplier<Pair<Long, AsyncProducer<ByteBuffer, IOException>>, IOException> bodyProducer = r.ctx.prepareRequestBody();
+			bodyProducer.onDone(() -> {
+				r.ctx.setRequestBody(bodyProducer.getResult());
+				prepareHeaders.start();
+			}, () -> {
+				bodyProducer.forwardIfNotSuccessful(r.ctx.getRequestSent());
+				bodyProducer.forwardIfNotSuccessful(r.headers);
+				bodyProducer.forwardIfNotSuccessful(r.nextCanBeAccepted);
+				bodyProducer.forwardIfNotSuccessful(r.nextCanBeReceived);
+			});
+		} else {
+			prepareHeaders.start();
+		}
+	}
+	
+	private void sendHeaders(Request r, Request previous) {
+		Task.cpu("Send HTTP/1 Request headers", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (logger.debug()) logger.debug("Sending HTTP/1 headers for " + r.ctx + " to " + tcp);
+			// send headers
+			IAsync<IOException> send = clientConsumer.push(Arrays.asList(r.headers.getResult()));
+			if (previous == null) // first request => we accept it
+				r.result.unblockSuccess(Boolean.TRUE);
+			// look at the body
+			Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
+			if (!r.ctx.getRequest().isExpectingBody() ||
+				(body.getValue1() != null && body.getValue1().longValue() == 0)) {
+				// no body
+				if (previous == null) {
+					// first request
+					send.onDone(r.ctx.getRequestSent());
+					receiveResponseStatus(r, previous);
+					return null;
+				}
+				// we need to know if the next request can be accepted
+				previous.nextCanBeAccepted.onDone(() -> {
+					r.result.unblockSuccess(Boolean.TRUE);
+					send.onDone(r.ctx.getRequestSent());
+					receiveResponseStatus(r, previous);
+				}, () -> r.result.unblockSuccess(Boolean.FALSE));
+				return null;
+			}
+			
+			// we have a body to send
+			if (previous == null || r.ctx.getRequest().getEntity().canProduceBodyMultipleTimes()) {
+				sendBody(r, previous, send);
+				return null;
+			}
+			// we need to know if the next request can be accepted
+			previous.nextCanBeAccepted.onDone(() -> {
+				r.result.unblockSuccess(Boolean.TRUE);
+				sendBody(r, previous, send);
+			}, () -> r.result.unblockSuccess(Boolean.FALSE));
+			return null;
+		}).start();
+	}
+
+	private void sendBody(Request r, Request previous, IAsync<IOException> headersSent) {
+		Task.cpu("Send HTTP/1 Request body", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (logger.debug()) logger.debug("Sending HTTP/1 body for " + r.ctx + " to " + tcp);
+			// send the body
+			Pair<Long, AsyncProducer<ByteBuffer, IOException>> body = r.ctx.getRequestBody();
+			AsyncConsumer<ByteBuffer, IOException> consumer = 
+				body.getValue1() == null || r.ctx.getRequest().getTrailerHeadersSuppliers() != null
+					? new ChunkedTransfer.Sender(clientConsumer, r.ctx.getRequest().getTrailerHeadersSuppliers())
+					: clientConsumer;
+			Async<IOException> sendBody = body.getValue2()
+				.toConsumer(consumer, "Send HTTP request body", Task.getCurrentPriority());
+			
+			if (r.result.isDone()) {
+				// request already accepted
+				sendBody.onDone(r.ctx.getRequestSent());
+				receiveResponseStatus(r, previous);
+				return null;
+			}
+			
+			// we need to know if the next request can be accepted
+			previous.nextCanBeAccepted.onDone(() -> {
+				// next request is accepted
+				r.result.unblockSuccess(Boolean.TRUE);
+				sendBody.onDone(r.ctx.getRequestSent());
+				receiveResponseStatus(r, previous);
+			}, () -> {
+				// we cannot continue
+				r.ctx.setRequestBody(null);
+				r.result.unblockSuccess(Boolean.FALSE);
+			});
+			return null;
+		}).startOn(headersSent, true);
+	}
+	
+	private void receiveResponseStatus(Request r, Request previous) {
+		Task<Void, NoException> task = Task.cpu("Receive HTTP/1 response status line", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (!r.ctx.getRequestSent().isSuccessful()) {
+				r.ctx.getRequestSent().forwardIfNotSuccessful(r.nextCanBeAccepted);
+				r.ctx.getRequestSent().forwardIfNotSuccessful(r.nextCanBeReceived);
+			}
+			if (previous != null && previous.nextCanBeReceived.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
+				previous.nextCanBeReceived.forwardIfNotSuccessful(r.nextCanBeAccepted);
+				previous.nextCanBeReceived.forwardIfNotSuccessful(r.nextCanBeReceived);
+				return null;
+			}
+			if (logger.debug()) logger.debug("Waiting for HTTP/1 status for " + r.ctx + " from " + tcp);
 			PartialAsyncConsumer<ByteBuffer, IOException> statusLineConsumer = new HTTP1ResponseStatusConsumer(r.ctx.getResponse())
 				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
-			r.receiveStatusLine = tcp.getReceiver().consume(statusLineConsumer, 4096, config.getTimeouts().getReceive());
+			IAsync<IOException> receive = tcp.getReceiver().consume(statusLineConsumer, 4096, config.getTimeouts().getReceive());
 			r.ctx.getResponse().setHeaders(new MimeHeaders());
-			if (r.receiveStatusLine.isDone())
-				receiveResponseHeaders(r);
-			else
-				r.receiveStatusLine.thenStart(Task.cpu("Receive HTTP response", Task.getCurrentPriority(), r.ctx.getContext(), t -> {
-					receiveResponseHeaders(r);
+			receive.onDone(
+				() -> receiveResponseHeaders(r),
+				error -> {
+					r.ctx.getResponse().getHeadersReceived().error(error);
+					r.nextCanBeAccepted.error(error);
+					r.nextCanBeReceived.error(error);
+				},
+				cancel -> {
+					r.ctx.getResponse().getHeadersReceived().cancel(cancel);
+					r.nextCanBeAccepted.cancel(cancel);
+					r.nextCanBeReceived.cancel(cancel);
+				}
+			);
+			return null;
+		});
+		if (previous == null)
+			task.start();
+		else
+			task.startOn(previous.nextCanBeReceived, true);
+	}
+
+	private void receiveResponseHeaders(Request r) {
+		Task.cpu("Receive HTTP/1 response headers", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode()
+				+ " (" + r.ctx.getResponse().getStatusMessage() + ") for " + r.ctx + " from " + tcp);
+			
+			if (r.ctx.getOnStatusReceived() != null) {
+				Boolean close = r.ctx.getOnStatusReceived().apply(r.ctx.getResponse());
+				if (close != null) {
+					r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+					if (close.booleanValue())
+						tcp.close();
 					return null;
-				}), true);
+				}
+			}
+			PartialAsyncConsumer<ByteBuffer, IOException> headersConsumer = r.ctx.getResponse().getHeaders()
+				.createConsumer(config.getLimits().getHeadersLength())
+				.convert(ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
+			IAsync<IOException> receive = tcp.getReceiver().consume(headersConsumer, 4096, config.getTimeouts().getReceive());
+			receive.onDone(
+				() -> receiveResponseBody(r),
+				error -> {
+					r.ctx.getResponse().getHeadersReceived().error(error);
+					r.nextCanBeAccepted.error(error);
+					r.nextCanBeReceived.error(error);
+				},
+				cancel -> {
+					r.ctx.getResponse().getHeadersReceived().cancel(cancel);
+					r.nextCanBeAccepted.cancel(cancel);
+					r.nextCanBeReceived.cancel(cancel);
+				}
+			);
+			return null;
+		}).start();
+	}
+
+	private void receiveResponseBody(Request r) {
+		Task.cpu("Receive HTTP/1 response body", Priority.NORMAL, r.ctx.getContext(), t -> {
+			if (logger.debug()) logger.debug("Headers received for " + r.ctx + " from " + tcp);
+			
+			HTTPClientResponse response = r.ctx.getResponse();
+			if (r.ctx.getOnHeadersReceived() != null) {
+				Boolean close = r.ctx.getOnHeadersReceived().apply(response);
+				if (close != null) {
+					r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+					if (close.booleanValue())
+						tcp.close();
+					return null;
+				}
+			}
+			
+			r.ctx.getResponse().getHeadersReceived().unblock();
+			
+			if (handleHeaders(r))
+				return null;
+			
+			if (response.isConnectionClose()) {
+				stopping = true;
+				r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+			} else {
+				r.nextCanBeAccepted.unblock();
+			}
+
+			receiveResponseBody(r, response);
 			return null;
 		}).start();
 	}
 	
-	private void receiveResponseHeaders(Request r) {
-		if (r.receiveStatusLine.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
-			if (logger.debug()) logger.debug("Receive status line error, stop connection", r.receiveStatusLine.getError());
-			stop(r, true);
-			return;
-		}
-		if (logger.debug()) logger.debug("Status line received: " + r.ctx.getResponse().getStatusCode()
-			+ " (" + r.ctx.getResponse().getStatusMessage() + ") for " + r.ctx + " from " + tcp);
-		if (r.ctx.getOnStatusReceived() != null) {
-			Boolean close = r.ctx.getOnStatusReceived().apply(r.ctx.getResponse());
-			if (close != null) {
-				stop(r, close.booleanValue());
-				return;
-			}
-		}
-		PartialAsyncConsumer<ByteBuffer, IOException> headersConsumer = r.ctx.getResponse().getHeaders()
-			.createConsumer(config.getLimits().getHeadersLength()).convert(
-					ByteArray::fromByteBuffer, (bytes, buffer) -> ((ByteArray)bytes).setPosition(buffer), IO::error);
-		r.receiveHeaders = tcp.getReceiver().consume(headersConsumer, 4096, config.getTimeouts().getReceive());
-		if (r.receiveHeaders.isDone())
-			receiveResponseBody(r);
-		else
-			r.receiveHeaders.thenStart(Task.cpu("Receive HTTP response", Task.getCurrentPriority(), r.ctx.getContext(), t -> {
-				receiveResponseBody(r);
-				return null;
-			}), true);
-	}
-
-	private void receiveResponseBody(Request r) {
-		if (r.receiveHeaders.forwardIfNotSuccessful(r.ctx.getResponse().getHeadersReceived())) {
-			if (logger.debug()) logger.debug("Receive headers error, stop connection", r.receiveHeaders.getError());
-			stop(r, true);
-			return;
-		}
-		if (logger.debug()) logger.debug("Headers received for " + r.ctx + " from " + tcp);
-		HTTPClientResponse response = r.ctx.getResponse();
-		if (r.ctx.getOnHeadersReceived() != null) {
-			Boolean close = r.ctx.getOnHeadersReceived().apply(response);
-			if (close != null) {
-				stop(r, close.booleanValue());
-				return;
-			}
-		}
-		
-		if (handleHeaders(r))
-			return;
-		
-		r.ctx.getResponse().getHeadersReceived().unblock();
-		
-		if (response.isConnectionClose()) {
-			stopping = true;
-		} else {
-			r.nextRequestCanBeSent = true;
-		}
-
+	private void receiveResponseBody(Request r, HTTPClientResponse response) {
 		Long size = response.getHeaders().getContentLength();
 		PartialAsyncConsumer<ByteBuffer, IOException> transfer;
 		try {
@@ -579,40 +514,42 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			} else {
 				if (logger.debug()) logger.debug("No body expected, end of request");
 				response.setEntity(new EmptyEntity(null, response.getHeaders()));
-				requestDone(r);
 				r.ctx.getResponse().getHeadersReceived().unblock();
 				r.ctx.getResponse().getBodyReceived().unblock();
 				r.ctx.getResponse().getTrailersReceived().unblock();
-				doNextJob();
+				r.nextCanBeReceived.unblock();
 				return;
 			}
 		} catch (Exception e) {
-			stop(r, true);
-			r.ctx.getResponse().getBodyReceived().error(IO.error(e));
+			IOException error = IO.error(e);
+			r.ctx.getResponse().getBodyReceived().error(error);
+			r.nextCanBeReceived.error(error);
+			tcp.close();
 			return;
 		}
 		if (logger.debug()) logger.debug("Start receiving body for " + r.ctx + " from " + tcp);
-		int bufferSize;
-		if (size == null)
-			bufferSize = 8192;
-		else if (size.longValue() <= 1024)
-			bufferSize = 1024;
-		else if (size.longValue() <= 64 * 1024)
-			bufferSize = size.intValue();
-		else
-			bufferSize = 64 * 1024;
-		IAsync<IOException> receiveBody = tcp.getReceiver().consume(transfer, bufferSize, config.getTimeouts().getReceive());
+		IAsync<IOException> receiveBody = tcp.getReceiver().consume(transfer, getBufferSize(size), config.getTimeouts().getReceive());
 		receiveBody.onSuccess(() -> {
 			if (logger.debug()) logger.debug("Body received, end of request " + r.ctx + " from " + tcp);
-			requestDone(r);
 			r.ctx.getResponse().getBodyReceived().unblock();
 			r.ctx.getResponse().getTrailersReceived().unblock();
+			r.nextCanBeReceived.unblock();
 		});
 		receiveBody.onErrorOrCancel(() -> {
-			stop(r, true);
 			receiveBody.forwardIfNotSuccessful(r.ctx.getResponse().getBodyReceived());
+			receiveBody.forwardIfNotSuccessful(r.nextCanBeReceived);
+			tcp.close();
 		});
-		doNextJob();
+	}
+	
+	private static int getBufferSize(Long size) {
+		if (size == null)
+			return 8192;
+		if (size.longValue() <= 1024)
+			return 1024;
+		if (size.longValue() <= 64 * 1024)
+			return size.intValue();
+		return 64 * 1024;
 	}
 	
 	private boolean handleHeaders(Request r) {
@@ -641,27 +578,38 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 			return false;
 		}
 		
+		if (logger.debug()) logger.debug("Redirection requested (" + r.ctx.getMaxRedirections() + " remaining)");
 		Async<IOException> skipBody = null;
 		if (response.isConnectionClose()) {
-			stop(r, true);
+			r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+			tcp.close();
 		} else {
 			Long size = response.getHeaders().getContentLength();
 			if (size != null && size.longValue() > 0 && size.longValue() < 65536) {
 				skipBody = tcp.getReceiver().skipBytes(size.intValue(), config.getTimeouts().getReceive());
-				r.nextRequestCanBeSent = true;
+				r.nextCanBeAccepted.unblock();
 				if (logger.debug()) logger.debug("Skip body of redirection from " + r.ctx + " on " + tcp);
-				skipBody.onSuccess(() -> requestDone(r));
-				skipBody.onErrorOrCancel(() -> stop(r, true));
+				skipBody.onSuccess(() -> r.nextCanBeReceived.unblock());
+				skipBody.onErrorOrCancel(() -> {
+					r.nextCanBeReceived.cancel(new CancelException(CLIENT_STOPPED));
+					tcp.close();
+				});
 			} else if (size != null && size.longValue() == 0) {
-				r.nextRequestCanBeSent = true;
-				requestDone(r);
+				r.nextCanBeAccepted.unblock();
+				r.nextCanBeReceived.unblock();
 			} else {
 				if (logger.debug()) logger.debug("Stop connection to avoid receiving body before redirection");
-				stop(r, true);
+				r.nextCanBeAccepted.cancel(new CancelException(CLIENT_STOPPED));
+				tcp.close();
 			}
 		}
 		if (skipBody == null)
 			skipBody = new Async<>(true);
+		
+		synchronized (reserved) {
+			if (previousRequest == r)
+				previousRequest = null;
+		}
 		
 		if (logger.debug()) logger.debug("Redirect to " + location);
 		Task.cpu("Redirect HTTP request", Priority.NORMAL, r.ctx.getContext(), t -> {
@@ -675,5 +623,5 @@ public class HTTP1ClientConnection extends HTTPClientConnection {
 		}).startOn(skipBody, true);
 		return true;
 	}
-
+	
 }

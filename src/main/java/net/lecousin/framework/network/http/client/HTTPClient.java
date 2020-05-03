@@ -14,7 +14,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 
 import net.lecousin.framework.application.Application;
 import net.lecousin.framework.application.LCCore;
@@ -33,13 +32,10 @@ import net.lecousin.framework.network.cache.HostKnowledgeCache;
 import net.lecousin.framework.network.cache.HostPortKnowledge;
 import net.lecousin.framework.network.cache.HostProtocol;
 import net.lecousin.framework.network.http.HTTPConstants;
-import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.header.AlternativeService;
 import net.lecousin.framework.network.http.header.AlternativeServices;
 import net.lecousin.framework.network.mime.MimeException;
-import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.mime.header.MimeHeaders;
-import net.lecousin.framework.network.mime.transfer.ChunkedTransfer;
 import net.lecousin.framework.network.name.NameService;
 import net.lecousin.framework.network.name.NameService.Resolution;
 import net.lecousin.framework.util.Pair;
@@ -256,16 +252,6 @@ public class HTTPClient implements AutoCloseable, Closeable, IMemoryManageable, 
 		HTTPClientRequestContext ctx,
 		AsyncSupplier<HTTPClientConnection, IOException> connection
 	) {
-		HTTPRequest request = ctx.getRequest();
-		Long size = ctx.getRequestBody().getValue1();
-		Supplier<List<MimeHeader>> trailerSupplier = request.getTrailerHeadersSuppliers();
-		
-		if (size == null || trailerSupplier != null) {
-			request.setHeader(MimeHeaders.TRANSFER_ENCODING, ChunkedTransfer.TRANSFER_NAME);
-		} else if (size.longValue() > 0 || HTTPRequest.methodMayContainBody(request.getMethod())) {
-			request.getHeaders().setContentLength(size.longValue());
-		}
-		
 		connection.thenStart(Task.cpu("Send HTTP request", Priority.NORMAL, ctx.getContext(), t -> {
 			if (ctx.getRequestSent().isDone())
 				return null; // error or cancel

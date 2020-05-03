@@ -12,6 +12,7 @@ import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.concurrent.util.AsyncConsumer;
 import net.lecousin.framework.concurrent.util.AsyncProducer;
 import net.lecousin.framework.exception.NoException;
+import net.lecousin.framework.io.IO;
 import net.lecousin.framework.network.http.HTTPConstants;
 import net.lecousin.framework.network.http.HTTPRequest;
 import net.lecousin.framework.network.http.LibraryVersion;
@@ -25,6 +26,7 @@ import net.lecousin.framework.network.http2.frame.HTTP2Headers;
 import net.lecousin.framework.network.http2.streams.DataHandler;
 import net.lecousin.framework.network.http2.streams.DataStreamHandler;
 import net.lecousin.framework.network.http2.streams.StreamsManager;
+import net.lecousin.framework.network.mime.MimeException;
 import net.lecousin.framework.network.mime.entity.BinaryEntity;
 import net.lecousin.framework.network.mime.entity.EmptyEntity;
 import net.lecousin.framework.network.mime.header.MimeHeader;
@@ -92,7 +94,7 @@ class ClientDataHandler implements DataHandler {
 			);
 
 		ctx.getRequest().setAttribute(HTTPRequestContext.REQUEST_ATTRIBUTE_NANOTIME_PROCESSING_START, Long.valueOf(System.nanoTime()));
-		server.getProcessor().process(ctx);
+		server.getProcessor().process(ctx); // TODO start a task with a new context
 		
 		ctx.getResponse().getReady().onDone(() -> sendHeaders(manager, ctx));
 		ctx.getResponse().getSent().onDone(() -> {
@@ -112,7 +114,11 @@ class ClientDataHandler implements DataHandler {
 		AsyncConsumer<ByteBuffer, IOException> consumer =
 				ctx.getRequest().getEntity().createConsumer(ctx.getRequest().getHeaders().getContentLength());
 		LinkedList<String> encoding = new LinkedList<>();
-		TransferEncodingFactory.addEncodingFromHeader(ctx.getResponse().getHeaders(), MimeHeaders.CONTENT_ENCODING, encoding);
+		try {
+			TransferEncodingFactory.addEncodingFromHeader(ctx.getResponse().getHeaders(), MimeHeaders.CONTENT_ENCODING, encoding);
+		} catch (MimeException e) {
+			return new AsyncConsumer.Error<>(IO.error(e));
+		}
 		for (String coding : encoding)
 			consumer = ContentDecoderFactory.createDecoder(consumer, coding);
 		return consumer;

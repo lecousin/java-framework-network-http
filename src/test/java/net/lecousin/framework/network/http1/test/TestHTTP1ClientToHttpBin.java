@@ -5,6 +5,7 @@ import java.util.Collection;
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.core.test.runners.LCConcurrentRunner;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientResponse;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
@@ -39,8 +40,9 @@ public class TestHTTP1ClientToHttpBin extends LCCoreAbstractTest {
 	@Test
 	public void test() throws Exception {
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
-		HTTPClientResponse response = HTTP1ClientConnection.send(test.request, test.maxRedirection, null, config);
+		HTTPClientRequest req = new HTTPClientRequest(test.request);
+		HTTPClientResponse response = HTTP1ClientConnection.send(req, test.maxRedirection, null, config);
 		response.getTrailersReceived().blockThrow(0);
-		test.check(response, null);
+		test.check(req, response, null);
 	}
 }

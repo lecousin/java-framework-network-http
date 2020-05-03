@@ -11,6 +11,7 @@ import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.core.test.runners.LCConcurrentRunner;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
@@ -77,7 +78,7 @@ public class TestHTTPClientToHttpBinWith3Connections extends LCCoreAbstractTest 
 				clients.put(protocol, client);
 			}
 		}
-		HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, test.request);
+		HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, new HTTPClientRequest(test.request));
 		ctx.setMaxRedirections(test.maxRedirection);
 		client.send(ctx);
 		ctx.getResponse().getBodyReceived().blockThrow(60000);
@@ -91,6 +92,6 @@ public class TestHTTPClientToHttpBinWith3Connections extends LCCoreAbstractTest 
 			;
 			throw new AssertionError(s.toString());
 		}
-		test.check(ctx.getResponse(), null);
+		test.check(ctx.getRequest(), ctx.getResponse(), null);
 	}
 }

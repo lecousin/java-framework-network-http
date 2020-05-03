@@ -20,6 +20,7 @@ import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
@@ -91,11 +92,12 @@ public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 	
 	@Test
 	public void test() throws Exception {
+		HTTPClientRequest req = new HTTPClientRequest(test.request);
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		config.setAllowedProtocols(Arrays.asList(protocol));
 		if (protocol.isSecure()) {
-			test.request.setSecure(true);
-			test.request.setPort(443);
+			req.setSecure(true);
+			req.setPort(443);
 		}
 		config.setProxySelector(new ProxySelector() {
 			private Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("localhost", serverPort));
@@ -109,11 +111,11 @@ public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 			}
 		});
 		try (HTTPClient client = new HTTPClient(config)) {
-			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, test.request);
+			HTTPClientRequestContext ctx = new HTTPClientRequestContext(client, req);
 			ctx.setMaxRedirections(test.maxRedirection);
 			client.send(ctx);
 			ctx.getResponse().getBodyReceived().blockThrow(0);
-			test.check(ctx.getResponse(), null);
+			test.check(req, ctx.getResponse(), null);
 		}
 	}
 }

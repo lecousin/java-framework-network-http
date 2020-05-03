@@ -61,7 +61,7 @@
     
     <lc.core.version>0.21.0-SNAPSHOT</lc.core.version>
     <net.core.version>0.9.0-SNAPSHOT</net.core.version>
-    <mime.version>0.5.2</mime.version>
+    <mime.version>0.6.0-SNAPSHOT</mime.version>
     
     <sonar.test.exclusions>**/src/test/**/*</sonar.test.exclusions>
   </properties>
