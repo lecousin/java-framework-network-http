@@ -38,7 +38,7 @@ public interface HTTP2PseudoHeaderHandler {
 				// TODO
 				break;
 			default:
-				throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Unexpected pseudo header " + name);
+				throw new HTTP2Error(0, HTTP2Error.Codes.PROTOCOL_ERROR, "Unexpected pseudo header " + name);
 			}
 		}
 	}
@@ -61,11 +61,11 @@ public interface HTTP2PseudoHeaderHandler {
 				try {
 					response.setStatus(Integer.parseUnsignedInt(value));
 				} catch (NumberFormatException e) {
-					throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid status code " + value);
+					throw new HTTP2Error(0, HTTP2Error.Codes.PROTOCOL_ERROR, "Invalid status code " + value);
 				}
 				break;
 			default:
-				throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR, "Unexpected pseudo header " + name);
+				throw new HTTP2Error(0, HTTP2Error.Codes.PROTOCOL_ERROR, "Unexpected pseudo header " + name);
 			}
 		}
 	}

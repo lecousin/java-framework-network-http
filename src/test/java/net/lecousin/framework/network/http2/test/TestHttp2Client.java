@@ -15,6 +15,7 @@ import net.lecousin.framework.core.test.LCCoreAbstractTest;
 import net.lecousin.framework.core.test.runners.LCConcurrentRunner;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.log.Logger;
+import net.lecousin.framework.log.Logger.Level;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
@@ -145,9 +146,10 @@ public class TestHttp2Client extends LCCoreAbstractTest {
 	@Test
 	public void test() throws Exception {
 		//AbstractNetworkTest.activateNetworkTraces();
+		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Client.class);
+		//logger.setLevel(Level.TRACE);
 		HTTPClientConfiguration config = new HTTPClientConfiguration();
 		HTTP2Settings settings = new HTTP2Settings();
-		Logger logger = LCCore.getApplication().getLoggerFactory().getLogger(TestHttp2Client.class);
 		try (HTTP2Client client = new HTTP2Client(config, settings, logger, ByteArrayCache.getInstance())) {
 			IAsync<IOException> connect;
 			switch (test.connectMethod) {

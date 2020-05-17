@@ -62,9 +62,9 @@ public abstract class HTTP2Data implements HTTP2Frame {
 						data.position(data.position() + l);
 						result.unblockSuccess(Boolean.valueOf(pos == header.getPayloadLength()));
 					}, result, ioErr -> {
-							// TODO log it
-							return new HTTP2Error(true, HTTP2Error.Codes.INTERNAL_ERROR, ioErr.getMessage());
-						});
+						// TODO log it
+						return new HTTP2Error(header.getStreamId(), HTTP2Error.Codes.INTERNAL_ERROR, ioErr.getMessage());
+					});
 					return result;
 				}
 			};

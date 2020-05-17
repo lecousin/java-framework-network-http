@@ -101,7 +101,7 @@ public abstract class HTTP2Headers extends HTTP2Priority {
 						currentConsumer = new HeaderBlockConsumer(header.getPayloadLength() - 1 - padLength);
 					}
 					if (minimumLength > header.getPayloadLength())
-						throw new HTTP2Error(false, HTTP2Error.Codes.PROTOCOL_ERROR);
+						throw new HTTP2Error(0, HTTP2Error.Codes.PROTOCOL_ERROR);
 					return Boolean.TRUE;
 				}
 			}

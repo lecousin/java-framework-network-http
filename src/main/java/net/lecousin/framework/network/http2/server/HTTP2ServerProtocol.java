@@ -1,12 +1,10 @@
 package net.lecousin.framework.network.http2.server;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
-import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
 import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.io.data.BytesFromIso8859String;
@@ -22,6 +20,8 @@ import net.lecousin.framework.network.http.server.errorhandler.HTTPErrorHandler;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
 import net.lecousin.framework.network.http1.server.HTTP1ServerUpgradeProtocol;
 import net.lecousin.framework.network.http2.HTTP2Constants;
+import net.lecousin.framework.network.http2.connection.HTTP2Connection;
+import net.lecousin.framework.network.http2.connection.HTTP2Stream;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.mime.header.MimeHeader;
 import net.lecousin.framework.network.server.TCPServerClient;
@@ -182,8 +182,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 			// before to send frames, we need to wait for the upgrade response to be sent
 			resp.getSent().thenStart("Start HTTP/2 upgraded connection", Priority.NORMAL, t -> {
 				HTTP2Settings clientSettings = (HTTP2Settings)client.removeAttribute(ATTRIBUTE_SETTINGS_FROM_UPGRADE);
-				ClientStreamsManager manager = new ClientStreamsManager(this, client, clientSettings);
-				client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+				Connection conn = new Connection(client, clientSettings);
+				client.setAttribute(ATTRIBUTE_CLIENT_HTTP2_CONNECTION, conn);
 				try { client.waitForData(receiveDataTimeout); }
 				catch (ClosedChannelException e) { client.closed(); }
 				return null;
@@ -192,8 +192,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 		}
 		if (client.hasAttribute(HTTP1ServerProtocol.UPGRADED_PROTOCOL_ATTRIBUTE)) {
 			// preface already received
-			ClientStreamsManager manager = new ClientStreamsManager(this, client, null);
-			client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+			Connection conn = new Connection(client, null);
+			client.setAttribute(ATTRIBUTE_CLIENT_HTTP2_CONNECTION, conn);
 		}
 		
 		return receiveDataTimeout;
@@ -205,7 +205,7 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 	}
 
 	private static final String ATTRIBUTE_SETTINGS_FROM_UPGRADE = "http2.server.upgrade.settings";
-	private static final String ATTRIBUTE_CLIENT_STREAMS_MANAGER = "http2.server.streams-manager";
+	private static final String ATTRIBUTE_CLIENT_HTTP2_CONNECTION = "http2.server.client-connection";
 	private static final String ATTRIBUTE_CLIENT_PREFACE_POSITION = "http2.preface.position";
 	private static final byte[] HTTP2_PREFACE = new byte[] {
 		'P', 'R', 'I', ' ', '*', ' ', 'H', 'T', 'T', 'P', '/', '2', '.', '0', '\r', '\n',
@@ -216,8 +216,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 
 	@Override
 	public void dataReceivedFromClient(TCPServerClient client, ByteBuffer data) {
-		ClientStreamsManager manager = (ClientStreamsManager)client.getAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER);
-		if (manager == null) {
+		Connection conn = (Connection)client.getAttribute(ATTRIBUTE_CLIENT_HTTP2_CONNECTION);
+		if (conn == null) {
 			// we expect the preface to come
 			Integer posInt = (Integer)client.getAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION);
 			int pos;
@@ -237,8 +237,8 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 				client.setAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION, Integer.valueOf(pos));
 			} else {
 				client.removeAttribute(ATTRIBUTE_CLIENT_PREFACE_POSITION);
-				manager = new ClientStreamsManager(this, client, null);
-				client.setAttribute(ATTRIBUTE_CLIENT_STREAMS_MANAGER, manager);
+				conn = new Connection(client, null);
+				client.setAttribute(ATTRIBUTE_CLIENT_HTTP2_CONNECTION, conn);
 			}
 			if (!data.hasRemaining()) {
 				bufferCache.free(data);
@@ -247,12 +247,27 @@ public class HTTP2ServerProtocol implements HTTP1ServerUpgradeProtocol, ALPNServ
 				return;
 			}
 		}
-		Async<IOException> consume = manager.consumeDataFromRemote(data);
-		consume.onSuccess(() -> {
-			bufferCache.free(data);
-			try { client.waitForData(receiveDataTimeout); }
+		conn.consumeDataFromRemote(data);
+	}
+	
+	class Connection extends HTTP2Connection {
+		
+		private Connection(TCPServerClient client, HTTP2Settings initialSettings) {
+			super(client, false, settings, false, initialSettings,
+				sendDataTimeout, 30000,
+				HTTP2ServerProtocol.this.logger, HTTP2ServerProtocol.this.bufferCache);
+		}
+		
+		@Override
+		protected void acceptNewDataFromRemote() {
+			try { ((TCPServerClient)remote).waitForData(receiveDataTimeout); }
 			catch (ClosedChannelException e) { /* ignore. */ }
-		});
+		}
+
+		@Override
+		protected HTTP2Stream createDataStream(int id) {
+			return new ClientRequestStream(this, id, HTTP2ServerProtocol.this);
+		}
 	}
 
 }

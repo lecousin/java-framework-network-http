@@ -13,7 +13,6 @@ import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
 import net.lecousin.framework.concurrent.async.IAsync;
 import net.lecousin.framework.concurrent.threads.Task.Priority;
-import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IOUtil;
 import net.lecousin.framework.io.buffering.ByteArrayIO;
 import net.lecousin.framework.io.data.ByteArray;
@@ -25,12 +24,15 @@ import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
 import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientConnection.OpenConnection;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
+import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.client.HTTPClientRequestSender;
 import net.lecousin.framework.network.http.server.HTTPRequestProcessor;
 import net.lecousin.framework.network.http.test.AbstractTestHttpServer;
 import net.lecousin.framework.network.http.test.ProcessorForTests;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
+import net.lecousin.framework.network.http2.client.ClientRequestStream;
 import net.lecousin.framework.network.http2.client.HTTP2Client;
 import net.lecousin.framework.network.http2.frame.HTTP2Frame;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
@@ -115,6 +117,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 		protocol2.enableRangeRequests(true);
 	}
 	
+	@SuppressWarnings("deprecation")
 	@Override
 	protected HTTPClientRequestSender createClient() throws Exception {
 		if (useHttp1Client) {
@@ -136,7 +139,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			break;
 		}
 		if (makeClientAggressive)
-			client.getStreamsManager().getServerSettings().setMaxConcurrentStreams(-1);
+			client.getHTTP2Connection().getRemoteSettings().setMaxConcurrentStreams(-1);
 		return client;
 	}
 	
@@ -244,18 +247,19 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 			IAsync<IOException> send;
 			if (needDataStream) {
 				send = new Async<>();
-				client.getStreamsManager().reserveCompressionContextAndOpenStream().thenStart("Send HTTP/2 headers", Priority.NORMAL, reservation -> {
+				ClientRequestStream stream = new ClientRequestStream(client.getHTTP2Connection(), new HTTPClientRequestContext(client, new HTTPClientRequest("localhost", serverAddress.getPort(), useSSL)));
+				client.getHTTP2Connection().reserveCompressionContextAndOpenStream(stream).thenStart("Send HTTP/2 headers", Priority.NORMAL, reservation -> {
 					int streamId = reservation.getValue2().intValue();
-					client.getStreamsManager().sendFrame(frameProvider.apply(streamId), false).onDone((Async<IOException>)send);
+					client.getHTTP2Connection().sendFrame(frameProvider.apply(streamId), false, false).onDone((Async<IOException>)send);
 				}, send);
 			} else {
-				send = client.getStreamsManager().sendFrame(frameProvider.apply(0), false);
+				send = client.getHTTP2Connection().sendFrame(frameProvider.apply(0), false, false);
 			}
 			send.blockThrow(0);
 			Async<Exception> sp = new Async<>();
-			client.getConnection().onclosed(sp::unblock);
+			client.getTCPConnection().onclosed(sp::unblock);
 			sp.blockThrow(5000);
-			Assert.assertTrue(sp.isDone() || client.getConnection().isClosed());
+			Assert.assertTrue(sp.isDone() || client.getTCPConnection().isClosed());
 		}
 	}
 	
@@ -305,9 +309,9 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	public void testPing() throws Exception {
 		startServer(new ProcessorForTests());
 		try (HTTP2Client client = (HTTP2Client)createClient()) {
-			Async<NoException> done = new Async<>();
-			client.getStreamsManager().sendPing(new byte[] { 1,  2, 3, 4, 5, 6, 7, 8 }, done::unblock);
-			done.block(5000);
+			Async<IOException> done = new Async<>();
+			client.ping(10000, ok -> { if (ok.booleanValue()) done.unblock(); else done.error(new IOException("ping timeout")); });
+			done.blockThrow(15000);
 			Assert.assertTrue(done.isDone());
 		}
 	}
@@ -316,7 +320,7 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 	public void testUnknownFrame() throws Exception {
 		startServer(new ProcessorForTests());
 		try (HTTP2Client client = (HTTP2Client)createClient()) {
-			IAsync<IOException> send = client.getStreamsManager().sendFrame(new HTTP2Frame.Writer() {
+			IAsync<IOException> send = client.getHTTP2Connection().sendFrame(new HTTP2Frame.Writer() {
 				private boolean sent = false;
 				@Override
 				public byte getType() { return (byte)99; }
@@ -333,12 +337,12 @@ public class TestHttp2Server extends AbstractTestHttpServer {
 					sent = true;
 					return new ByteArray.Writable(b, true);
 				}
-			}, false);
+			}, false, false);
 			send.blockThrow(0);
 			// send a ping, connection should still be operational
-			Async<NoException> done = new Async<>();
-			client.getStreamsManager().sendPing(new byte[] { 1,  2, 3, 4, 5, 6, 7, 8 }, done::unblock);
-			done.block(5000);
+			Async<IOException> done = new Async<>();
+			client.ping(10000, ok -> { if (ok.booleanValue()) done.unblock(); else done.error(new IOException("ping timeout")); });
+			done.blockThrow(15000);
 			Assert.assertTrue(done.isDone());
 		}
 	}

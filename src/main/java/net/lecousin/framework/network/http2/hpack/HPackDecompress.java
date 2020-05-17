@@ -99,12 +99,20 @@ public class HPackDecompress extends HPack {
 			// start with 00
 			if ((b & 0x20) == 0x20) {
 				// start with 001
-				consumer = new IntegerConsumer(0x1F, size -> {
+				int size = b & 0x1F;
+				if (size == 0x1F) {
+					consumer = new IntegerConsumer(0x1F, s -> {
+						if (s > initialMaximumDynamicTableSize)
+							throw new HTTP2Error(0, HTTP2Error.Codes.COMPRESSION_ERROR, "Invalid dynamic table size");
+						dynTable.updateSize(size);
+						consumer = null;
+					});
+				} else {
 					if (size > initialMaximumDynamicTableSize)
-						throw new HTTP2Error(true, HTTP2Error.Codes.COMPRESSION_ERROR, "Invalid dynamic table size");
+						throw new HTTP2Error(0, HTTP2Error.Codes.COMPRESSION_ERROR, "Invalid dynamic table size");
 					dynTable.updateSize(size);
 					consumer = null;
-				});
+				}
 				return;
 			}
 			// start with 000
@@ -123,7 +131,7 @@ public class HPackDecompress extends HPack {
 				}
 				// Literal Header Field Never Indexed -- Indexed Name
 				if (index == 0xF) {
-					consumer = new IntegerConsumer(0x3F, i -> {
+					consumer = new IntegerConsumer(0x0F, i -> {
 						String name = getName(i);
 						consumer = new LiteralConsumer(value -> {
 							headerHandler.accept(name, value);
@@ -153,7 +161,7 @@ public class HPackDecompress extends HPack {
 			}
 			// Literal Header Field without Indexing -- Indexed Name
 			if (index == 0xF) {
-				consumer = new IntegerConsumer(0x3F, i -> {
+				consumer = new IntegerConsumer(0x0F, i -> {
 					String name = getName(i);
 					consumer = new LiteralConsumer(value -> {
 						headerHandler.accept(name, value);

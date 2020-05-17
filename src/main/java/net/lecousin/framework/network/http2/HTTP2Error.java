@@ -5,24 +5,24 @@ public class HTTP2Error extends Exception {
 
 	private static final long serialVersionUID = 1L;
 	
-	protected final boolean connectionError;
+	protected final int streamId;
 	protected final int errorCode;
 	
 	/** Constructor. */
-	public HTTP2Error(boolean connectionError, int errorCode, String message) {
+	public HTTP2Error(int streamId, int errorCode, String message) {
 		super(message);
-		this.connectionError = connectionError;
+		this.streamId = streamId;
 		this.errorCode = errorCode;
 	}
 
 	/** Constructor. */
-	public HTTP2Error(boolean connectionError, int errorCode) {
-		this(connectionError, errorCode, null);
+	public HTTP2Error(int streamId, int errorCode) {
+		this(streamId, errorCode, null);
 	}
 	
-	/** Return true if this is a connection error, false for a stream error. */
-	public boolean isConnectionError() {
-		return connectionError;
+	/** Return the stream on which the error should be sent (0 will generate a GOAWAY, else a RST_STREAM). */
+	public int getStreamId() {
+		return streamId;
 	}
 	
 	public int getErrorCode() {

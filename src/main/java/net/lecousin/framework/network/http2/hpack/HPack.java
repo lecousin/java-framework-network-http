@@ -4,6 +4,7 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.ListIterator;
 
+import net.lecousin.framework.log.LoggerFactory;
 import net.lecousin.framework.network.http2.HTTP2Constants;
 import net.lecousin.framework.network.http2.HTTP2Error;
 import net.lecousin.framework.network.http2.HTTP2PseudoHeaderHandler;
@@ -135,10 +136,15 @@ public abstract class HPack {
 	};
 	public static final int STATIC_TABLE_SIZE = STATIC_TABLE.length / 2;
 
-	protected String getName(int index) {
+	protected String getName(int index) throws HTTP2Error {
 		if (index <= STATIC_TABLE_SIZE)
 			return STATIC_TABLE[(index - 1) * 2];
-		return dynTable.table.get((index - STATIC_TABLE_SIZE - 1) * 2);
+		try {
+			return dynTable.table.get((index - STATIC_TABLE_SIZE - 1) * 2);
+		} catch (IndexOutOfBoundsException e) {
+			LoggerFactory.get(HPack.class).error("Invalid dynamic table index " + index, e);
+			throw new HTTP2Error(0, HTTP2Error.Codes.COMPRESSION_ERROR);
+		}
 	}
 	
 	/**
@@ -177,7 +183,7 @@ public abstract class HPack {
 	
 	protected void addIndexedHeaderField(int index, HTTP2PseudoHeaderHandler headerHandler) throws HTTP2Error {
 		if (index == 0)
-			throw new HTTP2Error(true, HTTP2Error.Codes.COMPRESSION_ERROR, "Index 0 is not allowed");
+			throw new HTTP2Error(0, HTTP2Error.Codes.COMPRESSION_ERROR, "Index 0 is not allowed");
 		if (index <= STATIC_TABLE_SIZE) {
 			int i = (index - 1) * 2;
 			headerHandler.accept(STATIC_TABLE[i], STATIC_TABLE[i + 1]);

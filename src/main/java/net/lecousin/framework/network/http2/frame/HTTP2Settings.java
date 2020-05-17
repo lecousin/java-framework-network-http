@@ -199,13 +199,12 @@ public class HTTP2Settings implements HTTP2Frame {
 		private int size;
 		
 		/** Constructor. */
-		public Reader(HTTP2FrameHeader header) throws HTTP2Error {
+		public Reader(HTTP2FrameHeader header) {
 			this(header.getPayloadLength());
 		}
 		
 		/** Constructor. */
-		public Reader(int size) throws HTTP2Error {
-			if ((size % 6) != 0) throw new HTTP2Error(true, HTTP2Error.Codes.FRAME_SIZE_ERROR);
+		public Reader(int size) {
 			this.size = size;
 		}
 		

@@ -11,6 +11,8 @@ import net.lecousin.framework.network.http2.HTTP2Error;
 /** RST_STREAM frame. */
 public abstract class HTTP2ResetStream implements HTTP2Frame {
 	
+	public static final int LENGTH = 4;
+	
 	protected int errorCode;
 	
 	@Override

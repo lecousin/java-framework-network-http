@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.concurrent.async.Async;
@@ -18,6 +19,7 @@ import net.lecousin.framework.encoding.Base64Encoding;
 import net.lecousin.framework.exception.NoException;
 import net.lecousin.framework.io.IO;
 import net.lecousin.framework.io.data.ByteArray;
+import net.lecousin.framework.io.util.DataUtil;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.memory.ByteArrayCache;
 import net.lecousin.framework.network.client.SSLClient;
@@ -28,6 +30,8 @@ import net.lecousin.framework.network.http.client.HTTPClientConnection;
 import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
+import net.lecousin.framework.network.http2.connection.HTTP2Connection;
+import net.lecousin.framework.network.http2.connection.HTTP2Stream;
 import net.lecousin.framework.network.http2.frame.HTTP2FrameHeader;
 import net.lecousin.framework.network.http2.frame.HTTP2Settings;
 import net.lecousin.framework.network.ssl.SSLConnectionConfig;
@@ -47,10 +51,11 @@ public class HTTP2Client extends HTTPClientConnection {
 	private HTTPClientConfiguration config;
 	private Logger logger;
 	private ByteArrayCache bufferCache;
-	private ClientStreamsManager manager;
+	private Connection conn;
 	private HTTP2Settings settings;
 	private List<HTTPClientRequestContext> pendingRequests = new LinkedList<>();
 	private long idleStart = System.currentTimeMillis();
+	private long pingCount = 0;
 	
 	public HTTP2Client(HTTPClientConfiguration config, HTTP2Settings settings, Logger logger, ByteArrayCache bufferCache) {
 		if (config == null) config = new HTTPClientConfiguration();
@@ -82,7 +87,7 @@ public class HTTP2Client extends HTTPClientConnection {
 	
 	@Override
 	public boolean isAvailableForReuse() {
-		return manager.getLastLocalStreamId() + pendingRequests.size() * 2 < 0x7FFFFF00;
+		return conn.getLastLocalStreamId() + pendingRequests.size() * 2 < 0x7FFFFF00;
 	}
 	
 	@Override
@@ -109,7 +114,7 @@ public class HTTP2Client extends HTTPClientConnection {
 		// TODO be able to say no if connection is closing
 		// TODO check it is reserved
 		if (connect.isSuccessful()) {
-			manager.send(request);
+			new ClientRequestStream(conn, request).send();
 			followRequest(request);
 			return new AsyncSupplier<>(Boolean.TRUE, null);
 		}
@@ -118,7 +123,7 @@ public class HTTP2Client extends HTTPClientConnection {
 			if (!connect.isSuccessful())
 				result.unblockSuccess(Boolean.FALSE);
 			else {
-				manager.send(request);
+				new ClientRequestStream(conn, request).send();
 				followRequest(request);
 				result.unblockSuccess(Boolean.TRUE);
 			}
@@ -185,10 +190,10 @@ public class HTTP2Client extends HTTPClientConnection {
 	
 	private void startConnectionWithPriorKnowledge() {
 		tcp.send(ByteBuffer.wrap(HTTP2_PREFACE).asReadOnlyBuffer(), config.getTimeouts().getSend());
-		manager = new ClientStreamsManager(tcp, settings, false, null, config.getTimeouts().getSend(), logger, bufferCache);
+		conn = new Connection(false);
 		// we expect the settings frame to come immediately
 		tcp.receiveData(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
-		manager.getConnectionReady().onDone(connect);
+		conn.getConnectionReady().onDone(connect);
 	}
 	
 	public Async<IOException> connectWithUpgrade(InetSocketAddress address, String hostname, boolean isSecure) {
@@ -236,9 +241,9 @@ public class HTTP2Client extends HTTPClientConnection {
 			}
 			if (logger.trace())
 				logger.trace("HTTP protocol upgraded to h2c");
-			manager = new ClientStreamsManager(tcp, settings, true, null, config.getTimeouts().getSend(), logger, bufferCache);
+			conn = new Connection(true);
 			tcp.getReceiver().readAvailableBytes(1024, config.getTimeouts().getReceive()).onDone(this::dataReceived, connect);
-			manager.getConnectionReady().onDone(connect);
+			conn.getConnectionReady().onDone(connect);
 			return Boolean.FALSE;
 		});
 		sender.reserve(ctx);
@@ -250,12 +255,28 @@ public class HTTP2Client extends HTTPClientConnection {
 			// end of data from the server
 			return;
 		}
-		manager.consumeDataFromRemote(data).onDone(() -> {
-			bufferCache.free(data);
+		conn.consumeDataFromRemote(data);
+	}
+	
+	private class Connection extends HTTP2Connection {
+		public Connection(boolean localSettingsSent) {
+			super(tcp, true, settings, localSettingsSent, null,
+				config.getTimeouts().getSend(), 0 /* TODO */,
+				HTTP2Client.this.logger, HTTP2Client.this.bufferCache);
+		}
+		
+		@Override
+		protected HTTP2Stream createDataStream(int id) {
+			return null; // not supporting push promise
+		}
+		
+		@Override
+		protected void acceptNewDataFromRemote() {
 			int size = (int)settings.getMaxFrameSize() + HTTP2FrameHeader.LENGTH;
 			if (size > 65536) size = 65536;
-			tcp.receiveData(size, config.getTimeouts().getReceive()).onDone(this::dataReceived);
-		});
+			tcp.receiveData(size, config.getTimeouts().getReceive()).onDone(HTTP2Client.this::dataReceived);
+		}
+			
 	}
 	
 	@Override
@@ -282,12 +303,18 @@ public class HTTP2Client extends HTTPClientConnection {
 		});
 	}
 	
-	public ClientStreamsManager getStreamsManager() {
-		return manager;
+	public TCPClient getTCPConnection() {
+		return tcp;
 	}
 	
-	public TCPClient getConnection() {
-		return tcp;
+	public HTTP2Connection getHTTP2Connection() {
+		return conn;
+	}
+	
+	public void ping(long timeout, Consumer<Boolean> onResponseReceived) {
+		byte[] data = new byte[8];
+		DataUtil.Write64.BE.write(data, 0, ++pingCount);
+		conn.ping(data, onResponseReceived, timeout);
 	}
 	
 }

@@ -8,6 +8,8 @@ import net.lecousin.framework.network.http2.HTTP2Error;
 /** HTTP/2 priority frame. */
 public abstract class HTTP2Priority implements HTTP2Frame {
 
+	public static final int LENGTH = 5;
+	
 	protected boolean exclusiveDependency;
 	protected int streamDependency;
 	protected int dependencyWeight;
@@ -38,9 +40,7 @@ public abstract class HTTP2Priority implements HTTP2Frame {
 	public static class Reader extends HTTP2Priority implements HTTP2Frame.Reader {
 		
 		/** Constructor. */
-		public Reader(HTTP2FrameHeader header) throws HTTP2Error {
-			if (header.getPayloadLength() != 5)
-				throw new HTTP2Error(false, HTTP2Error.Codes.FRAME_SIZE_ERROR);
+		public Reader() {
 		}
 		
 		@Override
