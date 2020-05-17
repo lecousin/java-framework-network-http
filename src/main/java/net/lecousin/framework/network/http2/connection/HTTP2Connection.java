@@ -252,16 +252,25 @@ public abstract class HTTP2Connection {
 		synchronized (compressionContextRequests) {
 			if (closing)
 				return new AsyncSupplier<>(null, new ClosedChannelException());
-			if (currentCompressionStreamId == -1) {
-				openLocalStream(stream);
-				currentCompressionStreamId = stream.getStreamId();
-				if (currentCompressionStreamId != -1)
-					return new AsyncSupplier<>(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)), null);
+			if (currentCompressionStreamId == -1)
+				currentCompressionStreamId = -2;
+			else {
+				AsyncSupplier<Pair<HPackCompress, Integer>, IOException> request = new AsyncSupplier<>();
+				compressionContextRequests.add(new Pair<>(stream, request));
+				return request;
 			}
-			AsyncSupplier<Pair<HPackCompress, Integer>, IOException> request = new AsyncSupplier<>();
-			compressionContextRequests.add(new Pair<>(stream, request));
-			return request;
 		}
+		openLocalStream(stream);
+		if (stream.getStreamId() > 0) {
+			currentCompressionStreamId = stream.getStreamId();
+			return new AsyncSupplier<>(new Pair<>(compressionContext, Integer.valueOf(currentCompressionStreamId)), null);
+		}
+		AsyncSupplier<Pair<HPackCompress, Integer>, IOException> request = new AsyncSupplier<>();
+		synchronized (compressionContextRequests) {
+			currentCompressionStreamId = -1;
+			compressionContextRequests.add(new Pair<>(stream, request));
+		}
+		return request;
 	}
 	
 	public void releaseCompressionContext(int streamId) {
