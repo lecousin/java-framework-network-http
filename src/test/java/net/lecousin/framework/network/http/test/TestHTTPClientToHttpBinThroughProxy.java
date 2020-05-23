@@ -15,24 +15,29 @@ import java.util.List;
 
 import net.lecousin.framework.application.LCCore;
 import net.lecousin.framework.core.test.LCCoreAbstractTest;
+import net.lecousin.framework.core.test.TraceOnTestFailure;
 import net.lecousin.framework.core.test.runners.LCConcurrentRunner;
 import net.lecousin.framework.log.Logger;
 import net.lecousin.framework.log.Logger.Level;
+import net.lecousin.framework.log.LoggerFactory;
 import net.lecousin.framework.network.http.client.HTTPClient;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration;
-import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientConfiguration.Protocol;
+import net.lecousin.framework.network.http.client.HTTPClientRequest;
 import net.lecousin.framework.network.http.client.HTTPClientRequestContext;
 import net.lecousin.framework.network.http.server.processor.ProxyHTTPRequestProcessor;
 import net.lecousin.framework.network.http.test.requests.HttpBin;
 import net.lecousin.framework.network.http.test.requests.TestRequest;
+import net.lecousin.framework.network.http1.client.HTTP1ClientConnection;
 import net.lecousin.framework.network.http1.server.HTTP1ServerProtocol;
+import net.lecousin.framework.network.http2.client.HTTP2Client;
 import net.lecousin.framework.network.server.TCPServer;
 import net.lecousin.framework.network.ssl.SSLConnectionConfig;
 import net.lecousin.framework.network.test.AbstractNetworkTest;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized.Parameters;
@@ -61,10 +66,14 @@ public class TestHTTPClientToHttpBinThroughProxy extends LCCoreAbstractTest {
 	private TestRequest test;
 	private Protocol protocol;
 	
+	@Rule
+	public TraceOnTestFailure traceOnFailure = new TraceOnTestFailure();
+	
 	@Before
 	public void initTest() throws Exception {
-		AbstractNetworkTest.deactivateNetworkTraces();
-		//LoggerFactory.get(HTTP2Client.class).setLevel(Level.TRACE);
+		AbstractNetworkTest.activateNetworkTraces();
+		LoggerFactory.get(HTTP2Client.class).setLevel(Level.TRACE);
+		LoggerFactory.get(HTTP1ClientConnection.class).setLevel(Level.TRACE);
 		test.init();
 	}
 	
